@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>West Coast Socials — Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">WC</div>
+      <div>
+        <div class="brand-name">West Coast Socials</div>
+        <div class="brand-sub">Unified scheduling</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-view="overview">Overview</button>
+      <button class="nav-item" data-view="schedule">Schedule</button>
+      <button class="nav-item" data-view="calendar">Calendar</button>
+      <button class="nav-item" data-view="games">Games</button>
+      <button class="nav-item" data-view="assets">Asset Library</button>
+      <button class="nav-item" data-view="accounts">Accounts</button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="account-pills" id="accountPills"></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="viewTitle">Overview</h1>
+        <p id="viewSubtitle" class="muted">Everything scheduled across your pages, in one place.</p>
+      </div>
+      <div class="topbar-actions">
+        <input id="globalSearch" type="search" placeholder="Search posts, games, assets…" />
+        <button id="newPostBtn" class="btn btn-primary">+ New Post</button>
+      </div>
+    </header>
+
+    <!-- OVERVIEW -->
+    <section class="view" data-view="overview">
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-label">Scheduled</div>
+          <div class="stat-value" id="statScheduled">0</div>
+          <div class="stat-sub">next 7 days</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Published</div>
+          <div class="stat-value" id="statPublished">0</div>
+          <div class="stat-sub">this month</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Upcoming games</div>
+          <div class="stat-value" id="statGames">0</div>
+          <div class="stat-sub">next 14 days</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Connected pages</div>
+          <div class="stat-value" id="statAccounts">0</div>
+          <div class="stat-sub">active</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h2>Next 7 days</h2>
+            <span class="muted" id="upcomingCount"></span>
+          </div>
+          <div class="timeline" id="upcomingTimeline"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Game spotlight</h2>
+            <button class="btn-link" data-view-jump="games">View all</button>
+          </div>
+          <div id="gameSpotlight" class="spotlight"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Platform breakdown</h2>
+          <span class="muted">Scheduled posts by platform</span>
+        </div>
+        <div id="platformBars" class="platform-bars"></div>
+      </div>
+    </section>
+
+    <!-- SCHEDULE / QUEUE -->
+    <section class="view hidden" data-view="schedule">
+      <div class="filters">
+        <label>Status
+          <select id="filterStatus">
+            <option value="all">All</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="draft">Draft</option>
+            <option value="published">Published</option>
+          </select>
+        </label>
+        <label>Platform
+          <select id="filterPlatform"><option value="all">All</option></select>
+        </label>
+        <label>Game tag
+          <select id="filterGame"><option value="all">All games</option></select>
+        </label>
+      </div>
+      <div id="postsTable" class="posts-table"></div>
+    </section>
+
+    <!-- CALENDAR -->
+    <section class="view hidden" data-view="calendar">
+      <div class="calendar-toolbar">
+        <button id="calPrev" class="btn">‹</button>
+        <h2 id="calLabel"></h2>
+        <button id="calNext" class="btn">›</button>
+        <div class="spacer"></div>
+        <button id="calToday" class="btn">Today</button>
+      </div>
+      <div id="calendarGrid" class="calendar"></div>
+    </section>
+
+    <!-- GAMES -->
+    <section class="view hidden" data-view="games">
+      <div class="card">
+        <div class="card-header">
+          <h2>Add a game</h2>
+          <span class="muted">Tracked games populate post templates and the calendar</span>
+        </div>
+        <form id="gameForm" class="form-row">
+          <input name="opponent" placeholder="Opponent" required />
+          <input name="date" type="datetime-local" required />
+          <select name="homeAway">
+            <option value="home">Home</option>
+            <option value="away">Away</option>
+          </select>
+          <input name="venue" placeholder="Venue" />
+          <input name="sport" placeholder="Sport / League" />
+          <button class="btn btn-primary" type="submit">Add game</button>
+        </form>
+      </div>
+      <div id="gamesList" class="games-list"></div>
+    </section>
+
+    <!-- ASSETS -->
+    <section class="view hidden" data-view="assets">
+      <div class="card">
+        <div class="card-header">
+          <h2>Add asset from Canva or Claude.ai/design</h2>
+          <span class="muted">Paste the share/preview URL — we store a reference you can reuse</span>
+        </div>
+        <form id="assetForm" class="form-row">
+          <input name="title" placeholder="Asset title" required />
+          <select name="source">
+            <option value="canva">Canva</option>
+            <option value="claude-design">Claude.ai/design</option>
+            <option value="other">Other</option>
+          </select>
+          <input name="url" type="url" placeholder="https://…" required />
+          <input name="previewUrl" type="url" placeholder="Optional preview image URL" />
+          <input name="tags" placeholder="tags (comma separated)" />
+          <button class="btn btn-primary" type="submit">Save asset</button>
+        </form>
+      </div>
+      <div id="assetsGrid" class="assets-grid"></div>
+    </section>
+
+    <!-- ACCOUNTS -->
+    <section class="view hidden" data-view="accounts">
+      <div class="card">
+        <div class="card-header">
+          <h2>Connected pages</h2>
+          <span class="muted">Toggle which pages a new post publishes to by default</span>
+        </div>
+        <div id="accountsList" class="accounts-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- NEW POST MODAL -->
+  <div id="postModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card">
+      <header class="modal-header">
+        <h2 id="postModalTitle">Schedule post</h2>
+        <button class="icon-btn" id="closeModal" aria-label="Close">×</button>
+      </header>
+      <form id="postForm" class="modal-body">
+        <input type="hidden" name="id" />
+        <label>Caption
+          <textarea name="caption" rows="4" placeholder="What's going out?" required></textarea>
+        </label>
+
+        <div class="row">
+          <label>Schedule for
+            <input type="datetime-local" name="scheduledAt" required />
+          </label>
+          <label>Status
+            <select name="status">
+              <option value="scheduled">Scheduled</option>
+              <option value="draft">Draft</option>
+              <option value="published">Published</option>
+            </select>
+          </label>
+        </div>
+
+        <label>Publish to
+          <div id="platformChecks" class="checks"></div>
+        </label>
+
+        <div class="row">
+          <label>Linked game
+            <select name="gameId"><option value="">— none —</option></select>
+          </label>
+          <label>Linked asset
+            <select name="assetId"><option value="">— none —</option></select>
+          </label>
+        </div>
+
+        <footer class="modal-footer">
+          <button type="button" class="btn" id="deletePostBtn" hidden>Delete</button>
+          <div class="spacer"></div>
+          <button type="button" class="btn" id="cancelPostBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
