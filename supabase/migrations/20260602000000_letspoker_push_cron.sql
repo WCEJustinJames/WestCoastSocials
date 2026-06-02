@@ -27,6 +27,12 @@ create table if not exists public.letspoker_push_log (
 comment on table public.letspoker_push_log is
   'Audit log of LetsPoker tournament push fires (cookie-stopgap cron).';
 
+-- The edge function writes here via the service_role key (PostgREST).
+grant usage on schema public to service_role;
+grant select, insert on table public.letspoker_push_log to service_role;
+grant usage, select on sequence public.letspoker_push_log_id_seq to service_role;
+notify pgrst, 'reload schema';
+
 -- The function URL and an auth token (a project JWT — the anon/publishable key is
 -- enough to pass the function's verify_jwt) live in Vault, NOT in this file:
 --   select vault.create_secret('https://<ref>.supabase.co/functions/v1/letspoker-push', 'letspoker_push_function_url');
