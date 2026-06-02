@@ -155,7 +155,8 @@ function hasGraphqlErrors(text: string): boolean {
 Deno.serve(async (req) => {
   const cookie = env("LETSPOKER_COOKIE");
   const sessionGroupId = env("LETSPOKER_SESSION_GROUPID");
-  const clubId = env("LETSPOKER_CLUB_ID");
+  // Not secret (from the spec); overridable via env if it ever changes.
+  const clubId = env("LETSPOKER_CLUB_ID") ?? "8f025bf9ecfa14c8";
 
   // Request body controls behaviour:
   //   { "mode": "countdown" | "teaser" }   -> resolve game from tournament_events
@@ -181,7 +182,6 @@ Deno.serve(async (req) => {
   const missing: string[] = [];
   if (!cookie) missing.push("LETSPOKER_COOKIE");
   if (!sessionGroupId) missing.push("LETSPOKER_SESSION_GROUPID");
-  if (!clubId) missing.push("LETSPOKER_CLUB_ID");
   if (missing.length > 0) {
     const detail = `Missing config: ${missing.join(", ")}`;
     await logFire({ source, tournament_event_id: tournamentEventId, http_status: null, ok: false, detail });
