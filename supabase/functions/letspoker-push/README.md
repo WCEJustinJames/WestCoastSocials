@@ -1,126 +1,81 @@
-# LetsPoker tournament push — scheduled cron (cookie stopgap)
+# LetsPoker tournament push — automated cron (cookie stopgap)
 
-Fully-automated, headless fire of the captured LetsPoker admin GraphQL mutation
-(`sendTournamentPushNotification`). **Interim** — LetsPoker is being replaced, so
-this is deliberately lean. Auth is the admin **session cookie** (the fragile bit;
-it expires).
+Headless, start-to-finish automation of the captured LetsPoker admin push
+(`sendTournamentPushNotification`). **Interim** — LetsPoker is being replaced.
+Auth is the admin **session cookie** (the one fragile bit; it expires).
 
-LetsPoker renders `timeRelative` ("In 6 hours / 2 hours / 1 hour") **server-side
-at send time**, so every fire is the *identical* call — no client time logic.
+LetsPoker renders `timeRelative` server-side at send time, so every fire is the
+identical call.
+
+## How it runs itself
+
+1. **Sync** (every 4h) pulls the LetsPoker calendar (`getEventList`) and upserts
+   every upcoming tournament into `public.tournament_events`, keyed by event id
+   (a night can have several games at different venues — each is its own row).
+2. **Countdown** (6× day-of) pushes **every** game scheduled today.
+3. **Teaser** (night-before 9pm) pushes **every** game scheduled tomorrow.
+
+No manual event-id entry — the calendar feeds itself. If there's a game, it's
+pushed; if a night has none, the fire no-ops.
 
 ## Pieces
 
 | File | Role |
 |------|------|
-| `supabase/functions/letspoker-push/index.ts` | Resolves the game from `tournament_events`, sends the mutation, inspects the response, **fail-loud alerts**, logs every fire. |
-| `supabase/migrations/20260602000000_letspoker_push_cron.sql` | `tournament_events` + `letspoker_push_log` tables, `pg_cron`/`pg_net`, and the two scheduled jobs. |
-
-## How a game gets pushed
-
-One row per game night in `public.tournament_events` (`event_date` = the **Perth
-local date** of the game). The function resolves which game to push by date:
-
-- **countdown** fires (day-of) → **today's** row
-- **teaser** fire (night-before 9pm) → **tomorrow's** row
-- no row for that date → **no game → no-op** (logged, not an error, no alert)
-
-```sql
-insert into public.tournament_events (event_date, tournament_event_id, label)
-values (date '2026-06-03', '<event id>', 'Kingsley');
-```
-
-This is the only per-day task (replaces juggling an env var). Later it can be
-auto-filled from the partner API's read-only `getEventList`.
+| `supabase/functions/letspoker-push/index.ts` | Modes: `sync`, `countdown`, `teaser`, plus a `tournamentEventId` override and `dryRun`. Resolves games from `tournament_events`, sends, inspects, **fail-loud alerts**, logs. |
+| `supabase/migrations/20260602000000_letspoker_push_cron.sql` | `tournament_events` + `letspoker_push_log` tables, grants, and the three pg_cron jobs. |
 
 ## Schedule — Australia/Perth (UTC+8, no DST)
 
 | Job | mode | Perth | UTC cron |
 |-----|------|-------|----------|
-| `letspoker-tournament-push` | countdown ×6 | 06:00 / 09:00 / 12:00 / 14:00 / 16:00 / 17:00 | `0 1,4,6,8,9,22 * * *` |
+| `letspoker-tournament-push` | countdown | 06:00 / 09:00 / 12:00 / 14:00 / 16:00 / 17:00 | `0 1,4,6,8,9,22 * * *` |
 | `letspoker-evening-teaser` | teaser | 21:00 | `0 13 * * *` |
+| `letspoker-calendar-sync` | sync | every 4h | `15 */4 * * *` |
 
-## Secrets — set directly in Supabase, never through chat/code/git
+## Secret — set directly in Supabase, never through chat/code/git
 
-Only the auth bits are secrets (event ids live in `tournament_events`, not here):
-
-```bash
-supabase secrets set \
-  LETSPOKER_COOKIE='<full Cookie header from the captured cURL>' \
-  LETSPOKER_SESSION_GROUPID='<x-session-groupid value from the cURL>' \
-  LETSPOKER_CLUB_ID='8f025bf9ecfa14c8'
-
-# Fail-loud alert channel(s) — set at least one:
-supabase secrets set RESEND_API_KEY='<resend key>' ALERT_EMAIL='justin.james@clubwestcoast.com.au'
-# and/or a generic webhook (Beeper / SMS gateway / Slack):
-supabase secrets set ALERT_WEBHOOK_URL='https://...'
-# optional: supabase secrets set ALERT_FROM='letspoker-push@clubwestcoast.com.au'
-```
-
-> ⚠️ Verify the request body shape against your real **Copy as cURL**. The
-> function sends the Apollo-batched `{"0": {...}}` wrapper described in the spec.
-> If your capture shows a different shape (e.g. a top-level `[ {...} ]` array),
-> adjust `batchedBody` in `index.ts` to match exactly.
-
-## Deploy (already done on the WCE App project)
+Only the cookie is a secret (session-groupid `wcp` and the club id are constants
+defaulted in code; event ids come from the calendar sync):
 
 ```bash
-supabase functions deploy letspoker-push
-supabase db push
-# Vault (cron -> function auth): function URL + a project JWT (anon key is enough):
-#   select vault.create_secret('https://<ref>.supabase.co/functions/v1/letspoker-push', 'letspoker_push_function_url');
-#   select vault.create_secret('<anon_key>', 'letspoker_push_function_token');
+supabase secrets set LETSPOKER_COOKIE='<full Cookie header from the captured cURL>'
+# Fail-loud alert channel — set at least one so a dead cookie pings you:
+supabase secrets set RESEND_API_KEY='<key>' ALERT_EMAIL='justin.james@clubwestcoast.com.au'
+#   and/or:  supabase secrets set ALERT_WEBHOOK_URL='https://...'
 ```
 
-## Test SAFELY — only ever the Private event
+Set it in the dashboard: **Project Settings → Edge Functions → Secrets**.
 
-`countdown`/`teaser` modes resolve the **live** game, so never trigger them by
-hand. To test, use the explicit override against the **Private** Deep Stack
-Freezeout (`1329992651d749ee`, 0 players):
+## Test SAFELY — only ever the override
+
+`countdown`/`teaser` push the **live** games, so never trigger them by hand. To
+test sending, use the explicit override (and pick a private/0-player event):
 
 ```bash
-curl -i -X POST 'https://<ref>.supabase.co/functions/v1/letspoker-push' \
-  -H "Authorization: Bearer <anon_or_service_key>" \
-  -H "Content-Type: application/json" \
-  -d '{"tournamentEventId":"1329992651d749ee"}'
+curl -X POST 'https://<ref>.supabase.co/functions/v1/letspoker-push' \
+  -H "Authorization: Bearer <anon_or_service_key>" -H "Content-Type: application/json" \
+  -d '{"tournamentEventId":"<private event id>"}'
 ```
 
-Expect `{"ok":true,...}`. Then check the log:
+Inspect the calendar without sending or writing:
+`-d '{"mode":"sync","dryRun":true}'`. Check fires:
 
 ```sql
 select fired_at, source, tournament_event_id, http_status, ok, detail
-from public.letspoker_push_log order by fired_at desc limit 10;
+from public.letspoker_push_log order by fired_at desc limit 20;
+select event_date, tournament_event_id, label from public.tournament_events
+where event_date >= current_date order by event_date, starts_at;
 ```
-
-One fire per tick — **no auto-retry loops**.
 
 ## Fail-loud
 
-A dead cookie fails **silently** (sends just stop). So the function alerts Justin
-(email via Resend and/or `ALERT_WEBHOOK_URL`) whenever a real fire is non-200 or
-the GraphQL body looks `UNAUTHENTICATED`. Every fire is logged to
-`public.letspoker_push_log` and to the function logs regardless. (A no-game skip
-is logged `ok=true` and does **not** alert.)
+A dead cookie fails silently. The function alerts Justin (Resend email and/or
+`ALERT_WEBHOOK_URL`) on any non-200 / `UNAUTHENTICATED`, and logs every fire.
 
-## Known limits / next hardening (don't build yet)
+## Known limits / next hardening
 
-- **`tournament_events` is filled per game** → auto-resolve later via the partner
-  API's read-only `getEventList` (needs API access enabled by LetsPoker —
-  separate request).
-- **Cookie expiry** → manual refresh today; later add a headless-login step to
-  mint a fresh cookie.
-
-## Alternative host: Vercel Cron (not used here)
-
-If you'd rather host on Vercel, the Hobby plan throttles cron frequency — 6×/day
-likely needs **Pro**. Equivalent `vercel.json`:
-
-```json
-{ "crons": [
-  { "path": "/api/push?mode=countdown", "schedule": "0 1,4,6,8,9,22 * * *" },
-  { "path": "/api/push?mode=teaser",    "schedule": "0 13 * * *" }
-] }
-```
-
-…with a serverless `/api/push` route porting the same logic from `index.ts`.
-Supabase is the recommended host — it's already in the stack and has no cron
-frequency cap.
+- **Cookie expiry** → manual refresh today; next: headless login to mint a fresh
+  cookie automatically (so even the cookie is hands-off).
+- **Event filtering** → currently pushes every tournament the calendar lists. If
+  some listed events should be skipped, add an `exclude` set or a venue filter.
