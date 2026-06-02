@@ -17,11 +17,16 @@ at send time**, so every fire is the *identical* call — no client time logic.
 
 ## Schedule — Australia/Perth (UTC+8, no DST)
 
-| Perth | 06:00 | 09:00 | 12:00 | 14:00 | 16:00 | 17:00 |
-|-------|-------|-------|-------|-------|-------|-------|
-| UTC   | 22:00 (prev) | 01:00 | 04:00 | 06:00 | 08:00 | 09:00 |
+Two recurring jobs, both firing the same mutation with the current
+`TOURNAMENT_EVENT_ID`:
 
-Cron (UTC): `0 1,4,6,8,9,22 * * *`
+| Job | Perth | UTC cron |
+|-----|-------|----------|
+| `letspoker-tournament-push` (day-of countdown ×6) | 06:00 / 09:00 / 12:00 / 14:00 / 16:00 / 17:00 | `0 1,4,6,8,9,22 * * *` |
+| `letspoker-evening-teaser` (night-before 9pm) | 21:00 | `0 13 * * *` |
+
+**Workflow:** by each evening, set `TOURNAMENT_EVENT_ID` to the **next** game's
+id. That one id serves tonight's 9pm teaser *and* tomorrow's day-of countdown.
 
 ## Secrets — set directly in Supabase, never through chat/code/git
 
