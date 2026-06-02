@@ -15,7 +15,7 @@
 // Cookie/session/club are read from edge-function env (set via
 // `supabase secrets set ...`). The cookie never lives in code or in git.
 
-const ENDPOINT = "https://wcp.admin.lets.poker/api/graphql";
+const ENDPOINT = "https://wcp.admin.lets.poker/api/graphql?ngsw-bypass=true";
 
 const MUTATION = `mutation sendTournamentPushNotification($clubId: ID!, $tournamentEventId: ID!, $templateParts: [String!]!) {
   sendTournamentPushNotification(
@@ -154,8 +154,8 @@ function hasGraphqlErrors(text: string): boolean {
 
 Deno.serve(async (req) => {
   const cookie = env("LETSPOKER_COOKIE");
-  const sessionGroupId = env("LETSPOKER_SESSION_GROUPID");
-  // Not secret (from the spec); overridable via env if it ever changes.
+  // Not secret (constant group/club ids); overridable via env if they change.
+  const sessionGroupId = env("LETSPOKER_SESSION_GROUPID") ?? "wcp";
   const clubId = env("LETSPOKER_CLUB_ID") ?? "8f025bf9ecfa14c8";
 
   // Request body controls behaviour:
@@ -203,14 +203,14 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Apollo-batched body shape, replicated from the captured cURL: {"0": { ... }}.
-  const batchedBody = JSON.stringify({
-    "0": {
+  // Apollo-batched body shape, replicated from the captured cURL: a JSON array.
+  const batchedBody = JSON.stringify([
+    {
       operationName: "sendTournamentPushNotification",
       query: MUTATION,
       variables: { clubId, tournamentEventId, templateParts: TEMPLATE_PARTS },
     },
-  });
+  ]);
 
   let status: number | null = null;
   let text = "";
@@ -218,8 +218,10 @@ Deno.serve(async (req) => {
     const res = await fetch(ENDPOINT, {
       method: "POST",
       headers: {
+        "accept": "application/json, text/plain, */*",
         "content-type": "application/json",
-        "x-app-version": "2.0.0",
+        "x-app-section": "admin",
+        "x-app-version": "2.0.1",
         "x-session-groupid": sessionGroupId!,
         Cookie: cookie!,
       },
