@@ -62,7 +62,26 @@ function letspokerHeaders(cookie: string, sessionGroupId: string): HeadersInit {
   };
 }
 
-// All games scheduled for a Perth date, via PostgREST (service role).
+// The session cookie: prefer the auto-refreshed one in letspoker_auth, fall back
+// to the LETSPOKER_COOKIE env secret (the manual stopgap).
+async function getCookie(): Promise<string | undefined> {
+  const url = env("SUPABASE_URL");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (url && key) {
+    try {
+      const res = await fetch(`${url}/rest/v1/letspoker_auth?id=eq.1&select=cookie`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows[0]?.cookie) return rows[0].cookie as string;
+    } catch (_e) {
+      // fall through to env
+    }
+  }
+  return env("LETSPOKER_COOKIE");
+}
+
+// All non-excluded games scheduled for a Perth date, via PostgREST (service role).
 async function lookupEvents(date: string): Promise<string[]> {
   const url = env("SUPABASE_URL");
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
@@ -294,7 +313,7 @@ async function runSync(cookie: string, sessionGroupId: string, clubId: string, d
 }
 
 Deno.serve(async (req) => {
-  const cookie = env("LETSPOKER_COOKIE");
+  const cookie = await getCookie();
   // Not secret (constant ids); overridable via env if they ever change.
   const sessionGroupId = env("LETSPOKER_SESSION_GROUPID") ?? "wcp";
   const clubId = env("LETSPOKER_CLUB_ID") ?? "8f025bf9ecfa14c8";
