@@ -69,7 +69,7 @@ async function lookupEvents(date: string): Promise<string[]> {
   if (!url || !key) return [];
   try {
     const res = await fetch(
-      `${url}/rest/v1/tournament_events?event_date=eq.${date}&select=tournament_event_id`,
+      `${url}/rest/v1/tournament_events?event_date=eq.${date}&excluded=is.false&select=tournament_event_id`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } },
     );
     const rows = await res.json();

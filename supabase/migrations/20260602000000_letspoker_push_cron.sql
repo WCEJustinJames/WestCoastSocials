@@ -25,11 +25,14 @@ create table if not exists public.tournament_events (
   label                text,
   starts_at            timestamptz,
   synced_at            timestamptz,
+  excluded             boolean not null default false,
   created_at           timestamptz not null default now()
 );
 create index if not exists tournament_events_event_date_idx on public.tournament_events (event_date);
 comment on table public.tournament_events is
-  'Per-tournament LetsPoker schedule; auto-filled by the push function''s sync mode.';
+  'Per-tournament LetsPoker schedule; auto-filled by the push function''s sync mode. '
+  'Set excluded=true to permanently skip an event (test fixtures); the sync never '
+  'overwrites that flag.';
 
 -- Audit log of every fire.
 create table if not exists public.letspoker_push_log (
