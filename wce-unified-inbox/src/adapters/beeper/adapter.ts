@@ -33,11 +33,12 @@ export class BeeperAdapter implements ChannelAdapter {
     const dateAfter = opts.since?.toISOString()
 
     // Page from newest backwards until we run out or pass the lookback window.
-    for (let page = 0; page < 50; page++) {
+    // Search returns at most 20 per page, so allow plenty of pages.
+    for (let page = 0; page < 300; page++) {
       const res = await this.client.searchMessages({
         chatType: 'single', // scope: 1:1 only (private DMs/SMS)
         dateAfter,
-        limit: opts.limit ?? 200,
+        limit: opts.limit ?? 20,
         cursor,
         direction: 'before',
       })
@@ -85,7 +86,8 @@ export class BeeperAdapter implements ChannelAdapter {
     text: string,
     replyToMessageId?: string,
   ): Promise<SendResult> {
+    // The client throws on non-2xx, so reaching here means the bridge accepted it.
     const r = await this.client.sendMessage(externalChatId, text, replyToMessageId)
-    return { ok: r.success, pendingMessageId: r.pendingMessageID, error: r.error }
+    return { ok: !r.error, pendingMessageId: r.pendingMessageID, error: r.error }
   }
 }

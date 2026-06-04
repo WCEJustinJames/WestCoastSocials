@@ -25,7 +25,7 @@ export interface BeeperAccount {
 
 export interface BeeperMessage {
   id: string
-  messageID: string
+  messageID?: string
   chatID: string
   accountID: string
   senderID: string
@@ -71,7 +71,8 @@ export interface SearchMessagesParams {
 }
 
 export interface SendMessageResponse {
-  success: boolean
+  // v1 has no `success` field — a 200 with a pendingMessageID is success.
+  success?: boolean
   chatID?: string
   pendingMessageID?: string
   error?: string
@@ -121,7 +122,8 @@ export class BeeperClient {
     if (params.sender) qs.set('sender', params.sender)
     if (params.dateAfter) qs.set('dateAfter', params.dateAfter)
     if (params.dateBefore) qs.set('dateBefore', params.dateBefore)
-    if (params.limit != null) qs.set('limit', String(params.limit))
+    // /v1/messages/search caps limit at 20; clamp so we never 422.
+    if (params.limit != null) qs.set('limit', String(Math.min(params.limit, 20)))
     if (params.cursor) qs.set('cursor', params.cursor)
     if (params.direction) qs.set('direction', params.direction)
     for (const a of params.accountIDs ?? []) qs.append('accountIDs', a)
