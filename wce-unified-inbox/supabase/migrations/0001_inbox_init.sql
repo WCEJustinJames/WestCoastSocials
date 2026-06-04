@@ -166,3 +166,17 @@ create policy inbox_batches_all on inbox_batches for all using (true) with check
 create policy inbox_batch_items_all on inbox_batch_items for all using (true) with check (true);
 create policy inbox_messages_all on inbox_messages for all using (true) with check (true);
 create policy inbox_drafts_all on inbox_drafts for all using (true) with check (true);
+
+-- Table-level grants. RLS governs row access, but the role still needs base
+-- privileges. Local single-user prototype uses the publishable/anon key, so grant
+-- to anon + authenticated. TIGHTEN (drop anon) before any remote/hosted deploy.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on
+  inbox_people,
+  inbox_identities,
+  inbox_conversations,
+  inbox_messages,
+  inbox_batches,
+  inbox_batch_items,
+  inbox_drafts
+to anon, authenticated;
