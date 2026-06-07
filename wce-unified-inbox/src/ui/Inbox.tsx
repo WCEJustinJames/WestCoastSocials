@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Database } from '../types/database'
 
@@ -24,8 +24,8 @@ export function Inbox() {
   const [replyText, setReplyText] = useState('')
   const [replyStatus, setReplyStatus] = useState<string | null>(null)
 
-  // anchor at the bottom of the thread so it opens on the most recent exchange
-  const bottomRef = useRef<HTMLDivElement>(null)
+  // scroll container for the open thread, so it opens on the most recent exchange
+  const threadRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     supabase
@@ -66,9 +66,18 @@ export function Inbox() {
   }, [activeId])
 
   // Keep the thread pinned to the most recent exchange: scroll to the bottom
-  // when a thread opens and whenever new messages arrive.
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end' })
+  // when a thread opens and whenever new messages arrive. useLayoutEffect runs
+  // before paint (no flash of the top), and the rAF re-pins after any late
+  // reflow (e.g. wrapped long messages) so we reliably land on the latest.
+  useLayoutEffect(() => {
+    const el = threadRef.current
+    if (!el) return
+    const pin = () => {
+      el.scrollTop = el.scrollHeight
+    }
+    pin()
+    const raf = requestAnimationFrame(pin)
+    return () => cancelAnimationFrame(raf)
   }, [activeId, messages.length])
 
   // Debounced message-content search: when the query is 2+ chars, also find
@@ -226,7 +235,7 @@ export function Inbox() {
                 {active.network} · {active.type}
               </p>
             </header>
-            <div className="flex-1 space-y-2 overflow-y-auto p-6">
+            <div ref={threadRef} className="flex-1 space-y-2 overflow-y-auto p-6">
               {messages.map((m) => (
                 <div
                   key={m.id}
@@ -246,7 +255,6 @@ export function Inbox() {
                   </div>
                 </div>
               ))}
-              <div ref={bottomRef} />
             </div>
             <footer className="border-t border-slate-200 bg-white px-4 py-3">
               <textarea
