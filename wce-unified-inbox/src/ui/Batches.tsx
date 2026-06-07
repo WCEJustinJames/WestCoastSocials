@@ -26,8 +26,9 @@ interface Recipient {
 
 function fill(template: string, name: string): string {
   const first = name.trim().split(/\s+/)[0] ?? ''
+  // Tolerant of spaces/underscores: {{first name}}, {{first_name}}, {{firstname}}.
   return template
-    .replace(/\{\{\s*first_name\s*\}\}/gi, first)
+    .replace(/\{\{\s*first[\s_]*name\s*\}\}/gi, first)
     .replace(/\{\{\s*name\s*\}\}/gi, name)
 }
 
