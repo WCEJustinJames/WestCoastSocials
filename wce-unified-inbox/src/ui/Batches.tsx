@@ -20,6 +20,7 @@ interface Recipient {
   guard: boolean
   guardReason: string | null
   badge: string | null
+  hidden: boolean
   personId: string | null
   data: Json
 }
@@ -48,6 +49,9 @@ export function Batches() {
   const [stake, setStake] = useState('all')
   const [activity, setActivity] = useState('all')
   const [recipientQuery, setRecipientQuery] = useState('')
+  // Which channel to contact CRM players on when more than one is available.
+  const [channel, setChannel] = useState<'auto' | 'sms' | 'thread'>('auto')
+  const [showHidden, setShowHidden] = useState(false)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [name, setName] = useState('')
@@ -62,22 +66,33 @@ export function Batches() {
   const [edits, setEdits] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    supabase
+    let q = supabase
       .from('inbox_conversations')
       .select('*, inbox_people(display_name, last_outbound_at)')
       .order('last_activity', { ascending: false, nullsFirst: false })
-      .then(({ data }) => setConversations((data as unknown as ConvRow[]) ?? []))
-  }, [])
+    if (!showHidden) q = q.eq('hidden', false)
+    q.then(({ data }) => setConversations((data as unknown as ConvRow[]) ?? []))
+  }, [showHidden])
 
   useEffect(() => {
-    if (source !== 'crm' || outreach.length > 0) return
-    supabase
+    let q = supabase
       .from('inbox_outreach')
       .select('*')
       .eq('do_not_message', false)
       .order('player_name', { ascending: true })
-      .then(({ data }) => setOutreach((data as OutreachRow[]) ?? []))
-  }, [source, outreach.length])
+    if (!showHidden) q = q.eq('hidden', false)
+    q.then(({ data }) => setOutreach((data as OutreachRow[]) ?? []))
+  }, [source, showHidden])
+
+  async function toggleHide(key: string, currentlyHidden: boolean) {
+    const table = source === 'inbox' ? 'inbox_conversations' : 'inbox_outreach'
+    const next = !currentlyHidden
+    await supabase.from(table).update({ hidden: next }).eq('id', key)
+    const apply = <T extends { id: string; hidden: boolean }>(arr: T[]): T[] =>
+      arr.map((x) => (x.id === key ? { ...x, hidden: next } : x)).filter((x) => showHidden || !x.hidden)
+    if (source === 'inbox') setConversations((p) => apply(p as unknown as { id: string; hidden: boolean }[]) as unknown as ConvRow[])
+    else setOutreach((p) => apply(p))
+  }
 
   // Distinct filter values from the CRM.
   const regions = useMemo(
@@ -113,6 +128,7 @@ export function Batches() {
             guard: guarded,
             guardReason: guarded ? 'Messaged in the last 24h' : null,
             badge: guarded ? 'recent' : null,
+            hidden: c.hidden,
             personId: c.person_id,
             data: { conversation_id: c.id, name: nm, network: c.network },
           }
@@ -128,25 +144,36 @@ export function Batches() {
         const nm = o.player_name || [o.first_name, o.last_name].filter(Boolean).join(' ') || '—'
         const hasThread = !!o.beeper_chat_id
         const hasPhone = !!o.phone
-        const sendable = hasThread || hasPhone
+        // Resolve which channel this batch will use for this player.
+        const useThread = channel === 'thread' || (channel === 'auto' && hasThread)
+        const sendable =
+          channel === 'thread' ? hasThread : channel === 'sms' ? hasPhone : hasThread || hasPhone
+        const chosen: 'thread' | 'sms' = useThread ? 'thread' : 'sms'
+        const newSms = chosen === 'sms' && !hasThread // cold SMS to someone with no thread
+        const channels = [hasPhone && 'SMS', hasThread && 'thread'].filter(Boolean).join(' + ')
         return {
           key: o.id,
           name: nm,
           sub: o.region ?? '—',
           sendable,
-          // New-SMS recipients are unticked by default — cold outreach is opt-in.
-          guard: !hasThread && hasPhone,
-          guardReason: hasThread
-            ? null
-            : hasPhone
+          guard: newSms,
+          guardReason: !sendable
+            ? channel === 'thread'
+              ? 'No existing thread'
+              : channel === 'sms'
+                ? 'No phone'
+                : 'No phone or thread'
+            : newSms
               ? 'Will start a NEW SMS chat'
-              : 'No phone or thread',
-          badge: hasThread ? null : hasPhone ? 'new SMS' : 'no phone',
+              : null,
+          badge: !sendable ? 'unavailable' : newSms ? 'new SMS' : channels || null,
+          hidden: o.hidden,
           personId: null,
           data: {
             beeper_chat_id: o.beeper_chat_id,
             phone: o.phone,
             account_id: 'gmessages',
+            channel: chosen,
             name: nm,
             region: o.region,
           },
@@ -160,7 +187,7 @@ export function Batches() {
         if (q && !r.name.toLowerCase().includes(q)) return false
         return true
       })
-  }, [source, conversations, outreach, network, region, stake, activity, recipientQuery])
+  }, [source, conversations, outreach, network, region, stake, activity, recipientQuery, channel])
 
   function switchSource(s: Source) {
     setSource(s)
@@ -418,6 +445,16 @@ export function Batches() {
                 <option value="all">All activity</option>
                 {activities.map((a) => (<option key={a} value={a}>{a}</option>))}
               </select>
+              <select
+                value={channel}
+                onChange={(e) => setChannel(e.target.value as 'auto' | 'sms' | 'thread')}
+                title="Which channel to message players on"
+                className="rounded-md border border-slate-300 px-2 py-1"
+              >
+                <option value="auto">Channel: auto</option>
+                <option value="thread">Existing thread only</option>
+                <option value="sms">SMS (text)</option>
+              </select>
             </>
           )}
           <button onClick={selectAllSendable} className="text-emerald-700 hover:underline">
@@ -426,6 +463,14 @@ export function Batches() {
           <button onClick={clearSelection} className="text-slate-500 hover:underline">
             Clear
           </button>
+          <label className="flex items-center gap-1 text-slate-500">
+            <input
+              type="checkbox"
+              checked={showHidden}
+              onChange={(e) => setShowHidden(e.target.checked)}
+            />
+            show hidden
+          </label>
         </div>
       </div>
 
@@ -443,27 +488,34 @@ export function Batches() {
 
       <div className="mb-4 max-h-72 overflow-y-auto rounded-md border border-slate-200">
         {recipients.map((r) => (
-          <label
+          <div
             key={r.key}
-            className={`flex cursor-pointer items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-sm last:border-0 hover:bg-slate-50 ${
+            className={`group flex items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-sm last:border-0 hover:bg-slate-50 ${
               r.sendable ? '' : 'opacity-60'
             }`}
           >
-            <input type="checkbox" checked={selected.has(r.key)} onChange={() => toggle(r.key)} />
-            <span className="flex-1">{r.name}</span>
-            <span className="text-xs text-slate-400">{r.sub}</span>
-            {r.badge && (
-              <span
-                className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                  !r.sendable
-                    ? 'bg-slate-200 text-slate-600'
-                    : 'bg-amber-100 text-amber-700'
-                }`}
-              >
-                {r.badge}
-              </span>
-            )}
-          </label>
+            <label className="flex flex-1 cursor-pointer items-center gap-2">
+              <input type="checkbox" checked={selected.has(r.key)} onChange={() => toggle(r.key)} />
+              <span className="flex-1">{r.name}</span>
+              <span className="text-xs text-slate-400">{r.sub}</span>
+              {r.badge && (
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                    !r.sendable ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {r.badge}
+                </span>
+              )}
+            </label>
+            <button
+              onClick={() => void toggleHide(r.key, r.hidden)}
+              title={r.hidden ? 'Unhide' : 'Hide from this list'}
+              className="text-xs text-slate-300 hover:text-rose-600"
+            >
+              {r.hidden ? 'unhide' : 'hide'}
+            </button>
+          </div>
         ))}
         {recipients.length === 0 && (
           <p className="p-3 text-sm text-slate-400">No recipients match.</p>

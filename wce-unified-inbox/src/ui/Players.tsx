@@ -14,13 +14,21 @@ const filledCount = (r: Row): number =>
   [r.player_name, r.email, r.region, r.beeper_chat_id, r.activity, r.outreach_status].filter(Boolean)
     .length + (r.stakes?.length ?? 0) + (r.venues?.length ?? 0)
 
-function mergeRows(rows: Row[]): { primary: Row; merged: Partial<Row>; dropIds: string[] } {
-  const ordered = [...rows].sort(
+function mergeRows(
+  rows: Row[],
+  keeperId?: string,
+): { primary: Row; merged: Partial<Row>; dropIds: string[] } {
+  let ordered = [...rows].sort(
     (a, b) =>
       (b.beeper_chat_id ? 4 : 0) - (a.beeper_chat_id ? 4 : 0) +
       ((b.airtable_id.startsWith('receipt:') ? 0 : 2) - (a.airtable_id.startsWith('receipt:') ? 0 : 2)) +
       (filledCount(b) - filledCount(a)),
   )
+  // If the user chose a record to keep, its name/values win.
+  if (keeperId) {
+    const keep = ordered.find((r) => r.id === keeperId)
+    if (keep) ordered = [keep, ...ordered.filter((r) => r.id !== keeperId)]
+  }
   const merged: Partial<Row> = {
     player_name: firstNonEmpty(ordered.map((r) => r.player_name)),
     first_name: firstNonEmpty(ordered.map((r) => r.first_name)),
@@ -65,6 +73,10 @@ export function Players() {
   const [busy, setBusy] = useState(false)
   // region cleanup inputs, keyed by current value
   const [renames, setRenames] = useState<Record<string, string>>({})
+  // manual merge selection
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [keeperId, setKeeperId] = useState<string | null>(null)
+  const [showHidden, setShowHidden] = useState(false)
 
   function load() {
     supabase
@@ -100,12 +112,42 @@ export function Players() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return rows.filter((r) => {
+      if (!showHidden && r.hidden) return false
       if (regionFilter !== 'all' && r.region !== regionFilter) return false
       if (q && !(r.player_name ?? '').toLowerCase().includes(q) && !(r.phone ?? '').includes(q))
         return false
       return true
     })
-  }, [rows, query, regionFilter])
+  }, [rows, query, regionFilter, showHidden])
+
+  const selectedRows = useMemo(() => rows.filter((r) => sel.has(r.id)), [rows, sel])
+
+  function toggleSel(id: string) {
+    setSel((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  async function mergeSelected() {
+    if (selectedRows.length < 2) return
+    setBusy(true)
+    const { primary, merged, dropIds } = mergeRows(selectedRows, keeperId ?? undefined)
+    await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
+    if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+    setBusy(false)
+    setSel(new Set())
+    setKeeperId(null)
+    setStatus('Merged.')
+    load()
+    setTimeout(() => setStatus(null), 3000)
+  }
+
+  async function toggleHidePlayer(id: string, currentlyHidden: boolean) {
+    await supabase.from('inbox_outreach').update({ hidden: !currentlyHidden }).eq('id', id)
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, hidden: !currentlyHidden } : r)))
+  }
 
   async function savePlayer(id: string) {
     const e = edits[id]
@@ -248,16 +290,66 @@ export function Players() {
             <option key={r} value={r}>{r}</option>
           ))}
         </select>
+        <label className="flex items-center gap-1 text-xs text-slate-500">
+          <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+          show hidden
+        </label>
       </div>
       <p className="mb-2 text-xs text-slate-400">{filtered.length} shown</p>
+
+      {/* Manual merge: tick 2+ of the same person, pick the correct name */}
+      {selectedRows.length >= 2 && (
+        <div className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+          <p className="mb-2 text-sm font-medium">
+            Merge {selectedRows.length} selected — keep which name?
+          </p>
+          <div className="mb-2 flex flex-wrap gap-3">
+            {selectedRows.map((r) => (
+              <label key={r.id} className="flex items-center gap-1 text-sm">
+                <input
+                  type="radio"
+                  name="keeper"
+                  checked={keeperId === r.id}
+                  onChange={() => setKeeperId(r.id)}
+                />
+                {r.player_name ?? '(no name)'}
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => void mergeSelected()}
+              disabled={busy || !keeperId}
+              className="rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+            >
+              Merge into “{selectedRows.find((r) => r.id === keeperId)?.player_name ?? '…'}”
+            </button>
+            <button
+              onClick={() => { setSel(new Set()); setKeeperId(null) }}
+              className="rounded-md border border-slate-300 px-3 py-1 text-sm hover:bg-white"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       <ul className="space-y-2">
         {filtered.slice(0, 300).map((r) => {
           const e = edits[r.id]
           if (!e) return null
           return (
-            <li key={r.id} className="rounded-lg border border-slate-200 bg-white p-2">
+            <li
+              key={r.id}
+              className={`rounded-lg border bg-white p-2 ${r.hidden ? 'border-slate-200 opacity-60' : 'border-slate-200'}`}
+            >
               <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="checkbox"
+                  title="Select to merge"
+                  checked={sel.has(r.id)}
+                  onChange={() => toggleSel(r.id)}
+                />
                 <input
                   value={e.player_name}
                   onChange={(ev) => setE(r.id, { player_name: ev.target.value })}
@@ -287,6 +379,13 @@ export function Players() {
                   className="rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
                 >
                   Save
+                </button>
+                <button
+                  onClick={() => void toggleHidePlayer(r.id, r.hidden)}
+                  title={r.hidden ? 'Unhide' : 'Hide from lists'}
+                  className="text-xs text-slate-400 hover:text-rose-600"
+                >
+                  {r.hidden ? 'unhide' : 'hide'}
                 </button>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">

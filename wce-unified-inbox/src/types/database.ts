@@ -127,6 +127,7 @@ export type Database = {
           title: string | null
           type: Database['public']['Enums']['inbox_conversation_type']
           unread_count: number
+          hidden: boolean
         }
         Insert: {
           account_id?: string | null
@@ -141,6 +142,7 @@ export type Database = {
           title?: string | null
           type?: Database['public']['Enums']['inbox_conversation_type']
           unread_count?: number
+          hidden?: boolean
         }
         Update: {
           account_id?: string | null
@@ -155,6 +157,7 @@ export type Database = {
           title?: string | null
           type?: Database['public']['Enums']['inbox_conversation_type']
           unread_count?: number
+          hidden?: boolean
         }
         Relationships: [
           {
@@ -349,6 +352,7 @@ export type Database = {
           notes: string | null
           outreach_status: string | null
           do_not_message: boolean
+          hidden: boolean
           phone: string | null
           player_name: string | null
           region: string | null
@@ -371,6 +375,7 @@ export type Database = {
           notes?: string | null
           outreach_status?: string | null
           do_not_message?: boolean
+          hidden?: boolean
           phone?: string | null
           player_name?: string | null
           region?: string | null
@@ -393,6 +398,7 @@ export type Database = {
           notes?: string | null
           outreach_status?: string | null
           do_not_message?: boolean
+          hidden?: boolean
           phone?: string | null
           player_name?: string | null
           region?: string | null

@@ -65,22 +65,23 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
         beeper_chat_id?: string
         phone?: string
         account_id?: string
+        channel?: 'sms' | 'thread'
       } | null
 
-      // Three recipient shapes, in priority order:
-      //  1. an existing Beeper chat id (CRM contact already threaded)
-      //  2. an existing conversation (look up its chat id)
-      //  3. a raw phone number → start a new chat and send in one step
+      // Channel choice: 'sms' forces the phone path; 'thread' (or unset/auto)
+      // prefers an existing chat, falling back to the phone.
       let chatId: string | null = null
-      if (data?.beeper_chat_id) {
-        chatId = data.beeper_chat_id
-      } else if (data?.conversation_id) {
-        const { data: conv } = await db
-          .from('inbox_conversations')
-          .select('external_chat_id, adapter')
-          .eq('id', data.conversation_id)
-          .single()
-        if (conv && conv.adapter === adapter.id) chatId = conv.external_chat_id
+      if (data?.channel !== 'sms') {
+        if (data?.beeper_chat_id) {
+          chatId = data.beeper_chat_id
+        } else if (data?.conversation_id) {
+          const { data: conv } = await db
+            .from('inbox_conversations')
+            .select('external_chat_id, adapter')
+            .eq('id', data.conversation_id)
+            .single()
+          if (conv && conv.adapter === adapter.id) chatId = conv.external_chat_id
+        }
       }
 
       const phone = !chatId && data?.phone ? normalizeAuMobile(data.phone) : null
