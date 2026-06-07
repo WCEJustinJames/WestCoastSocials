@@ -54,6 +54,10 @@ interface Edit {
   stakes: string
   activity: string
   do_not_message: boolean
+  contact_day: string
+  contact_window: string
+  contact_frequency_days: string
+  rapport: number
 }
 const toEdit = (r: Row): Edit => ({
   player_name: r.player_name ?? '',
@@ -62,6 +66,10 @@ const toEdit = (r: Row): Edit => ({
   stakes: (r.stakes ?? []).join(', '),
   activity: r.activity ?? '',
   do_not_message: r.do_not_message,
+  contact_day: r.contact_day ?? '',
+  contact_window: r.contact_window ?? '',
+  contact_frequency_days: r.contact_frequency_days != null ? String(r.contact_frequency_days) : '',
+  rapport: r.rapport ?? 0,
 })
 
 export function Players() {
@@ -164,6 +172,10 @@ export function Players() {
         stakes: e.stakes.split(',').map((s) => s.trim()).filter(Boolean),
         activity: e.activity.trim() || null,
         do_not_message: e.do_not_message,
+        contact_day: e.contact_day || null,
+        contact_window: e.contact_window || null,
+        contact_frequency_days: e.contact_frequency_days ? Number(e.contact_frequency_days) : null,
+        rapport: e.rapport || null,
       })
       .eq('id', id)
     setBusy(false)
@@ -464,6 +476,46 @@ export function Players() {
                   placeholder="Activity"
                   className="w-28 rounded-md border border-slate-200 px-2 py-1 text-xs outline-none focus:border-emerald-500"
                 />
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-slate-400">contact:</span>
+                <select
+                  value={e.contact_day}
+                  onChange={(ev) => setE(r.id, { contact_day: ev.target.value })}
+                  className="rounded-md border border-slate-200 px-1 py-1"
+                >
+                  <option value="">day —</option>
+                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+                <select
+                  value={e.contact_window}
+                  onChange={(ev) => setE(r.id, { contact_window: ev.target.value })}
+                  className="rounded-md border border-slate-200 px-1 py-1"
+                >
+                  <option value="">time —</option>
+                  {['Morning', 'Afternoon', 'Evening'].map((w) => (
+                    <option key={w} value={w}>{w}</option>
+                  ))}
+                </select>
+                <input
+                  value={e.contact_frequency_days}
+                  onChange={(ev) => setE(r.id, { contact_frequency_days: ev.target.value.replace(/\D/g, '') })}
+                  placeholder="every N days"
+                  className="w-24 rounded-md border border-slate-200 px-2 py-1"
+                />
+                <span className="ml-1 text-slate-400">rapport:</span>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setE(r.id, { rapport: e.rapport === n ? 0 : n })}
+                    title={`${n} star${n > 1 ? 's' : ''}`}
+                    className={n <= e.rapport ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}
+                  >
+                    ★
+                  </button>
+                ))}
               </div>
             </li>
           )

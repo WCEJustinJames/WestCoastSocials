@@ -52,6 +52,10 @@ export function Batches() {
   // Which channel to contact CRM players on when more than one is available.
   const [channel, setChannel] = useState<'auto' | 'sms' | 'thread'>('auto')
   const [showHidden, setShowHidden] = useState(false)
+  // weekly contact-slot filters + scheduled send time
+  const [cDay, setCDay] = useState('all')
+  const [cWindow, setCWindow] = useState('all')
+  const [scheduleAt, setScheduleAt] = useState('')
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [name, setName] = useState('')
@@ -151,25 +155,40 @@ export function Batches() {
         const chosen: 'thread' | 'sms' = useThread ? 'thread' : 'sms'
         const newSms = chosen === 'sms' && !hasThread // cold SMS to someone with no thread
         const channels = [hasPhone && 'SMS', hasThread && 'thread'].filter(Boolean).join(' + ')
+        // Frequency cap: don't re-contact within the player's contact_frequency_days.
+        const tooSoon =
+          !!o.last_contacted &&
+          !!o.contact_frequency_days &&
+          Date.now() - new Date(o.last_contacted).getTime() <
+            o.contact_frequency_days * 24 * 60 * 60 * 1000
         return {
           key: o.id,
           name: nm,
           sub: o.region ?? '—',
           sendable,
-          guard: newSms,
+          guard: newSms || tooSoon,
           guardReason: !sendable
             ? channel === 'thread'
               ? 'No existing thread'
               : channel === 'sms'
                 ? 'No phone'
                 : 'No phone or thread'
-            : newSms
-              ? 'Will start a NEW SMS chat'
-              : null,
-          badge: !sendable ? 'unavailable' : newSms ? 'new SMS' : channels || null,
+            : tooSoon
+              ? `Contacted < ${o.contact_frequency_days}d ago`
+              : newSms
+                ? 'Will start a NEW SMS chat'
+                : null,
+          badge: !sendable
+            ? 'unavailable'
+            : tooSoon
+              ? 'too soon'
+              : newSms
+                ? 'new SMS'
+                : channels || null,
           hidden: o.hidden,
           personId: null,
           data: {
+            outreach_id: o.id,
             beeper_chat_id: o.beeper_chat_id,
             phone: o.phone,
             account_id: 'gmessages',
@@ -184,10 +203,12 @@ export function Batches() {
         if (region !== 'all' && o.region !== region) return false
         if (stake !== 'all' && !(o.stakes ?? []).includes(stake)) return false
         if (activity !== 'all' && o.activity !== activity) return false
+        if (cDay !== 'all' && o.contact_day !== cDay) return false
+        if (cWindow !== 'all' && o.contact_window !== cWindow) return false
         if (q && !r.name.toLowerCase().includes(q)) return false
         return true
       })
-  }, [source, conversations, outreach, network, region, stake, activity, recipientQuery, channel])
+  }, [source, conversations, outreach, network, region, stake, activity, recipientQuery, channel, cDay, cWindow])
 
   function switchSource(s: Source) {
     setSource(s)
@@ -283,15 +304,22 @@ export function Batches() {
     }
     const { error } = await supabase
       .from('inbox_batches')
-      .update({ status: 'approved' })
+      .update({
+        status: 'approved',
+        scheduled_for: scheduleAt ? new Date(scheduleAt).toISOString() : null,
+      })
       .eq('id', batchId)
     setBusy(false)
     if (error) {
       setStatus(`Error: ${error.message}`)
       return
     }
+    const when = scheduleAt
+      ? `scheduled for ${new Date(scheduleAt).toLocaleString()}`
+      : 'send on the next sync'
     resetAll()
-    setStatus(`Approved ✓ — ${includedCount} message(s) send on the next sync, paced ~1.5s apart.`)
+    setScheduleAt('')
+    setStatus(`Approved ✓ — ${includedCount} message(s) ${when}, paced ~1.5s apart.`)
     setTimeout(() => setStatus(null), 8000)
   }
 
@@ -317,7 +345,21 @@ export function Batches() {
               unticked by default.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 text-xs text-slate-500">
+              schedule
+              <input
+                type="datetime-local"
+                value={scheduleAt}
+                onChange={(e) => setScheduleAt(e.target.value)}
+                className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+              />
+            </label>
+            {scheduleAt && (
+              <button onClick={() => setScheduleAt('')} className="text-xs text-slate-400 hover:underline">
+                clear
+              </button>
+            )}
             <button
               onClick={resetAll}
               className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100"
@@ -454,6 +496,18 @@ export function Batches() {
                 <option value="auto">Channel: auto</option>
                 <option value="thread">Existing thread only</option>
                 <option value="sms">SMS (text)</option>
+              </select>
+              <select value={cDay} onChange={(e) => setCDay(e.target.value)} title="Preferred contact day" className="rounded-md border border-slate-300 px-2 py-1">
+                <option value="all">Any day</option>
+                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              <select value={cWindow} onChange={(e) => setCWindow(e.target.value)} title="Preferred contact time" className="rounded-md border border-slate-300 px-2 py-1">
+                <option value="all">Any time</option>
+                {['Morning', 'Afternoon', 'Evening'].map((w) => (
+                  <option key={w} value={w}>{w}</option>
+                ))}
               </select>
             </>
           )}

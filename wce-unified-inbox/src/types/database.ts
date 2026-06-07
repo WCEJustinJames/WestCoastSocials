@@ -92,6 +92,7 @@ export type Database = {
           status: Database['public']['Enums']['inbox_batch_status']
           template_body: string
           variation_schema: Json
+          scheduled_for: string | null
         }
         Insert: {
           created_at?: string
@@ -101,6 +102,7 @@ export type Database = {
           status?: Database['public']['Enums']['inbox_batch_status']
           template_body: string
           variation_schema?: Json
+          scheduled_for?: string | null
         }
         Update: {
           created_at?: string
@@ -110,6 +112,7 @@ export type Database = {
           status?: Database['public']['Enums']['inbox_batch_status']
           template_body?: string
           variation_schema?: Json
+          scheduled_for?: string | null
         }
         Relationships: []
       }
@@ -351,6 +354,10 @@ export type Database = {
           last_name: string | null
           notes: string | null
           outreach_status: string | null
+          contact_day: string | null
+          contact_window: string | null
+          contact_frequency_days: number | null
+          rapport: number | null
           do_not_message: boolean
           hidden: boolean
           phone: string | null
@@ -374,6 +381,10 @@ export type Database = {
           last_name?: string | null
           notes?: string | null
           outreach_status?: string | null
+          contact_day?: string | null
+          contact_window?: string | null
+          contact_frequency_days?: number | null
+          rapport?: number | null
           do_not_message?: boolean
           hidden?: boolean
           phone?: string | null
@@ -397,6 +408,10 @@ export type Database = {
           last_name?: string | null
           notes?: string | null
           outreach_status?: string | null
+          contact_day?: string | null
+          contact_window?: string | null
+          contact_frequency_days?: number | null
+          rapport?: number | null
           do_not_message?: boolean
           hidden?: boolean
           phone?: string | null

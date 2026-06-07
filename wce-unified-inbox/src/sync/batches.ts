@@ -40,6 +40,8 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
     .from('inbox_batches')
     .select('id')
     .in('status', ['approved', 'sending'])
+    // Hold scheduled batches until their time; send immediately when unscheduled.
+    .or(`scheduled_for.is.null,scheduled_for.lte.${new Date().toISOString()}`)
     .limit(5)
   if (error) throw error
   if (!batches || batches.length === 0) return { sent: 0, failed: 0 }
@@ -66,6 +68,7 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
         phone?: string
         account_id?: string
         channel?: 'sms' | 'thread'
+        outreach_id?: string
       } | null
 
       // Channel choice: 'sms' forces the phone path; 'thread' (or unset/auto)
@@ -106,6 +109,13 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
             )
         if (r.ok) {
           await db.from('inbox_batch_items').update({ status: 'sent' }).eq('id', item.id)
+          // Stamp last_contacted so the per-player frequency cap is enforced.
+          if (data?.outreach_id) {
+            await db
+              .from('inbox_outreach')
+              .update({ last_contacted: new Date().toISOString().slice(0, 10) })
+              .eq('id', data.outreach_id)
+          }
           sent++
         } else {
           await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
