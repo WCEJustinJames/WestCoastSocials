@@ -142,8 +142,13 @@ export async function extractReceipts(
         .join('')
       const x = parseJson(text)
       const playerName = [x?.first_name, x?.surname].filter(Boolean).join(' ') || null
+      // Many photos in this chat aren't receipts (chip pics, chatter). If we got
+      // neither a name nor a mobile, file it as not_receipt so it's kept for
+      // dedup but excluded from the review list.
+      const usable = !!(playerName || x?.mobile)
 
       const { error } = await db.from('inbox_receipts').insert({
+        review_status: usable ? 'pending' : 'not_receipt',
         external_message_id: m.id,
         chat_id: chat.id,
         captured_at: m.timestamp,
@@ -163,9 +168,13 @@ export async function extractReceipts(
       })
       if (error) throw error
       processed++
-      console.log(
-        `[receipts] ${playerName ?? '(no name)'} — ${x?.mobile ?? 'no mobile'} · ${x?.venue ?? '?'} · win ${x?.total_winnings ?? '?'}`,
-      )
+      if (usable) {
+        console.log(
+          `[receipts] ${playerName ?? '(no name)'} — ${x?.mobile ?? 'no mobile'} · ${x?.venue ?? '?'} · win ${x?.total_winnings ?? '?'}`,
+        )
+      } else {
+        console.log('[receipts] (not a receipt — skipped)')
+      }
     } catch (e) {
       console.error(`[receipts] error on message ${m.id}:`, e instanceof Error ? e.message : e)
       skipped++
