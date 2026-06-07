@@ -399,6 +399,72 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_receipts: {
+        Row: {
+          amount: number | null
+          captured_at: string | null
+          chat_id: string | null
+          created_at: string
+          external_message_id: string
+          first_name: string | null
+          game_type: string | null
+          id: string
+          image_file: string | null
+          mobile: string | null
+          paid: boolean | null
+          player_name: string | null
+          raw_extract: Json | null
+          receipt_date: string | null
+          review_status: string
+          surname: string | null
+          total_winnings: number | null
+          venue: string | null
+          club: string | null
+        }
+        Insert: {
+          amount?: number | null
+          captured_at?: string | null
+          chat_id?: string | null
+          created_at?: string
+          external_message_id: string
+          first_name?: string | null
+          game_type?: string | null
+          id?: string
+          image_file?: string | null
+          mobile?: string | null
+          paid?: boolean | null
+          player_name?: string | null
+          raw_extract?: Json | null
+          receipt_date?: string | null
+          review_status?: string
+          surname?: string | null
+          total_winnings?: number | null
+          venue?: string | null
+          club?: string | null
+        }
+        Update: {
+          amount?: number | null
+          captured_at?: string | null
+          chat_id?: string | null
+          created_at?: string
+          external_message_id?: string
+          first_name?: string | null
+          game_type?: string | null
+          id?: string
+          image_file?: string | null
+          mobile?: string | null
+          paid?: boolean | null
+          player_name?: string | null
+          raw_extract?: Json | null
+          receipt_date?: string | null
+          review_status?: string
+          surname?: string | null
+          total_winnings?: number | null
+          venue?: string | null
+          club?: string | null
+        }
+        Relationships: []
+      }
       inbox_people: {
         Row: {
           created_at: string

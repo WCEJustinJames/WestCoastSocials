@@ -34,6 +34,13 @@ _Last updated: 2026-06-07. Read this first when resuming._
   +61 E.164 and starts the chat + sends in one call (`adapter.startChatAndSend`). In the Batches CRM
   list these show a **"new SMS"** badge and are **unticked by default** (cold-outreach opt-in; pacing
   still 1.5s/20-per-pass — Beeper can suspend accounts for volume). Players with neither show "no phone".
+- **Receipt extraction (2026-06-07), BUILT, needs a live run.** The "Poker Banking and Cash Chips"
+  Messenger group holds photos of WCP banking forms (printed template + handwritten First/Surname,
+  **Mobile**, Venue, Club, Tournament/Cash, Winnings, Amount). Beeper exposes each as a local file
+  (`srcURL: file:///C:/Users/justi/AppData/Roaming/BeeperTexts/media/…`). `npm run receipts [N]` reads
+  those off disk, runs Claude **vision** to extract the fields, and saves to a new `inbox_receipts`
+  table (migration `0003`, `review_status='pending'`, dedup on message id). Probe: `npm run beeper:receipts`.
+  Next: review UI + push confirmed mobiles into the CRM so they're reachable via new-SMS.
 - All code is on branch **`claude/laughing-ritchie-Xmvvk`** in
   **`WCEJustinJames/WestCoastSocials`**, folder **`wce-unified-inbox/`**, draft **PR #2**.
   (A standalone repo, `WCEJustinJames/West-Coast-Game-Messaging`, was also created 2026-06-07

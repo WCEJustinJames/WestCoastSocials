@@ -14,7 +14,8 @@
     "beeper:probe": "tsx src/adapters/beeper/probe.ts",
     "beeper:contacts": "tsx src/adapters/beeper/contacts.ts",
     "beeper:startchat": "tsx src/adapters/beeper/startchat.ts",
-    "beeper:receipts": "tsx src/adapters/beeper/receipts.ts"
+    "beeper:receipts": "tsx src/adapters/beeper/receipts.ts",
+    "receipts": "tsx src/sync/receipts-run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
