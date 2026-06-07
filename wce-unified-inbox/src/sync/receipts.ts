@@ -11,22 +11,28 @@ export interface ReceiptResult {
   skipped: number
 }
 
-const PROMPT = `This is a West Coast Poker (WCP) "banking / cash chips" receipt form — mostly a printed template with handwritten entries.
+const PROMPT = `You are reading a photo that MIGHT be a West Coast Poker (WCP) "Banking / Cash Chips" payout form: a printed template with handwritten entries, fields stacked top-to-bottom (Date, Venue, Club, then "Player Details" with First Name / Surname / Mobile Number / Recipient Signature, then Payment Details with Total Winnings / TOTAL BANK TRANSFER AMOUNT).
 
-Extract these fields and return ONLY a JSON object (no prose, no code fences):
+If the image is NOT one of these forms (e.g. a photo of chips/cash, a screenshot, a chat message, anything else), return exactly: {"not_receipt": true}
+
+Otherwise return ONLY this JSON (no prose, no code fences):
 {
-  "date": string|null,            // the handwritten Date, as written
-  "venue": string|null,           // Venue
-  "club": string|null,            // the circled/ticked Club (e.g. Kingsley Westside FC)
-  "first_name": string|null,      // Player Details > First Name
-  "surname": string|null,         // Surname
-  "mobile": string|null,          // Mobile Number, digits only as written (keep leading 0)
-  "game_type": "cash"|"tournament"|null,  // whichever box is ticked
-  "total_winnings": number|null,  // Total Winnings amount as a number
-  "amount": number|null,          // TOTAL BANK TRANSFER AMOUNT as a number
-  "paid": boolean|null            // is the PAID? box ticked
+  "date": string|null,
+  "venue": string|null,
+  "club": string|null,
+  "first_name": string|null,      // the PLAYER's first name on the "First Name" line under Player Details
+  "surname": string|null,         // the PLAYER's surname on the "Surname" line
+  "mobile": string|null,          // ONLY the digits written on the "Mobile Number" line, keep leading 0
+  "game_type": "cash"|"tournament"|null,
+  "total_winnings": number|null,
+  "amount": number|null,
+  "paid": boolean|null
 }
-Use null for anything blank or unreadable. Do not guess a phone number you cannot read clearly.`
+
+STRICT RULES:
+- The player is the name on First Name + Surname. Do NOT use the Recipient Signature, any organiser/staff name, or a name printed in the header/footer.
+- "mobile" comes ONLY from the Mobile Number line. NEVER use the date, an amount, an ABN, or any other number on the form as the mobile.
+- If a field is blank, crossed out, or you cannot read it clearly, return null. Do NOT guess — a null is better than a wrong value.`
 
 interface Extracted {
   date?: string | null
