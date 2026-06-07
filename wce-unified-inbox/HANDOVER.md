@@ -1,26 +1,34 @@
 # WCE Unified Inbox — Session Handover
 
-_Last updated: 2026-06-04. Read this first when resuming._
+_Last updated: 2026-06-07. Read this first when resuming._
 
 ## TL;DR status
 - **Step 1 (inbound mirror) is DONE and working.** 108 people, 111 conversations,
   1,463 messages mirrored from Beeper into Supabase. The UI works (search,
   channel filters, unread toggle, clean rich-text rendering).
-- **Phase A (approve-to-send) is BUILT but not yet confirmed live.** The send
-  rail (outbox worker + reply composer) is committed; it hadn't completed one
-  real end-to-end send yet because of local-config friction (see "Immediate
-  next step").
+- **Phase A (approve-to-send) is DONE and CONFIRMED LIVE (2026-06-07).** Completed a
+  real end-to-end send: approved a draft in the UI → outbox logged `[outbox] sent=1`
+  → message delivered. The send rail (outbox worker + reply composer) is working.
+- **UI polish (2026-06-07):** the open thread now auto-refreshes (polls every 5s) and
+  auto-scrolls to the most recent exchange — no more clicking away/back or manual scroll.
 - All code is on branch **`claude/laughing-ritchie-Xmvvk`** in
   **`WCEJustinJames/WestCoastSocials`**, folder **`wce-unified-inbox/`**, draft **PR #2**.
 
 ## Immediate next step (resume here)
-On Justin's Windows desktop, get `npm run sync` connecting and confirm one real send:
-1. `.env` must have **`BEEPER_BASE_URL=http://localhost:23373`** — Remote Access was
-   turned OFF, so the bridge no longer answers on the LAN IP `192.168.0.69`, only localhost.
-2. `.env` must have a **valid, current** `BEEPER_ACCESS_TOKEN=bdapi_…` (no trailing newline).
-3. Run `npm run beeper:probe` → should list 3 accounts. Then `npm run sync` (no ECONNREFUSED).
-4. In the UI, open the **"Justin Lewis" (Google Messages)** self-thread, type a test,
-   **Approve & send**, and confirm window 2 logs `[outbox] sent=1` and it lands.
+Phase A is live, so the next build target is **AI drafting** (Roadmap item 1):
+generate suggested replies into `inbox_drafts` as `pending`, let Justin edit/approve
+in the UI. Needs an `ANTHROPIC_API_KEY` in `.env` + a draft-generation step.
+
+### Getting the local stack running again (verified 2026-06-07)
+1. `.env` needs **`BEEPER_BASE_URL=http://localhost:23373`** — Remote Access is OFF, so the
+   bridge only answers on localhost, never the LAN IP `192.168.0.69`.
+2. `.env` needs a valid `BEEPER_ACCESS_TOKEN=bdapi_…`. Cleanest write that dodges the
+   PowerShell paste/BOM/newline traps: one here-string with the token **inline**, piped to
+   `Set-Content -Encoding ascii`. (Notepad-editing `.env` directly is the no-fuss fallback.)
+3. `npm run beeper:probe` → should list 3 accounts (matrix/Beeper, facebookgo/Facebook,
+   gmessages/Google Messages). Then `npm run sync` (no ECONNREFUSED, no 401).
+4. UI test send: open the **"Justin Lewis" (Google Messages)** self-thread, type a test,
+   **Approve & send**, confirm the sync window logs `[outbox] sent=1` and it lands.
 
 ## Architecture (what runs where)
 - **Mirror + outbox** = a Node process on Justin's PC (the only machine that can reach

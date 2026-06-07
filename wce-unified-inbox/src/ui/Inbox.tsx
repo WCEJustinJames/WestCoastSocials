@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Database } from '../types/database'
 
@@ -24,6 +24,9 @@ export function Inbox() {
   const [replyText, setReplyText] = useState('')
   const [replyStatus, setReplyStatus] = useState<string | null>(null)
 
+  // anchor at the bottom of the thread so it opens on the most recent exchange
+  const bottomRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     supabase
       .from('inbox_conversations')
@@ -38,14 +41,35 @@ export function Inbox() {
   useEffect(() => {
     setReplyText('')
     setReplyStatus(null)
+    setMessages([])
     if (!activeId) return
-    supabase
-      .from('inbox_messages')
-      .select('*')
-      .eq('conversation_id', activeId)
-      .order('timestamp', { ascending: true })
-      .then(({ data }) => setMessages((data as Message[]) ?? []))
+
+    let cancelled = false
+    const loadMessages = () =>
+      supabase
+        .from('inbox_messages')
+        .select('*')
+        .eq('conversation_id', activeId)
+        .order('timestamp', { ascending: true })
+        .then(({ data }) => {
+          if (!cancelled) setMessages((data as Message[]) ?? [])
+        })
+
+    loadMessages()
+    // Poll the open thread so sent replies + new inbound appear on their own,
+    // without having to click away and back.
+    const handle = setInterval(loadMessages, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(handle)
+    }
   }, [activeId])
+
+  // Keep the thread pinned to the most recent exchange: scroll to the bottom
+  // when a thread opens and whenever new messages arrive.
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: 'end' })
+  }, [activeId, messages.length])
 
   // Debounced message-content search: when the query is 2+ chars, also find
   // conversations whose *message text* matches (not just the contact name).
@@ -222,6 +246,7 @@ export function Inbox() {
                   </div>
                 </div>
               ))}
+              <div ref={bottomRef} />
             </div>
             <footer className="border-t border-slate-200 bg-white px-4 py-3">
               <textarea
