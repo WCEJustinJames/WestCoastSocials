@@ -138,17 +138,20 @@ Node + Git installed. PowerShell execution policy set to RemoteSigned (CurrentUs
    leave the empty `WCE-APP` repo alone; the session integration can't create repos. Decide a home.
 
 ## Players tab — region/venue & tags/stakes dropdowns (DONE 2026-06-07)
-The Players tab (backed by `inbox_outreach`) now edits **region/venue** and **tags/stakes** via
-dropdowns instead of free text (`src/ui/Players.tsx`):
-- **Region/venue:** single-select populated from the distinct `region` values already in the data,
-  preserving any current custom value, with an **Other…** option (prompt) to add a new one.
-- **Tags/stakes:** multi-select — removable chips for current values plus a **+ tag / stake…**
-  dropdown of distinct `stakes` values, also with **Other…**. Saved back to the `stakes` text[].
-- Options derive from the live Airtable-sourced vocabulary, so they self-populate; the existing
-  "Tidy region/venue values" merge tool still handles canonicalising variants.
-- Possible follow-ups: promote a fixed/controlled vocabulary (lookup table) instead of
-  data-derived options; give `venues` (text[]) its own control separate from `region`; make
-  `activity` a dropdown too.
+The Players tab (backed by `inbox_outreach`) now edits these via dropdowns instead of free text
+(`src/ui/Players.tsx`). `region` was messy free-text (zones mixed with venue names + typos), and a
+clean `venues` text[] already existed — so they're now **two separate controls**:
+- **Region (zone):** single-select from a **fixed** list `REGIONS = North/South/Central/Both`.
+- **Venue:** multi-select (chips) from a **fixed** list `VENUES` (MCT, Woodvale, Bentley, Kenwick,
+  Kingsley, Leederville, Adriatic, Stirling, Planet Royale) → saved to `venues` text[].
+- **Tags/stakes:** multi-select (chips) from a **fixed** list `STAKES` ($2/5, $5/10, $2/5/10, PLO)
+  → saved to `stakes` text[].
+- All three keep an **Other…** prompt, and any existing non-standard value on a player is preserved
+  and shown as the current selection. The lists are plain consts at the top of `Players.tsx` — edit
+  to change the vocabulary.
+- Open: `stakes` still holds some tag-ish values (`Cash Players | North/South`, `* starred`) — could
+  split into a dedicated tags field/control. The "Tidy region/venue values" merge tool still helps
+  canonicalise the legacy free-text `region` values into the new zones.
 
 ## Repo map
 - `src/adapters/types.ts` — `ChannelAdapter` interface (pluggable; LetsPoker slots here).
