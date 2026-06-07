@@ -348,6 +348,7 @@ export type Database = {
           last_name: string | null
           notes: string | null
           outreach_status: string | null
+          do_not_message: boolean
           phone: string | null
           player_name: string | null
           region: string | null
@@ -369,6 +370,7 @@ export type Database = {
           last_name?: string | null
           notes?: string | null
           outreach_status?: string | null
+          do_not_message?: boolean
           phone?: string | null
           player_name?: string | null
           region?: string | null
@@ -390,6 +392,7 @@ export type Database = {
           last_name?: string | null
           notes?: string | null
           outreach_status?: string | null
+          do_not_message?: boolean
           phone?: string | null
           player_name?: string | null
           region?: string | null

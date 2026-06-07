@@ -43,6 +43,8 @@ function mergeRows(rows: Row[]): { primary: Row; merged: Partial<Row>; dropIds: 
     stakes: unionArr(ordered.map((r) => r.stakes)),
     venues: unionArr(ordered.map((r) => r.venues)),
     notes: ordered.map((r) => r.notes).filter(Boolean).join(' | ') || null,
+    // If any copy is banned, the merged player stays banned.
+    do_not_message: ordered.some((r) => r.do_not_message),
   }
   return { primary, merged, dropIds: ordered.slice(1).map((r) => r.id) }
 }

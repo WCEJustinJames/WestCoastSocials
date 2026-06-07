@@ -74,6 +74,7 @@ export function Batches() {
     supabase
       .from('inbox_outreach')
       .select('*')
+      .eq('do_not_message', false)
       .order('player_name', { ascending: true })
       .then(({ data }) => setOutreach((data as OutreachRow[]) ?? []))
   }, [source, outreach.length])
