@@ -17,7 +17,7 @@ export interface ReceiptResult {
 
 const PROMPT = `You are reading a photo that MIGHT be a West Coast Poker (WCP) "Banking / Cash Chips" payout form: a printed template with handwritten entries, fields stacked top-to-bottom (Date, Venue, Club, then "Player Details" with First Name / Surname / Mobile Number / Recipient Signature, then Payment Details with Total Winnings / TOTAL BANK TRANSFER AMOUNT).
 
-If the image is NOT one of these forms (e.g. a photo of chips/cash, a screenshot, a chat message, anything else), return exactly: {"not_receipt": true}
+Only return {"not_receipt": true} if there is NO payout form in the image at all (e.g. a photo of just chips/cash, a screenshot, or a chat). If a WCP form with a "Player Details" section is visible — even faint, angled, shadowed, or partly filled — DO extract it: read what you can and use null for the rest. Err on the side of treating it as a receipt.
 
 Otherwise return ONLY this JSON (no prose, no code fences):
 {
