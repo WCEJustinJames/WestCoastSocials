@@ -25,6 +25,7 @@ function messagedRecently(iso: string | null): boolean {
 export function Batches() {
   const [conversations, setConversations] = useState<ConvRow[]>([])
   const [network, setNetwork] = useState('all')
+  const [recipientQuery, setRecipientQuery] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [name, setName] = useState('')
   const [template, setTemplate] = useState('')
@@ -49,10 +50,17 @@ export function Batches() {
     () => Array.from(new Set(conversations.map((c) => c.network))).sort(),
     [conversations],
   )
-  const visible = useMemo(
-    () => conversations.filter((c) => network === 'all' || c.network === network),
-    [conversations, network],
-  )
+  const visible = useMemo(() => {
+    const q = recipientQuery.trim().toLowerCase()
+    return conversations.filter((c) => {
+      if (network !== 'all' && c.network !== network) return false
+      if (q) {
+        const nm = (c.inbox_people?.display_name ?? c.title ?? c.external_chat_id).toLowerCase()
+        if (!nm.includes(q)) return false
+      }
+      return true
+    })
+  }, [conversations, network, recipientQuery])
 
   const nameOf = (c: ConvRow) =>
     c.inbox_people?.display_name ?? c.title ?? c.external_chat_id
@@ -288,6 +296,13 @@ export function Batches() {
           </button>
         </div>
       </div>
+
+      <input
+        value={recipientQuery}
+        onChange={(e) => setRecipientQuery(e.target.value)}
+        placeholder="Search recipients by name…"
+        className="mb-2 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
+      />
 
       <div className="mb-4 max-h-72 overflow-y-auto rounded-md border border-slate-200">
         {visible.map((c) => {
