@@ -11,6 +11,7 @@ import { BeeperClient } from '../adapters/beeper/client'
 import { BeeperAdapter } from '../adapters/beeper/adapter'
 import { mirrorInbound } from './mirror'
 import { processOutbox } from './outbox'
+import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
@@ -40,6 +41,12 @@ async function runOnce(): Promise<void> {
   const out = await processOutbox(supabaseAdmin, adapter)
   if (out.sent || out.failed) {
     console.log(`[outbox] sent=${out.sent} failed=${out.failed}`)
+  }
+
+  // Batched variations: send items from any batch the human approved (throttled).
+  const batch = await processBatches(supabaseAdmin, adapter)
+  if (batch.sent || batch.failed) {
+    console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
   }
 
   // AI drafting: suggest replies into inbox_drafts as `pending` for review.

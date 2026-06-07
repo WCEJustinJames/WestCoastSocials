@@ -11,21 +11,26 @@ _Last updated: 2026-06-07. Read this first when resuming._
   → message delivered. The send rail (outbox worker + reply composer) is working.
 - **UI polish (2026-06-07):** the open thread now auto-refreshes (polls every 5s) and
   auto-scrolls to the most recent exchange — no more clicking away/back or manual scroll.
-- **AI drafting (Roadmap item 1) is BUILT (2026-06-07), not yet live-tested.** The sync loop
-  generates suggested replies into `inbox_drafts` as `pending`; the UI pre-fills the composer
-  with the suggestion so Justin edits → Approve (same approve-to-send gate). Opt-in: only runs
-  when `ANTHROPIC_API_KEY` is set. Uses Claude (`claude-opus-4-8` by default). **Needs a live
-  test:** add the key to `.env`, restart `npm run sync`, watch for `[drafts] generated=N`.
+- **AI drafting (Roadmap item 1) is DONE and CONFIRMED LIVE (2026-06-07).** `[drafts] generated=N`
+  in the sync loop; suggestions pre-fill the composer; approve → outbox sends. Defaults to
+  `claude-opus-4-8`; opt-in via `ANTHROPIC_API_KEY`. (Note: drafts for every inbound-last thread,
+  so it spends until all are covered — set `ANTHROPIC_MODEL=claude-haiku-4-5` to cut cost.)
+- **Batched variations (Roadmap item 2) is BUILT (2026-06-07), not yet live-tested.** New "Batches"
+  tab in the UI: write one template (`{{name}}` / `{{first_name}}`), pick recipients, preview each
+  rendered message (contact-data guard unticks anyone messaged in the last 24h), approve. A throttled
+  server sender (`src/sync/batches.ts`, ~1.5s between sends, 20/pass) pushes approved items through
+  the Beeper adapter — logs `[batch] sent=N`. **Live test:** open Batches, build a tiny batch to a
+  self-thread, approve, watch for `[batch] sent=`.
 - All code is on branch **`claude/laughing-ritchie-Xmvvk`** in
   **`WCEJustinJames/WestCoastSocials`**, folder **`wce-unified-inbox/`**, draft **PR #2**.
   (A standalone repo, `WCEJustinJames/West-Coast-Game-Messaging`, was also created 2026-06-07
   as the intended future home — not yet the source of truth; PR #2 here still is.)
 
 ## Immediate next step (resume here)
-Live-test **AI drafting**: put `ANTHROPIC_API_KEY=sk-ant-…` in `.env`, restart `npm run sync`,
-and confirm the loop logs `[drafts] AI drafting on …` then `[drafts] generated=N`. Open a thread
-where a player messaged last — the composer should pre-fill with a suggestion to edit/approve.
-Then the next build target is **batched variations** (Roadmap item 2).
+Live-test **batched variations**: open the **Batches** tab, write a short template with
+`{{first_name}}`, pick one or two recipients (a self-thread is safest), Build preview → Approve &
+send, and confirm the sync window logs `[batch] sent=N`. After that, the next targets are the
+**contact-data guard** beyond the 24h flag (Roadmap item 3) and **Phase B auto-send** (item 4).
 
 ### AI drafting knobs (.env)
 - `ANTHROPIC_API_KEY` — unset = drafting off. Server-side only (the Node sync); never the browser.

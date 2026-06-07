@@ -1,5 +1,44 @@
+import { useState } from 'react'
 import { Inbox } from './ui/Inbox'
+import { Batches } from './ui/Batches'
+
+type View = 'inbox' | 'batches'
 
 export default function App() {
-  return <Inbox />
+  const [view, setView] = useState<View>('inbox')
+  return (
+    <div className="flex h-screen flex-col bg-slate-50 text-slate-900">
+      <nav className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-white px-3 py-1.5">
+        <span className="mr-2 text-sm font-semibold">WCE Unified Inbox</span>
+        <TabButton active={view === 'inbox'} onClick={() => setView('inbox')}>
+          Inbox
+        </TabButton>
+        <TabButton active={view === 'batches'} onClick={() => setView('batches')}>
+          Batches
+        </TabButton>
+      </nav>
+      <div className="min-h-0 flex-1">{view === 'inbox' ? <Inbox /> : <Batches />}</div>
+    </div>
+  )
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-md px-3 py-1 text-sm ${
+        active ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+      }`}
+    >
+      {children}
+    </button>
+  )
 }
