@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Inbox } from './ui/Inbox'
 import { Batches } from './ui/Batches'
+import { Receipts } from './ui/Receipts'
 
-type View = 'inbox' | 'batches'
+type View = 'inbox' | 'batches' | 'receipts'
 
 export default function App() {
   const [view, setView] = useState<View>('inbox')
@@ -16,8 +17,13 @@ export default function App() {
         <TabButton active={view === 'batches'} onClick={() => setView('batches')}>
           Batches
         </TabButton>
+        <TabButton active={view === 'receipts'} onClick={() => setView('receipts')}>
+          Receipts
+        </TabButton>
       </nav>
-      <div className="min-h-0 flex-1">{view === 'inbox' ? <Inbox /> : <Batches />}</div>
+      <div className="min-h-0 flex-1">
+        {view === 'inbox' ? <Inbox /> : view === 'batches' ? <Batches /> : <Receipts />}
+      </div>
     </div>
   )
 }
