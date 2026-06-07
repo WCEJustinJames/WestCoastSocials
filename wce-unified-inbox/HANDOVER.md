@@ -11,13 +11,28 @@ _Last updated: 2026-06-07. Read this first when resuming._
   → message delivered. The send rail (outbox worker + reply composer) is working.
 - **UI polish (2026-06-07):** the open thread now auto-refreshes (polls every 5s) and
   auto-scrolls to the most recent exchange — no more clicking away/back or manual scroll.
+- **AI drafting (Roadmap item 1) is BUILT (2026-06-07), not yet live-tested.** The sync loop
+  generates suggested replies into `inbox_drafts` as `pending`; the UI pre-fills the composer
+  with the suggestion so Justin edits → Approve (same approve-to-send gate). Opt-in: only runs
+  when `ANTHROPIC_API_KEY` is set. Uses Claude (`claude-opus-4-8` by default). **Needs a live
+  test:** add the key to `.env`, restart `npm run sync`, watch for `[drafts] generated=N`.
 - All code is on branch **`claude/laughing-ritchie-Xmvvk`** in
   **`WCEJustinJames/WestCoastSocials`**, folder **`wce-unified-inbox/`**, draft **PR #2**.
+  (A standalone repo, `WCEJustinJames/West-Coast-Game-Messaging`, was also created 2026-06-07
+  as the intended future home — not yet the source of truth; PR #2 here still is.)
 
 ## Immediate next step (resume here)
-Phase A is live, so the next build target is **AI drafting** (Roadmap item 1):
-generate suggested replies into `inbox_drafts` as `pending`, let Justin edit/approve
-in the UI. Needs an `ANTHROPIC_API_KEY` in `.env` + a draft-generation step.
+Live-test **AI drafting**: put `ANTHROPIC_API_KEY=sk-ant-…` in `.env`, restart `npm run sync`,
+and confirm the loop logs `[drafts] AI drafting on …` then `[drafts] generated=N`. Open a thread
+where a player messaged last — the composer should pre-fill with a suggestion to edit/approve.
+Then the next build target is **batched variations** (Roadmap item 2).
+
+### AI drafting knobs (.env)
+- `ANTHROPIC_API_KEY` — unset = drafting off. Server-side only (the Node sync); never the browser.
+- `ANTHROPIC_MODEL` — defaults to `claude-opus-4-8`.
+- `DRAFT_MAX_PER_PASS` — cap on suggestions generated per 15s pass (default 5), so it never
+  fans out into a burst of API calls. Drafting only fires for a conversation whose latest
+  message is inbound and that has no open (`pending`/`approved`) draft.
 
 ### Getting the local stack running again (verified 2026-06-07)
 1. `.env` needs **`BEEPER_BASE_URL=http://localhost:23373`** — Remote Access is OFF, so the

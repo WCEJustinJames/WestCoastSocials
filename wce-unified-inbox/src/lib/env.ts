@@ -12,6 +12,11 @@ export const env = {
   beeperApiVersion: (process.env.BEEPER_API_VERSION ?? 'v1') as 'v0' | 'v1',
   syncIntervalMs: Number(process.env.SYNC_INTERVAL_MS ?? 15000),
   syncLookbackDays: Number(process.env.SYNC_LOOKBACK_DAYS ?? 30),
+  // AI drafting (optional — leave the key unset to disable). When set, the sync
+  // loop generates suggested replies into inbox_drafts as `pending`.
+  anthropicKey: process.env.ANTHROPIC_API_KEY ?? '',
+  anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
+  draftMaxPerPass: Number(process.env.DRAFT_MAX_PER_PASS ?? 5),
 }
 
 export function requireEnv(keys: (keyof typeof env)[]): void {

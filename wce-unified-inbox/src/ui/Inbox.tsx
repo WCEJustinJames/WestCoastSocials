@@ -23,6 +23,8 @@ export function Inbox() {
   // reply composer
   const [replyText, setReplyText] = useState('')
   const [replyStatus, setReplyStatus] = useState<string | null>(null)
+  // id of the AI-suggested `pending` draft loaded into the composer (null = none)
+  const [pendingDraftId, setPendingDraftId] = useState<string | null>(null)
 
   // scroll container for the open thread, so it opens on the most recent exchange
   const threadRef = useRef<HTMLDivElement>(null)
@@ -39,8 +41,6 @@ export function Inbox() {
   }, [])
 
   useEffect(() => {
-    setReplyText('')
-    setReplyStatus(null)
     setMessages([])
     if (!activeId) return
 
@@ -62,6 +62,35 @@ export function Inbox() {
     return () => {
       cancelled = true
       clearInterval(handle)
+    }
+  }, [activeId])
+
+  // When a thread opens, reset the composer and pre-fill it with the latest
+  // AI-suggested `pending` draft (if any) so Justin can edit and approve it.
+  // Runs only on thread switch — NOT on the 5s poll — so it never clobbers what
+  // he's typing.
+  useEffect(() => {
+    setReplyText('')
+    setReplyStatus(null)
+    setPendingDraftId(null)
+    if (!activeId) return
+
+    let cancelled = false
+    supabase
+      .from('inbox_drafts')
+      .select('id, content')
+      .eq('conversation_id', activeId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (cancelled || !data || data.length === 0) return
+        setReplyText(data[0].content as string)
+        setPendingDraftId(data[0].id as string)
+        setReplyStatus('AI suggested this reply — edit and approve, or clear it.')
+      })
+    return () => {
+      cancelled = true
     }
   }, [activeId])
 
@@ -130,17 +159,25 @@ export function Inbox() {
   async function sendReply() {
     if (!active || !replyText.trim()) return
     setReplyStatus('Queuing…')
-    const { error } = await supabase.from('inbox_drafts').insert({
-      conversation_id: active.id,
-      content: replyText.trim(),
-      status: 'approved',
-      generated_by: 'manual',
-    })
+    const content = replyText.trim()
+    // If an AI draft is loaded, approve that row (preserving its `ai` provenance
+    // and any edits); otherwise create a fresh manual draft. Either way it lands
+    // as `approved` and the outbox sends it on the next pass.
+    const op = pendingDraftId
+      ? supabase.from('inbox_drafts').update({ content, status: 'approved' }).eq('id', pendingDraftId)
+      : supabase.from('inbox_drafts').insert({
+          conversation_id: active.id,
+          content,
+          status: 'approved',
+          generated_by: 'manual',
+        })
+    const { error } = await op
     if (error) {
       setReplyStatus(`Error: ${error.message}`)
       return
     }
     setReplyText('')
+    setPendingDraftId(null)
     setReplyStatus('Approved ✓ — sends on the next sync (~15s), then appears above.')
     setTimeout(() => setReplyStatus(null), 6000)
   }

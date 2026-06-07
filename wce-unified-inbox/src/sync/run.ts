@@ -4,12 +4,14 @@
  *   npm run sync          # poll forever
  *   npm run sync:once     # single pass, then exit
  */
+import Anthropic from '@anthropic-ai/sdk'
 import { env, requireEnv } from '../lib/env'
 import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { BeeperClient } from '../adapters/beeper/client'
 import { BeeperAdapter } from '../adapters/beeper/adapter'
 import { mirrorInbound } from './mirror'
 import { processOutbox } from './outbox'
+import { generateDrafts } from './drafting'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -20,6 +22,12 @@ const adapter = new BeeperAdapter(
     apiVersion: env.beeperApiVersion,
   }),
 )
+
+// AI drafting is opt-in: only runs when ANTHROPIC_API_KEY is set.
+const anthropic = env.anthropicKey ? new Anthropic({ apiKey: env.anthropicKey }) : null
+if (anthropic) {
+  console.log(`[drafts] AI drafting on (model ${env.anthropicModel}, max ${env.draftMaxPerPass}/pass)`)
+}
 
 async function runOnce(): Promise<void> {
   const since = new Date(Date.now() - env.syncLookbackDays * 86_400_000)
@@ -32,6 +40,19 @@ async function runOnce(): Promise<void> {
   const out = await processOutbox(supabaseAdmin, adapter)
   if (out.sent || out.failed) {
     console.log(`[outbox] sent=${out.sent} failed=${out.failed}`)
+  }
+
+  // AI drafting: suggest replies into inbox_drafts as `pending` for review.
+  if (anthropic) {
+    const d = await generateDrafts(
+      supabaseAdmin,
+      anthropic,
+      env.anthropicModel,
+      env.draftMaxPerPass,
+    )
+    if (d.generated) {
+      console.log(`[drafts] generated=${d.generated} skipped=${d.skipped}`)
+    }
   }
 }
 
