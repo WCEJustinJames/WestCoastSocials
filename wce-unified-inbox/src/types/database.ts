@@ -333,6 +333,72 @@ export type Database = {
           },
         ]
       }
+      inbox_outreach: {
+        Row: {
+          activity: string | null
+          airtable_id: string
+          beeper_chat_id: string | null
+          beeper_contact_name: string | null
+          email: string | null
+          first_name: string | null
+          game_type: string | null
+          id: string
+          last_active: string | null
+          last_contacted: string | null
+          last_name: string | null
+          notes: string | null
+          outreach_status: string | null
+          phone: string | null
+          player_name: string | null
+          region: string | null
+          stakes: string[]
+          synced_at: string
+          venues: string[]
+        }
+        Insert: {
+          activity?: string | null
+          airtable_id: string
+          beeper_chat_id?: string | null
+          beeper_contact_name?: string | null
+          email?: string | null
+          first_name?: string | null
+          game_type?: string | null
+          id?: string
+          last_active?: string | null
+          last_contacted?: string | null
+          last_name?: string | null
+          notes?: string | null
+          outreach_status?: string | null
+          phone?: string | null
+          player_name?: string | null
+          region?: string | null
+          stakes?: string[]
+          synced_at?: string
+          venues?: string[]
+        }
+        Update: {
+          activity?: string | null
+          airtable_id?: string
+          beeper_chat_id?: string | null
+          beeper_contact_name?: string | null
+          email?: string | null
+          first_name?: string | null
+          game_type?: string | null
+          id?: string
+          last_active?: string | null
+          last_contacted?: string | null
+          last_name?: string | null
+          notes?: string | null
+          outreach_status?: string | null
+          phone?: string | null
+          player_name?: string | null
+          region?: string | null
+          stakes?: string[]
+          synced_at?: string
+          venues?: string[]
+        }
+        Relationships: []
+      }
       inbox_people: {
         Row: {
           created_at: string

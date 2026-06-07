@@ -50,23 +50,29 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
       .limit(remaining)
 
     for (const item of items ?? []) {
-      const convId = (item.data as { conversation_id?: string } | null)?.conversation_id
-      const { data: conv } = convId
-        ? await db
-            .from('inbox_conversations')
-            .select('external_chat_id, adapter')
-            .eq('id', convId)
-            .single()
-        : { data: null }
+      const data = item.data as { conversation_id?: string; beeper_chat_id?: string } | null
+      // Two recipient shapes: an existing conversation (look up its chat id) or a
+      // CRM contact carrying its Beeper chat id directly.
+      let chatId: string | null = null
+      if (data?.beeper_chat_id) {
+        chatId = data.beeper_chat_id
+      } else if (data?.conversation_id) {
+        const { data: conv } = await db
+          .from('inbox_conversations')
+          .select('external_chat_id, adapter')
+          .eq('id', data.conversation_id)
+          .single()
+        if (conv && conv.adapter === adapter.id) chatId = conv.external_chat_id
+      }
 
-      if (!conv || conv.adapter !== adapter.id || !adapter.sendMessage) {
+      if (!chatId || !adapter.sendMessage) {
         await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
         failed++
         continue
       }
 
       try {
-        const r = await adapter.sendMessage(conv.external_chat_id, item.rendered_text)
+        const r = await adapter.sendMessage(chatId, item.rendered_text)
         if (r.ok) {
           await db.from('inbox_batch_items').update({ status: 'sent' }).eq('id', item.id)
           sent++

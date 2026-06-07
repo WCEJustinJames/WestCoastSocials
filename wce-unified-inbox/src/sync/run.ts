@@ -13,6 +13,7 @@ import { mirrorInbound } from './mirror'
 import { processOutbox } from './outbox'
 import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
+import { syncOutreach } from './outreach'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -29,6 +30,12 @@ const anthropic = env.anthropicKey ? new Anthropic({ apiKey: env.anthropicKey })
 if (anthropic) {
   console.log(`[drafts] AI drafting on (model ${env.anthropicModel}, max ${env.draftMaxPerPass}/pass)`)
 }
+if (env.airtableKey) {
+  console.log(`[outreach] Airtable CRM sync on (every ${env.outreachSyncMinutes}m)`)
+}
+
+// Airtable CRM sync runs on its own slower cadence, not every pass.
+let lastOutreachSync = 0
 
 async function runOnce(): Promise<void> {
   const since = new Date(Date.now() - env.syncLookbackDays * 86_400_000)
@@ -47,6 +54,22 @@ async function runOnce(): Promise<void> {
   const batch = await processBatches(supabaseAdmin, adapter)
   if (batch.sent || batch.failed) {
     console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
+  }
+
+  // Player Outreach CRM: mirror Airtable on a slow cadence (not every pass).
+  if (env.airtableKey && Date.now() - lastOutreachSync > env.outreachSyncMinutes * 60_000) {
+    lastOutreachSync = Date.now()
+    try {
+      const o = await syncOutreach(
+        supabaseAdmin,
+        env.airtableKey,
+        env.airtableBaseId,
+        env.airtableOutreachTable,
+      )
+      console.log(`[outreach] synced=${o.synced} players from Airtable`)
+    } catch (e) {
+      console.error('[outreach] sync error:', e instanceof Error ? e.message : e)
+    }
   }
 
   // AI drafting: suggest replies into inbox_drafts as `pending` for review.

@@ -21,6 +21,13 @@ _Last updated: 2026-06-07. Read this first when resuming._
   server sender (`src/sync/batches.ts`, ~1.5s between sends, 20/pass) pushes approved items through
   the Beeper adapter — logs `[batch] sent=N`. **Live test:** open Batches, build a tiny batch to a
   self-thread, approve, watch for `[batch] sent=`.
+- **Player Outreach CRM source (2026-06-07), BUILT, needs Airtable key to populate.** Airtable
+  base "West Coast Event Management" → table "Player Outreach" = **487 players** (Phone on most,
+  but only ~19 have a `Beeper Chat ID` = sendable now; the rest need a chat started from their
+  number — not built yet). New `inbox_outreach` Supabase table (migration `0002`); the sync mirrors
+  Airtable into it when `AIRTABLE_API_KEY` is set (`[outreach] synced=N`, every 10m). Batches has an
+  **Inbox threads / Player Outreach (CRM)** source toggle with region/stakes/activity filters; CRM
+  recipients send via their Beeper Chat ID, un-threaded ones are flagged "no thread" and can't send.
 - All code is on branch **`claude/laughing-ritchie-Xmvvk`** in
   **`WCEJustinJames/WestCoastSocials`**, folder **`wce-unified-inbox/`**, draft **PR #2**.
   (A standalone repo, `WCEJustinJames/West-Coast-Game-Messaging`, was also created 2026-06-07

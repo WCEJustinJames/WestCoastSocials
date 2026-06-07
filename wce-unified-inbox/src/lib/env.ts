@@ -17,6 +17,12 @@ export const env = {
   anthropicKey: process.env.ANTHROPIC_API_KEY ?? '',
   anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
   draftMaxPerPass: Number(process.env.DRAFT_MAX_PER_PASS ?? 5),
+  // Airtable Player Outreach CRM (optional — leave the key unset to disable).
+  // When set, the sync mirrors the CRM into inbox_outreach for batch targeting.
+  airtableKey: process.env.AIRTABLE_API_KEY ?? '',
+  airtableBaseId: process.env.AIRTABLE_BASE_ID ?? 'appTPf6j5S1MdNXEf',
+  airtableOutreachTable: process.env.AIRTABLE_OUTREACH_TABLE ?? 'Player Outreach',
+  outreachSyncMinutes: Number(process.env.OUTREACH_SYNC_MINUTES ?? 10),
 }
 
 export function requireEnv(keys: (keyof typeof env)[]): void {
