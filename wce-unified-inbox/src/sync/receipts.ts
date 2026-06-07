@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises'
 import type Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
@@ -117,6 +116,16 @@ export async function extractReceipts(
     cursor = res.oldestCursor
   }
 
+  // Phone numbers already in the review queue / CRM-bound, so we don't surface
+  // the same player twice (the same slip is often reposted in the chat).
+  const { data: priorMobiles } = await db
+    .from('inbox_receipts')
+    .select('mobile')
+    .in('review_status', ['pending', 'confirmed'])
+  const seen = new Set(
+    (priorMobiles ?? []).map((r) => (r.mobile ? phoneCore(r.mobile) : '')).filter(Boolean),
+  )
+
   let processed = 0
   let skipped = 0
 
@@ -129,13 +138,13 @@ export async function extractReceipts(
       skipped++
       continue
     }
-    const path = decodeURIComponent(src.replace(/^file:\/\/\/?/, '').replace(/^([A-Za-z]):/, '$1:'))
 
     let b64: string
     try {
-      b64 = (await readFile(path)).toString('base64')
+      // Fetch through the bridge so it works for uncached (mxc://) media too.
+      b64 = (await beeper.serveAsset(src)).toString('base64')
     } catch {
-      console.warn(`[receipts] cannot read image on disk (not cached?): ${path}`)
+      console.warn(`[receipts] couldn't fetch image for message ${m.id}`)
       skipped++
       continue
     }
@@ -183,18 +192,28 @@ export async function extractReceipts(
       }
 
       const playerName = nameStr || null
-      // Many photos aren't receipts (chip pics, chatter) — and after the
-      // blocklist a slip may have nothing player-specific left. Either way, if we
-      // got neither a name nor a mobile, file it as not_receipt: kept for dedup,
-      // hidden from review.
-      const usable = !x?.not_receipt && !!(playerName || mobile)
+      const core = mobile ? phoneCore(mobile) : ''
+      // Decide where this lands in the review queue:
+      //  - not_receipt: not a form, or no usable mobile (a name with no number
+      //    can't be messaged, so it's hidden from review)
+      //  - duplicate:   we've already got this player's number from another slip
+      //  - pending:     a real, messageable, not-yet-seen player
+      let reviewStatus: 'pending' | 'not_receipt' | 'duplicate'
+      if (x?.not_receipt || !mobile) {
+        reviewStatus = 'not_receipt'
+      } else if (seen.has(core)) {
+        reviewStatus = 'duplicate'
+      } else {
+        reviewStatus = 'pending'
+        seen.add(core)
+      }
 
       const { error } = await db.from('inbox_receipts').insert({
-        review_status: usable ? 'pending' : 'not_receipt',
+        review_status: reviewStatus,
         external_message_id: m.id,
         chat_id: chat.id,
         captured_at: m.timestamp,
-        image_file: path,
+        image_file: src,
         receipt_date: x?.date ?? null,
         venue: x?.venue ?? null,
         club: x?.club ?? null,
@@ -210,12 +229,14 @@ export async function extractReceipts(
       })
       if (error) throw error
       processed++
-      if (usable) {
+      if (reviewStatus === 'pending') {
         console.log(
-          `[receipts] ${playerName ?? '(no name)'} — ${mobile ?? 'no mobile'} · ${x?.venue ?? '?'} · win ${x?.total_winnings ?? '?'}`,
+          `[receipts] ${playerName ?? '(no name)'} — ${mobile} · ${x?.venue ?? '?'} · win ${x?.total_winnings ?? '?'}`,
         )
+      } else if (reviewStatus === 'duplicate') {
+        console.log(`[receipts] (duplicate of ${playerName ?? mobile} — skipped)`)
       } else {
-        console.log('[receipts] (not a receipt — skipped)')
+        console.log('[receipts] (not a receipt / no mobile — skipped)')
       }
     } catch (e) {
       console.error(`[receipts] error on message ${m.id}:`, e instanceof Error ? e.message : e)

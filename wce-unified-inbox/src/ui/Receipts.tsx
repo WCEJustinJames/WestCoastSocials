@@ -41,9 +41,11 @@ export function Receipts() {
       return
     }
     const [first, ...rest] = e.name.trim().split(/\s+/)
+    // Key the CRM row by phone so the same number is never added twice.
+    const phoneKey = e.mobile.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, '')
     const { error: upErr } = await supabase.from('inbox_outreach').upsert(
       {
-        airtable_id: `receipt:${r.id}`,
+        airtable_id: `receipt:${phoneKey}`,
         player_name: e.name.trim() || null,
         first_name: first ?? null,
         last_name: rest.join(' ') || null,

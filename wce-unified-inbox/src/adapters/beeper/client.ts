@@ -177,4 +177,19 @@ export class BeeperClient {
       body: JSON.stringify({ chatID, text, replyToMessageID }),
     })
   }
+
+  /**
+   * Fetch an attachment's bytes through the bridge. GET /v1/assets/serve accepts
+   * mxc:// / localmxc:// / file:// URLs, so this works whether or not Beeper has
+   * cached the media locally — unlike reading the srcURL off disk.
+   */
+  async serveAsset(url: string): Promise<Buffer> {
+    const res = await fetch(`${this.baseUrl}/v1/assets/serve?url=${encodeURIComponent(url)}`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+    })
+    if (!res.ok) {
+      throw new Error(`assets/serve -> ${res.status} ${res.statusText}`.trim())
+    }
+    return Buffer.from(await res.arrayBuffer())
+  }
 }
