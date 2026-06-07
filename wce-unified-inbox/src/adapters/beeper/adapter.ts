@@ -90,4 +90,18 @@ export class BeeperAdapter implements ChannelAdapter {
     const r = await this.client.sendMessage(externalChatId, text, replyToMessageId)
     return { ok: !r.error, pendingMessageId: r.pendingMessageID, error: r.error }
   }
+
+  async startChatAndSend(
+    accountId: string,
+    participant: string,
+    text: string,
+  ): Promise<SendResult> {
+    // POST /v1/chats resolves/creates the chat AND sends when messageText is set.
+    // Verified against gmessages: participant is the +E.164 phone number.
+    const chat = (await this.client.createChat(accountId, [participant], {
+      type: 'single',
+      messageText: text,
+    })) as { id?: string; chatID?: string }
+    return { ok: !!(chat.id || chat.chatID), pendingMessageId: chat.id ?? chat.chatID }
+  }
 }

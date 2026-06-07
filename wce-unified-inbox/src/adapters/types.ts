@@ -76,4 +76,12 @@ export interface ChannelAdapter {
     text: string,
     replyToMessageId?: string,
   ): Promise<SendResult>
+
+  /**
+   * Start (or resolve) a direct chat to a raw recipient (e.g. a phone number)
+   * and send `text` in one step. Used by batches to reach people who have no
+   * existing thread. Optional — only adapters that can cold-start a chat
+   * implement it.
+   */
+  startChatAndSend?(accountId: string, participant: string, text: string): Promise<SendResult>
 }

@@ -19,6 +19,7 @@ interface Recipient {
   sendable: boolean
   guard: boolean
   guardReason: string | null
+  badge: string | null
   personId: string | null
   data: Json
 }
@@ -109,6 +110,7 @@ export function Batches() {
             sendable: true,
             guard: guarded,
             guardReason: guarded ? 'Messaged in the last 24h' : null,
+            badge: guarded ? 'recent' : null,
             personId: c.person_id,
             data: { conversation_id: c.id, name: nm, network: c.network },
           }
@@ -121,17 +123,31 @@ export function Batches() {
     }
     return outreach
       .map<Recipient>((o) => {
-        const nm = o.player_name ?? [o.first_name, o.last_name].filter(Boolean).join(' ') ?? '—'
-        const sendable = !!o.beeper_chat_id
+        const nm = o.player_name || [o.first_name, o.last_name].filter(Boolean).join(' ') || '—'
+        const hasThread = !!o.beeper_chat_id
+        const hasPhone = !!o.phone
+        const sendable = hasThread || hasPhone
         return {
           key: o.id,
           name: nm,
           sub: o.region ?? '—',
           sendable,
-          guard: !sendable,
-          guardReason: sendable ? null : 'No Beeper thread yet — can’t send',
+          // New-SMS recipients are unticked by default — cold outreach is opt-in.
+          guard: !hasThread && hasPhone,
+          guardReason: hasThread
+            ? null
+            : hasPhone
+              ? 'Will start a NEW SMS chat'
+              : 'No phone or thread',
+          badge: hasThread ? null : hasPhone ? 'new SMS' : 'no phone',
           personId: null,
-          data: { beeper_chat_id: o.beeper_chat_id, name: nm, region: o.region },
+          data: {
+            beeper_chat_id: o.beeper_chat_id,
+            phone: o.phone,
+            account_id: 'gmessages',
+            name: nm,
+            region: o.region,
+          },
         }
       })
       .filter((r) => {
@@ -213,8 +229,12 @@ export function Batches() {
   }
 
   const sendableItem = (it: ItemRow) => {
-    const d = it.data as { conversation_id?: string; beeper_chat_id?: string } | null
-    return !!(d?.beeper_chat_id || d?.conversation_id)
+    const d = it.data as {
+      conversation_id?: string
+      beeper_chat_id?: string
+      phone?: string
+    } | null
+    return !!(d?.beeper_chat_id || d?.conversation_id || d?.phone)
   }
   const includedCount = items.filter((it) => include[it.id] && sendableItem(it)).length
 
@@ -430,14 +450,15 @@ export function Batches() {
             <input type="checkbox" checked={selected.has(r.key)} onChange={() => toggle(r.key)} />
             <span className="flex-1">{r.name}</span>
             <span className="text-xs text-slate-400">{r.sub}</span>
-            {!r.sendable && (
-              <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">
-                no thread
-              </span>
-            )}
-            {r.sendable && r.guard && (
-              <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
-                recent
+            {r.badge && (
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                  !r.sendable
+                    ? 'bg-slate-200 text-slate-600'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                {r.badge}
               </span>
             )}
           </label>

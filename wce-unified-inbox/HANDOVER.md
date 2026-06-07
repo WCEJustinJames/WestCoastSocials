@@ -28,6 +28,12 @@ _Last updated: 2026-06-07. Read this first when resuming._
   Airtable into it when `AIRTABLE_API_KEY` is set (`[outreach] synced=N`, every 10m). Batches has an
   **Inbox threads / Player Outreach (CRM)** source toggle with region/stakes/activity filters; CRM
   recipients send via their Beeper Chat ID, un-threaded ones are flagged "no thread" and can't send.
+- **New-SMS sending unlocked (2026-06-07).** Verified `POST /v1/chats` with `participantIDs:["+61…"]`
+  on the `gmessages` account resolves/creates an SMS chat (probe: `npm run beeper:startchat -- "+61…"`).
+  The batch sender now reaches CRM players with **no thread but a phone**: it normalises the number to
+  +61 E.164 and starts the chat + sends in one call (`adapter.startChatAndSend`). In the Batches CRM
+  list these show a **"new SMS"** badge and are **unticked by default** (cold-outreach opt-in; pacing
+  still 1.5s/20-per-pass — Beeper can suspend accounts for volume). Players with neither show "no phone".
 - All code is on branch **`claude/laughing-ritchie-Xmvvk`** in
   **`WCEJustinJames/WestCoastSocials`**, folder **`wce-unified-inbox/`**, draft **PR #2**.
   (A standalone repo, `WCEJustinJames/West-Coast-Game-Messaging`, was also created 2026-06-07

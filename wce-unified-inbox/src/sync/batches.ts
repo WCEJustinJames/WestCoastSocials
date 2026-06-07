@@ -17,6 +17,16 @@ const MAX_PER_PASS = 20
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/** Normalise an Australian mobile to +E.164 (Beeper/gmessages wants +61…). */
+export function normalizeAuMobile(raw: string): string | null {
+  const d = raw.replace(/[^\d+]/g, '')
+  if (/^\+61\d{9}$/.test(d)) return d
+  if (/^61\d{9}$/.test(d)) return '+' + d
+  if (/^0\d{9}$/.test(d)) return '+61' + d.slice(1)
+  if (/^4\d{8}$/.test(d)) return '+61' + d
+  return null
+}
+
 /**
  * Batch send rail (Roadmap item 2). Mirrors the Phase A outbox, but for
  * approved batch items. A batch the human approved in the UI has status
@@ -50,9 +60,17 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
       .limit(remaining)
 
     for (const item of items ?? []) {
-      const data = item.data as { conversation_id?: string; beeper_chat_id?: string } | null
-      // Two recipient shapes: an existing conversation (look up its chat id) or a
-      // CRM contact carrying its Beeper chat id directly.
+      const data = item.data as {
+        conversation_id?: string
+        beeper_chat_id?: string
+        phone?: string
+        account_id?: string
+      } | null
+
+      // Three recipient shapes, in priority order:
+      //  1. an existing Beeper chat id (CRM contact already threaded)
+      //  2. an existing conversation (look up its chat id)
+      //  3. a raw phone number → start a new chat and send in one step
       let chatId: string | null = null
       if (data?.beeper_chat_id) {
         chatId = data.beeper_chat_id
@@ -65,14 +83,26 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
         if (conv && conv.adapter === adapter.id) chatId = conv.external_chat_id
       }
 
-      if (!chatId || !adapter.sendMessage) {
+      const phone = !chatId && data?.phone ? normalizeAuMobile(data.phone) : null
+      const canSend = chatId
+        ? !!adapter.sendMessage
+        : phone
+          ? !!adapter.startChatAndSend
+          : false
+      if (!canSend) {
         await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
         failed++
         continue
       }
 
       try {
-        const r = await adapter.sendMessage(chatId, item.rendered_text)
+        const r = chatId
+          ? await adapter.sendMessage!(chatId, item.rendered_text)
+          : await adapter.startChatAndSend!(
+              data?.account_id ?? 'gmessages',
+              phone!,
+              item.rendered_text,
+            )
         if (r.ok) {
           await db.from('inbox_batch_items').update({ status: 'sent' }).eq('id', item.id)
           sent++
