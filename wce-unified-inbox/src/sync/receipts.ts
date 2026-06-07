@@ -88,25 +88,39 @@ export async function extractReceipts(
     return { processed: 0, skipped: 0 }
   }
 
-  const msgs = await beeper.searchMessages({ chatIDs: [chat.id], limit: 20 })
-  const images = (msgs.items ?? []).filter((m) =>
-    (m.attachments as { type?: string }[] | undefined)?.some((a) => a.type === 'img'),
-  )
+  // Page backwards through the whole chat history, collecting image messages we
+  // haven't processed yet, until we have `limit` of them (or run out). This walks
+  // the full backlog across repeated runs rather than only seeing recent photos.
+  type Msg = NonNullable<Awaited<ReturnType<typeof beeper.searchMessages>>['items']>[number]
+  const todo: Msg[] = []
+  let cursor: string | undefined
+  for (let page = 0; page < 600 && todo.length < limit; page++) {
+    const res = await beeper.searchMessages({
+      chatIDs: [chat.id],
+      limit: 20,
+      cursor,
+      direction: 'before',
+    })
+    for (const m of res.items ?? []) {
+      if (todo.length >= limit) break
+      const isImg = (m.attachments as { type?: string }[] | undefined)?.some((a) => a.type === 'img')
+      if (!isImg) continue
+      const { data: exists } = await db
+        .from('inbox_receipts')
+        .select('id')
+        .eq('external_message_id', m.id)
+        .limit(1)
+      if (exists && exists.length) continue
+      todo.push(m)
+    }
+    if (!res.hasMore || !res.oldestCursor) break
+    cursor = res.oldestCursor
+  }
 
   let processed = 0
   let skipped = 0
 
-  for (const m of images.slice(0, limit)) {
-    const { data: exists } = await db
-      .from('inbox_receipts')
-      .select('id')
-      .eq('external_message_id', m.id)
-      .limit(1)
-    if (exists && exists.length) {
-      skipped++
-      continue
-    }
-
+  for (const m of todo) {
     const att = (m.attachments as { type?: string; srcURL?: string; mimeType?: string }[]).find(
       (a) => a.type === 'img' && a.srcURL,
     )
