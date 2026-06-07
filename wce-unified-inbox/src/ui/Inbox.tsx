@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Database } from '../types/database'
 
@@ -12,6 +12,13 @@ export function Inbox() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
+
+  // search + filter state
+  const [query, setQuery] = useState('')
+  const [network, setNetwork] = useState<string>('all')
+  const [unreadOnly, setUnreadOnly] = useState(false)
+  // conversation IDs whose messages match a content search (null = not searching content)
+  const [contentMatches, setContentMatches] = useState<Set<string> | null>(null)
 
   useEffect(() => {
     supabase
@@ -34,9 +41,52 @@ export function Inbox() {
       .then(({ data }) => setMessages((data as Message[]) ?? []))
   }, [activeId])
 
-  const active = conversations.find((c) => c.id === activeId) ?? null
+  // Debounced message-content search: when the query is 2+ chars, also find
+  // conversations whose *message text* matches (not just the contact name).
+  useEffect(() => {
+    const q = query.trim()
+    if (q.length < 2) {
+      setContentMatches(null)
+      return
+    }
+    const handle = setTimeout(() => {
+      supabase
+        .from('inbox_messages')
+        .select('conversation_id')
+        .ilike('text', `%${q}%`)
+        .limit(2000)
+        .then(({ data }) => {
+          setContentMatches(
+            new Set((data ?? []).map((r) => r.conversation_id as string)),
+          )
+        })
+    }, 250)
+    return () => clearTimeout(handle)
+  }, [query])
+
   const nameOf = (c: Conversation) =>
     c.inbox_people?.display_name ?? c.title ?? c.external_chat_id
+
+  const networks = useMemo(
+    () => Array.from(new Set(conversations.map((c) => c.network))).sort(),
+    [conversations],
+  )
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return conversations.filter((c) => {
+      if (network !== 'all' && c.network !== network) return false
+      if (unreadOnly && c.unread_count <= 0) return false
+      if (q) {
+        const nameHit = nameOf(c).toLowerCase().includes(q)
+        const contentHit = contentMatches?.has(c.id) ?? false
+        if (!nameHit && !contentHit) return false
+      }
+      return true
+    })
+  }, [conversations, query, network, unreadOnly, contentMatches])
+
+  const active = conversations.find((c) => c.id === activeId) ?? null
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900">
@@ -45,15 +95,55 @@ export function Inbox() {
           <h1 className="font-semibold">WCE Unified Inbox</h1>
           <p className="text-xs text-slate-500">Inbound mirror · Beeper</p>
         </header>
+
+        {/* Search + filters */}
+        <div className="space-y-2 border-b border-slate-200 px-3 py-3">
+          <div className="relative">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or message…"
+              className="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-sm outline-none focus:border-emerald-500 focus:bg-white"
+            />
+            {query && (
+              <button
+                onClick={() => setQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                aria-label="Clear search"
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-1">
+            <FilterChip active={network === 'all'} onClick={() => setNetwork('all')}>
+              All
+            </FilterChip>
+            {networks.map((n) => (
+              <FilterChip key={n} active={network === n} onClick={() => setNetwork(n)}>
+                {n}
+              </FilterChip>
+            ))}
+          </div>
+
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={unreadOnly}
+              onChange={(e) => setUnreadOnly(e.target.checked)}
+              className="accent-emerald-600"
+            />
+            Unread only
+          </label>
+        </div>
+
         <div className="flex-1 overflow-y-auto">
           {loading && <p className="p-4 text-sm text-slate-400">Loading…</p>}
-          {!loading && conversations.length === 0 && (
-            <p className="p-4 text-sm text-slate-400">
-              No conversations yet. Run <code className="rounded bg-slate-100 px-1">npm run sync</code> on
-              the machine running Beeper Desktop.
-            </p>
+          {!loading && filtered.length === 0 && (
+            <p className="p-4 text-sm text-slate-400">No conversations match.</p>
           )}
-          {conversations.map((c) => (
+          {filtered.map((c) => (
             <button
               key={c.id}
               onClick={() => setActiveId(c.id)}
@@ -72,6 +162,10 @@ export function Inbox() {
               )}
             </button>
           ))}
+        </div>
+
+        <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-400">
+          {filtered.length} of {conversations.length} conversations
         </div>
       </aside>
 
@@ -94,7 +188,7 @@ export function Inbox() {
                       : 'border border-slate-200 bg-white'
                   }`}
                 >
-                  <div className="whitespace-pre-wrap">{m.text}</div>
+                  <div className="whitespace-pre-wrap">{highlight(m.text, query)}</div>
                   <div
                     className={`mt-1 text-[10px] ${
                       m.direction === 'outbound' ? 'text-emerald-100' : 'text-slate-400'
@@ -116,5 +210,44 @@ export function Inbox() {
         )}
       </main>
     </div>
+  )
+}
+
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-2.5 py-0.5 text-xs ${
+        active
+          ? 'bg-emerald-600 text-white'
+          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+// Highlight the search term inside a message body.
+function highlight(text: string | null, query: string) {
+  if (!text) return null
+  const q = query.trim()
+  if (q.length < 2) return text
+  const idx = text.toLowerCase().indexOf(q.toLowerCase())
+  if (idx === -1) return text
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="rounded bg-yellow-200 px-0.5">{text.slice(idx, idx + q.length)}</mark>
+      {text.slice(idx + q.length)}
+    </>
   )
 }
