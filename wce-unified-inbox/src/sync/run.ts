@@ -9,6 +9,7 @@ import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { BeeperClient } from '../adapters/beeper/client'
 import { BeeperAdapter } from '../adapters/beeper/adapter'
 import { mirrorInbound } from './mirror'
+import { processOutbox } from './outbox'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -26,6 +27,12 @@ async function runOnce(): Promise<void> {
   console.log(
     `[mirror ${new Date().toISOString()}] accounts=${r.accounts} chats=${r.chats} scanned=${r.scanned} inserted=${r.inserted}`,
   )
+
+  // Phase A: send any drafts the human approved in the UI.
+  const out = await processOutbox(supabaseAdmin, adapter)
+  if (out.sent || out.failed) {
+    console.log(`[outbox] sent=${out.sent} failed=${out.failed}`)
+  }
 }
 
 async function main(): Promise<void> {

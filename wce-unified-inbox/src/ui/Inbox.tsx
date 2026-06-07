@@ -20,6 +20,10 @@ export function Inbox() {
   // conversation IDs whose messages match a content search (null = not searching content)
   const [contentMatches, setContentMatches] = useState<Set<string> | null>(null)
 
+  // reply composer
+  const [replyText, setReplyText] = useState('')
+  const [replyStatus, setReplyStatus] = useState<string | null>(null)
+
   useEffect(() => {
     supabase
       .from('inbox_conversations')
@@ -32,6 +36,8 @@ export function Inbox() {
   }, [])
 
   useEffect(() => {
+    setReplyText('')
+    setReplyStatus(null)
     if (!activeId) return
     supabase
       .from('inbox_messages')
@@ -87,6 +93,24 @@ export function Inbox() {
   }, [conversations, query, network, unreadOnly, contentMatches])
 
   const active = conversations.find((c) => c.id === activeId) ?? null
+
+  async function sendReply() {
+    if (!active || !replyText.trim()) return
+    setReplyStatus('Queuing…')
+    const { error } = await supabase.from('inbox_drafts').insert({
+      conversation_id: active.id,
+      content: replyText.trim(),
+      status: 'approved',
+      generated_by: 'manual',
+    })
+    if (error) {
+      setReplyStatus(`Error: ${error.message}`)
+      return
+    }
+    setReplyText('')
+    setReplyStatus('Approved ✓ — sends on the next sync (~15s), then appears above.')
+    setTimeout(() => setReplyStatus(null), 6000)
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900">
@@ -199,8 +223,32 @@ export function Inbox() {
                 </div>
               ))}
             </div>
-            <footer className="border-t border-slate-200 bg-white px-6 py-3 text-xs text-slate-400">
-              Phase A (drafting &amp; approve-to-send) lands next. This view is the read-only inbound mirror.
+            <footer className="border-t border-slate-200 bg-white px-4 py-3">
+              <textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault()
+                    void sendReply()
+                  }
+                }}
+                placeholder={`Reply to ${nameOf(active)} on ${active.network}…`}
+                rows={2}
+                className="w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+              />
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <span className="text-[11px] text-slate-400">
+                  {replyStatus ?? 'Approve & send goes out via your local sync. ⌘/Ctrl+Enter to send.'}
+                </span>
+                <button
+                  onClick={() => void sendReply()}
+                  disabled={!replyText.trim()}
+                  className="shrink-0 rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  Approve &amp; send
+                </button>
+              </div>
             </footer>
           </>
         ) : (
