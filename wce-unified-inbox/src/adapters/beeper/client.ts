@@ -140,6 +140,27 @@ export class BeeperClient {
     )
   }
 
+  /**
+   * Create/resolve a direct chat. With no `messageText` this just resolves or
+   * creates the chat and returns it (nothing is sent) — used to test whether a
+   * raw phone number can be turned into a sendable chat.
+   */
+  createChat(
+    accountID: string,
+    participantIDs: string[],
+    opts: { type?: 'single' | 'group'; messageText?: string } = {},
+  ): Promise<unknown> {
+    return this.request('/v1/chats', {
+      method: 'POST',
+      body: JSON.stringify({
+        accountID,
+        participantIDs,
+        type: opts.type ?? 'single',
+        ...(opts.messageText ? { messageText: opts.messageText } : {}),
+      }),
+    })
+  }
+
   sendMessage(
     chatID: string,
     text: string,
