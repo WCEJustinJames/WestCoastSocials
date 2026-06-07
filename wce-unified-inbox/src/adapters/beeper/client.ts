@@ -132,6 +132,14 @@ export class BeeperClient {
     return this.request<SearchMessagesResponse>(`${path}?${qs.toString()}`)
   }
 
+  /** Merged contact book for an account (used to add new recipients by name/number). */
+  listContacts(accountID: string, limit = 20): Promise<unknown> {
+    const qs = new URLSearchParams({ limit: String(limit) })
+    return this.request(
+      `/v1/accounts/${encodeURIComponent(accountID)}/contacts/list?${qs.toString()}`,
+    )
+  }
+
   sendMessage(
     chatID: string,
     text: string,
