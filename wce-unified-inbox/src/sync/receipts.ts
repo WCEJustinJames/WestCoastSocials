@@ -3,8 +3,12 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import type { BeeperClient } from '../adapters/beeper/client'
+import { env } from '../lib/env'
 
 type DB = SupabaseClient<Database>
+
+/** Core 9 digits of an AU mobile, for blocklist comparison. */
+const phoneCore = (raw: string): string => raw.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, '')
 
 export interface ReceiptResult {
   processed: number
@@ -35,6 +39,7 @@ STRICT RULES:
 - If a field is blank, crossed out, or you cannot read it clearly, return null. Do NOT guess — a null is better than a wrong value.`
 
 interface Extracted {
+  not_receipt?: boolean
   date?: string | null
   venue?: string | null
   club?: string | null
@@ -147,11 +152,28 @@ export async function extractReceipts(
         .map((b) => b.text)
         .join('')
       const x = parseJson(text)
-      const playerName = [x?.first_name, x?.surname].filter(Boolean).join(' ') || null
-      // Many photos in this chat aren't receipts (chip pics, chatter). If we got
-      // neither a name nor a mobile, file it as not_receipt so it's kept for
-      // dedup but excluded from the review list.
-      const usable = !!(playerName || x?.mobile)
+
+      // Guardrail: the recipient/operator signs every slip — never let their
+      // name or number be extracted as the player. Null them out if matched.
+      let firstName = x?.first_name ?? null
+      let surname = x?.surname ?? null
+      let mobile = x?.mobile ? String(x.mobile) : null
+      let nameStr = [firstName, surname].filter(Boolean).join(' ').trim()
+      if (nameStr && env.receiptBlockNames.includes(nameStr.toLowerCase())) {
+        firstName = null
+        surname = null
+        nameStr = ''
+      }
+      if (mobile && env.receiptBlockPhones.includes(phoneCore(mobile))) {
+        mobile = null
+      }
+
+      const playerName = nameStr || null
+      // Many photos aren't receipts (chip pics, chatter) — and after the
+      // blocklist a slip may have nothing player-specific left. Either way, if we
+      // got neither a name nor a mobile, file it as not_receipt: kept for dedup,
+      // hidden from review.
+      const usable = !x?.not_receipt && !!(playerName || mobile)
 
       const { error } = await db.from('inbox_receipts').insert({
         review_status: usable ? 'pending' : 'not_receipt',
@@ -162,10 +184,10 @@ export async function extractReceipts(
         receipt_date: x?.date ?? null,
         venue: x?.venue ?? null,
         club: x?.club ?? null,
-        first_name: x?.first_name ?? null,
-        surname: x?.surname ?? null,
+        first_name: firstName,
+        surname: surname,
         player_name: playerName,
-        mobile: x?.mobile ? String(x.mobile) : null,
+        mobile: mobile,
         game_type: x?.game_type ?? null,
         total_winnings: num(x?.total_winnings),
         amount: num(x?.amount),
@@ -176,7 +198,7 @@ export async function extractReceipts(
       processed++
       if (usable) {
         console.log(
-          `[receipts] ${playerName ?? '(no name)'} — ${x?.mobile ?? 'no mobile'} · ${x?.venue ?? '?'} · win ${x?.total_winnings ?? '?'}`,
+          `[receipts] ${playerName ?? '(no name)'} — ${mobile ?? 'no mobile'} · ${x?.venue ?? '?'} · win ${x?.total_winnings ?? '?'}`,
         )
       } else {
         console.log('[receipts] (not a receipt — skipped)')

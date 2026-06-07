@@ -23,6 +23,16 @@ export const env = {
   airtableBaseId: process.env.AIRTABLE_BASE_ID ?? 'appTPf6j5S1MdNXEf',
   airtableOutreachTable: process.env.AIRTABLE_OUTREACH_TABLE ?? 'Player Outreach',
   outreachSyncMinutes: Number(process.env.OUTREACH_SYNC_MINUTES ?? 10),
+  // Receipt guardrail: the recipient/operator signs every slip, so their name
+  // and number must never be extracted as a *player*. Comma-separated.
+  receiptBlockNames: (process.env.RECEIPT_BLOCK_NAMES ?? 'justin lewis,jj lewis,j j lewis,lewis,justin')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+  receiptBlockPhones: (process.env.RECEIPT_BLOCK_PHONES ?? '0466360662')
+    .split(',')
+    .map((s) => s.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, ''))
+    .filter(Boolean),
 }
 
 export function requireEnv(keys: (keyof typeof env)[]): void {
