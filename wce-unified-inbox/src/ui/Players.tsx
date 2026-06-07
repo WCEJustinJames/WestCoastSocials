@@ -77,6 +77,8 @@ export function Players() {
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [keeperId, setKeeperId] = useState<string | null>(null)
   const [showHidden, setShowHidden] = useState(false)
+  // per phone-duplicate-group: which record's name to keep
+  const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
 
   function load() {
     supabase
@@ -200,6 +202,16 @@ export function Players() {
     setTimeout(() => setStatus(null), 3000)
   }
 
+  async function mergeOneGroup(group: Row[]) {
+    const key = phoneCore(group[0].phone)
+    setBusy(true)
+    const { primary, merged, dropIds } = mergeRows(group, groupKeeper[key])
+    await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
+    if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+    setBusy(false)
+    load()
+  }
+
   async function mergeAllDuplicates() {
     setBusy(true)
     setStatus('Merging duplicates…')
@@ -261,15 +273,60 @@ export function Players() {
         </ul>
       </details>
 
-      {/* Merge duplicates */}
+      {/* Merge duplicates — pick the name to keep per group */}
       {dupGroups.length > 0 && (
-        <button
-          onClick={() => void mergeAllDuplicates()}
-          disabled={busy}
-          className="mb-4 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
-        >
-          Merge all {dupGroups.length} phone-duplicate groups
-        </button>
+        <details className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            Phone duplicates ({dupGroups.length}) — pick the correct name, then Merge
+          </summary>
+          <button
+            onClick={() => void mergeAllDuplicates()}
+            disabled={busy}
+            className="my-2 rounded-md border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100 disabled:opacity-40"
+          >
+            Merge all (auto-pick the most complete name)
+          </button>
+          <ul className="space-y-2">
+            {dupGroups.slice(0, 50).map((g) => {
+              const key = phoneCore(g[0].phone)
+              const chosen = groupKeeper[key] ?? mergeRows(g).primary.id
+              const tag = (r: Row) =>
+                r.airtable_id.startsWith('gcsv:') ? 'google'
+                  : r.airtable_id.startsWith('receipt:') ? 'receipt' : 'airtable'
+              return (
+                <li key={key} className="rounded border border-slate-100 p-2">
+                  <div className="mb-1 text-xs text-slate-400">{g[0].phone}</div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {g.map((r) => (
+                      <label key={r.id} className="flex items-center gap-1 text-sm">
+                        <input
+                          type="radio"
+                          name={`grp-${key}`}
+                          checked={chosen === r.id}
+                          onChange={() => setGroupKeeper((p) => ({ ...p, [key]: r.id }))}
+                        />
+                        {r.player_name ?? '(no name)'}
+                        <span className="text-[10px] text-slate-400">{tag(r)}</span>
+                      </label>
+                    ))}
+                    <button
+                      onClick={() => void mergeOneGroup(g)}
+                      disabled={busy}
+                      className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+                    >
+                      Merge
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          {dupGroups.length > 50 && (
+            <p className="mt-1 text-xs text-slate-400">
+              Showing first 50 — merge these, then Refresh for the next batch.
+            </p>
+          )}
+        </details>
       )}
 
       {/* Player editor */}
