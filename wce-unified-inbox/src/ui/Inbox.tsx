@@ -188,7 +188,7 @@ export function Inbox() {
                       : 'border border-slate-200 bg-white'
                   }`}
                 >
-                  <div className="whitespace-pre-wrap">{highlight(m.text, query)}</div>
+                  <div className="whitespace-pre-wrap">{highlight(toPlainText(m.text), query)}</div>
                   <div
                     className={`mt-1 text-[10px] ${
                       m.direction === 'outbound' ? 'text-emerald-100' : 'text-slate-400'
@@ -234,6 +234,26 @@ function FilterChip({
       {children}
     </button>
   )
+}
+
+// Beeper returns message text as rich text (HTML). Convert it to clean,
+// readable plain text — safely, without rendering untrusted HTML.
+function toPlainText(raw: string | null): string {
+  if (!raw) return ''
+  let t = raw
+  t = t.replace(/<br\s*\/?>/gi, '\n')
+  t = t.replace(/<\/p>/gi, '\n\n').replace(/<p[^>]*>/gi, '')
+  t = t.replace(/<li[^>]*>/gi, '• ').replace(/<\/li>/gi, '\n')
+  t = t.replace(/<\/?(ol|ul|blockquote|div|span)[^>]*>/gi, '')
+  t = t.replace(/<[^>]+>/g, '') // strip any remaining tags
+  t = t
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+  return t.replace(/\n{3,}/g, '\n\n').trim()
 }
 
 // Highlight the search term inside a message body.
