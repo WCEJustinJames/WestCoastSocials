@@ -108,6 +108,11 @@ export function Players() {
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [rows])
   const regions = useMemo(() => regionCounts.map(([r]) => r), [regionCounts])
+  // Distinct tag/stake values across all players → dropdown options.
+  const stakeOptions = useMemo(
+    () => Array.from(new Set(rows.flatMap((r) => r.stakes ?? []))).sort(),
+    [rows],
+  )
 
   const dupGroups = useMemo(() => {
     const byPhone = new Map<string, Row[]>()
@@ -407,6 +412,7 @@ export function Players() {
         {filtered.slice(0, 300).map((r) => {
           const e = edits[r.id]
           if (!e) return null
+          const stakeArr = e.stakes.split(',').map((s) => s.trim()).filter(Boolean)
           return (
             <li
               key={r.id}
@@ -458,18 +464,75 @@ export function Players() {
                 </button>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
-                <input
-                  value={e.region}
-                  onChange={(ev) => setE(r.id, { region: ev.target.value })}
-                  placeholder="Region / venue"
+                {/* Region / venue — dropdown (values from your data + Other…) */}
+                <select
+                  value={!e.region ? '' : regions.includes(e.region) ? e.region : '__custom__'}
+                  onChange={(ev) => {
+                    const v = ev.target.value
+                    if (v === '__custom__') return
+                    if (v === '__other__') {
+                      const x = window.prompt('New region / venue')?.trim()
+                      if (x) setE(r.id, { region: x })
+                      return
+                    }
+                    setE(r.id, { region: v })
+                  }}
                   className="w-44 rounded-md border border-slate-200 px-2 py-1 text-xs outline-none focus:border-emerald-500"
-                />
-                <input
-                  value={e.stakes}
-                  onChange={(ev) => setE(r.id, { stakes: ev.target.value })}
-                  placeholder="Tags / stakes (comma-separated)"
-                  className="min-w-[12rem] flex-1 rounded-md border border-slate-200 px-2 py-1 text-xs outline-none focus:border-emerald-500"
-                />
+                >
+                  <option value="">Region / venue —</option>
+                  {e.region && !regions.includes(e.region) && (
+                    <option value="__custom__">{e.region}</option>
+                  )}
+                  {regions.map((r2) => (
+                    <option key={r2} value={r2}>{r2}</option>
+                  ))}
+                  <option value="__other__">+ Other…</option>
+                </select>
+
+                {/* Tags / stakes — multi-select dropdown with removable chips */}
+                <div className="flex min-w-[12rem] flex-1 flex-wrap items-center gap-1">
+                  {stakeArr.map((s) => (
+                    <span
+                      key={s}
+                      className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs"
+                    >
+                      {s}
+                      <button
+                        onClick={() =>
+                          setE(r.id, { stakes: stakeArr.filter((x) => x !== s).join(', ') })
+                        }
+                        className="text-slate-400 hover:text-rose-600"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <select
+                    value=""
+                    onChange={(ev) => {
+                      const v = ev.target.value
+                      if (!v) return
+                      if (v === '__other__') {
+                        const x = window.prompt('New tag / stake')?.trim()
+                        if (x && !stakeArr.includes(x))
+                          setE(r.id, { stakes: [...stakeArr, x].join(', ') })
+                        return
+                      }
+                      if (!stakeArr.includes(v))
+                        setE(r.id, { stakes: [...stakeArr, v].join(', ') })
+                    }}
+                    className="rounded-md border border-slate-200 px-1 py-1 text-xs"
+                  >
+                    <option value="">+ tag / stake…</option>
+                    {stakeOptions
+                      .filter((s) => !stakeArr.includes(s))
+                      .map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    <option value="__other__">Other…</option>
+                  </select>
+                </div>
+
                 <input
                   value={e.activity}
                   onChange={(ev) => setE(r.id, { activity: ev.target.value })}

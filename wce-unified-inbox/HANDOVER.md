@@ -137,18 +137,18 @@ Node + Git installed. PowerShell execution policy set to RemoteSigned (CurrentUs
 6. **Repo home** — currently staged inside `WestCoastSocials`. Justin wants it separate but said
    leave the empty `WCE-APP` repo alone; the session integration can't create repos. Decide a home.
 
-## Requested feature: Players tab (new — spec needed)
-Justin wants a **Players tab** (doesn't exist yet — app is inbox-only today) where each player
-(= `inbox_people` row) has **region/venue, tags, and stakes as dropdowns**.
-Open questions to resolve before building:
-- Schema: `inbox_people` currently has only free-text `tags[]` + `notes`. Need structured
-  fields (e.g. `venue`, `stakes`) and a controlled vocabulary for tags. Add columns or a
-  lookup/reference table for the dropdown options.
-- **Dropdown values needed from Justin:** the 5 venues/regions; the stakes set (e.g. $1/$2,
-  $2/$5, $2/$5/$10); the fixed tag list (VIP/whale/dealer/staff/new/…).
-- **Data source decision:** players are already venue-tagged in **Airtable** (per his TD-enrichment
-  workflow). Decide whether the Players tab edits/stores in Supabase, or syncs/pulls from Airtable
-  to avoid double-keying. (Airtable MCP tools are available in-session.)
+## Players tab — region/venue & tags/stakes dropdowns (DONE 2026-06-07)
+The Players tab (backed by `inbox_outreach`) now edits **region/venue** and **tags/stakes** via
+dropdowns instead of free text (`src/ui/Players.tsx`):
+- **Region/venue:** single-select populated from the distinct `region` values already in the data,
+  preserving any current custom value, with an **Other…** option (prompt) to add a new one.
+- **Tags/stakes:** multi-select — removable chips for current values plus a **+ tag / stake…**
+  dropdown of distinct `stakes` values, also with **Other…**. Saved back to the `stakes` text[].
+- Options derive from the live Airtable-sourced vocabulary, so they self-populate; the existing
+  "Tidy region/venue values" merge tool still handles canonicalising variants.
+- Possible follow-ups: promote a fixed/controlled vocabulary (lookup table) instead of
+  data-derived options; give `venues` (text[]) its own control separate from `region`; make
+  `activity` a dropdown too.
 
 ## Repo map
 - `src/adapters/types.ts` — `ChannelAdapter` interface (pluggable; LetsPoker slots here).
