@@ -25,7 +25,7 @@ const beeper = new BeeperClient({
 })
 const anthropic = new Anthropic({ apiKey: env.anthropicKey })
 
-extractReceipts(supabaseAdmin, beeper, anthropic, env.anthropicModel, limit)
+extractReceipts(supabaseAdmin, beeper, anthropic, env.receiptsModel, limit)
   .then((r) => {
     console.log(`\n[receipts] done — processed=${r.processed} skipped=${r.skipped}`)
     process.exit(0)

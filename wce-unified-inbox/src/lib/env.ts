@@ -16,6 +16,8 @@ export const env = {
   // loop generates suggested replies into inbox_drafts as `pending`.
   anthropicKey: process.env.ANTHROPIC_API_KEY ?? '',
   anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
+  // Receipt OCR can use a cheaper model than drafting without hurting quality.
+  receiptsModel: process.env.RECEIPTS_MODEL ?? process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
   draftMaxPerPass: Number(process.env.DRAFT_MAX_PER_PASS ?? 5),
   // Airtable Player Outreach CRM (optional — leave the key unset to disable).
   // When set, the sync mirrors the CRM into inbox_outreach for batch targeting.
