@@ -67,7 +67,11 @@ export async function syncOutreach(
     })
 
     if (rows.length) {
-      const { error } = await db.from('inbox_outreach').upsert(rows, { onConflict: 'airtable_id' })
+      // Insert new players only; never overwrite existing rows, so manual CRM
+      // edits (region tidy-ups, tags, bans) persist across syncs.
+      const { error } = await db
+        .from('inbox_outreach')
+        .upsert(rows, { onConflict: 'airtable_id', ignoreDuplicates: true })
       if (error) throw error
       synced += rows.length
     }
