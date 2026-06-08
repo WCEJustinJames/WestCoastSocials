@@ -4,9 +4,11 @@ import type {
   NormalizedAccount,
   NormalizedChat,
   NormalizedMessage,
+  OutgoingAttachment,
+  SendOptions,
   SendResult,
 } from '../types'
-import { BeeperClient } from './client'
+import { BeeperClient, type BeeperAttachmentInput } from './client'
 
 /**
  * Beeper adapter — normalizes the Beeper Desktop bridge into the inbox's
@@ -81,13 +83,31 @@ export class BeeperAdapter implements ChannelAdapter {
     return { chats: [...chats.values()], messages }
   }
 
+  // Upload an attachment's bytes and shape it for the send call.
+  private async uploadAttachment(a: OutgoingAttachment): Promise<BeeperAttachmentInput> {
+    const up = await this.client.uploadAssetBase64(a.dataBase64, a.fileName, a.mimeType)
+    if (up.error || !up.uploadID) throw new Error(up.error ?? 'asset upload failed')
+    const mime = up.mimeType ?? a.mimeType ?? ''
+    return {
+      uploadID: up.uploadID,
+      mimeType: mime || undefined,
+      fileName: up.fileName ?? a.fileName,
+      type: mime.startsWith('image/') ? 'image' : 'file',
+      size: up.width && up.height ? { width: up.width, height: up.height } : undefined,
+    }
+  }
+
   async sendMessage(
     externalChatId: string,
     text: string,
-    replyToMessageId?: string,
+    opts: SendOptions = {},
   ): Promise<SendResult> {
     // The client throws on non-2xx, so reaching here means the bridge accepted it.
-    const r = await this.client.sendMessage(externalChatId, text, replyToMessageId)
+    const attachment = opts.attachment ? await this.uploadAttachment(opts.attachment) : undefined
+    const r = await this.client.sendMessage(externalChatId, text, {
+      replyToMessageID: opts.replyToMessageId,
+      attachment,
+    })
     return { ok: !r.error, pendingMessageId: r.pendingMessageID, error: r.error }
   }
 
@@ -95,6 +115,7 @@ export class BeeperAdapter implements ChannelAdapter {
     accountId: string,
     participant: string,
     text: string,
+    opts: SendOptions = {},
   ): Promise<SendResult> {
     // POST /v1/chats resolves/creates the chat AND sends when messageText is set.
     // Verified against gmessages: participant is the +E.164 phone number.
@@ -102,6 +123,13 @@ export class BeeperAdapter implements ChannelAdapter {
       type: 'single',
       messageText: text,
     })) as { id?: string; chatID?: string }
-    return { ok: !!(chat.id || chat.chatID), pendingMessageId: chat.id ?? chat.chatID }
+    const chatId = chat.id ?? chat.chatID
+    if (!chatId) return { ok: false, error: 'could not create chat' }
+    // New chats can't carry an attachment in the create call, so send the image
+    // as a follow-up message to the chat we just created.
+    if (opts.attachment) {
+      return this.sendMessage(chatId, '', { attachment: opts.attachment })
+    }
+    return { ok: true, pendingMessageId: chatId }
   }
 }

@@ -38,7 +38,7 @@ export function normalizeAuMobile(raw: string): string | null {
 export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<BatchResult> {
   const { data: batches, error } = await db
     .from('inbox_batches')
-    .select('id')
+    .select('id, attachment_data, attachment_name, attachment_mime')
     .in('status', ['approved', 'sending'])
     // Hold scheduled batches until their time; send immediately when unscheduled.
     .or(`scheduled_for.is.null,scheduled_for.lte.${new Date().toISOString()}`)
@@ -52,6 +52,15 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
   for (const batch of batches) {
     if (sent + failed >= MAX_PER_PASS) break
     await db.from('inbox_batches').update({ status: 'sending' }).eq('id', batch.id)
+
+    // One image for the whole batch; re-uploaded per send (upload IDs are temporary).
+    const attachment = batch.attachment_data
+      ? {
+          dataBase64: batch.attachment_data,
+          fileName: batch.attachment_name ?? undefined,
+          mimeType: batch.attachment_mime ?? undefined,
+        }
+      : undefined
 
     const remaining = MAX_PER_PASS - (sent + failed)
     const { data: items } = await db
@@ -101,11 +110,12 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
 
       try {
         const r = chatId
-          ? await adapter.sendMessage!(chatId, item.rendered_text)
+          ? await adapter.sendMessage!(chatId, item.rendered_text, { attachment })
           : await adapter.startChatAndSend!(
               data?.account_id ?? 'gmessages',
               phone!,
               item.rendered_text,
+              { attachment },
             )
         if (r.ok) {
           await db.from('inbox_batch_items').update({ status: 'sent' }).eq('id', item.id)

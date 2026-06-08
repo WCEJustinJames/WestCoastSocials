@@ -93,6 +93,9 @@ export type Database = {
           template_body: string
           variation_schema: Json
           scheduled_for: string | null
+          attachment_data: string | null
+          attachment_name: string | null
+          attachment_mime: string | null
         }
         Insert: {
           created_at?: string
@@ -103,6 +106,9 @@ export type Database = {
           template_body: string
           variation_schema?: Json
           scheduled_for?: string | null
+          attachment_data?: string | null
+          attachment_name?: string | null
+          attachment_mime?: string | null
         }
         Update: {
           created_at?: string
@@ -113,6 +119,9 @@ export type Database = {
           template_body?: string
           variation_schema?: Json
           scheduled_for?: string | null
+          attachment_data?: string | null
+          attachment_name?: string | null
+          attachment_mime?: string | null
         }
         Relationships: []
       }
@@ -181,6 +190,9 @@ export type Database = {
           id: string
           status: Database['public']['Enums']['inbox_draft_status']
           updated_at: string
+          attachment_data: string | null
+          attachment_name: string | null
+          attachment_mime: string | null
         }
         Insert: {
           content: string
@@ -190,6 +202,9 @@ export type Database = {
           id?: string
           status?: Database['public']['Enums']['inbox_draft_status']
           updated_at?: string
+          attachment_data?: string | null
+          attachment_name?: string | null
+          attachment_mime?: string | null
         }
         Update: {
           content?: string
@@ -199,6 +214,9 @@ export type Database = {
           id?: string
           status?: Database['public']['Enums']['inbox_draft_status']
           updated_at?: string
+          attachment_data?: string | null
+          attachment_name?: string | null
+          attachment_mime?: string | null
         }
         Relationships: [
           {

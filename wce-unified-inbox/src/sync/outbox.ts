@@ -21,7 +21,7 @@ export interface OutboxResult {
 export async function processOutbox(db: DB, adapter: ChannelAdapter): Promise<OutboxResult> {
   const { data: drafts, error } = await db
     .from('inbox_drafts')
-    .select('id, content, conversation_id')
+    .select('id, content, conversation_id, attachment_data, attachment_name, attachment_mime')
     .eq('status', 'approved')
     .limit(50)
   if (error) throw error
@@ -43,8 +43,16 @@ export async function processOutbox(db: DB, adapter: ChannelAdapter): Promise<Ou
       continue
     }
 
+    const attachment = d.attachment_data
+      ? {
+          dataBase64: d.attachment_data,
+          fileName: d.attachment_name ?? undefined,
+          mimeType: d.attachment_mime ?? undefined,
+        }
+      : undefined
+
     try {
-      const r = await adapter.sendMessage(conv.external_chat_id, d.content)
+      const r = await adapter.sendMessage(conv.external_chat_id, d.content, { attachment })
       if (r.ok) {
         await db.from('inbox_drafts').update({ status: 'sent' }).eq('id', d.id)
         sent++

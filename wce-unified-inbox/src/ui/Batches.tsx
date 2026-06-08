@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fileToBase64, type PickedImage } from '../lib/attachment'
 import type { Database, Json } from '../types/database'
 
 type ConvRow = Database['public']['Tables']['inbox_conversations']['Row'] & {
@@ -60,6 +61,7 @@ export function Batches() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [name, setName] = useState('')
   const [template, setTemplate] = useState('')
+  const [attachImg, setAttachImg] = useState<PickedImage | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -230,8 +232,8 @@ export function Batches() {
 
   async function buildPreview() {
     const chosen = recipients.filter((r) => selected.has(r.key))
-    if (!name.trim() || !template.trim() || chosen.length === 0) {
-      setStatus('Add a name, a template, and at least one recipient.')
+    if (!name.trim() || (!template.trim() && !attachImg) || chosen.length === 0) {
+      setStatus('Add a name, a message or image, and at least one recipient.')
       return
     }
     setBusy(true)
@@ -239,7 +241,15 @@ export function Batches() {
 
     const { data: batch, error: bErr } = await supabase
       .from('inbox_batches')
-      .insert({ name: name.trim(), template_body: template, status: 'draft', created_by: 'manual' })
+      .insert({
+        name: name.trim(),
+        template_body: template,
+        status: 'draft',
+        created_by: 'manual',
+        attachment_data: attachImg?.dataBase64 ?? null,
+        attachment_name: attachImg?.name ?? null,
+        attachment_mime: attachImg?.mime ?? null,
+      })
       .select('id')
       .single()
     if (bErr || !batch) {
@@ -331,6 +341,7 @@ export function Batches() {
     setSelected(new Set())
     setName('')
     setTemplate('')
+    setAttachImg(null)
   }
 
   // ---- Preview phase ----
@@ -342,7 +353,7 @@ export function Batches() {
             <h2 className="text-lg font-semibold">Preview — {name || 'batch'}</h2>
             <p className="text-sm text-slate-500">
               {includedCount} of {items.length} will send. Guarded / un-sendable contacts are
-              unticked by default.
+              unticked by default.{attachImg ? ' · 🖼 image attached to every message.' : ''}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -446,6 +457,37 @@ export function Batches() {
         rows={3}
         className="mb-4 w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
       />
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <label className="cursor-pointer rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50">
+          📎 Attach image
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={async (e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (!f) return
+              try {
+                setAttachImg(await fileToBase64(f))
+                setStatus(null)
+              } catch (err) {
+                setStatus(err instanceof Error ? err.message : 'Could not read image')
+              }
+            }}
+          />
+        </label>
+        {attachImg && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs">
+            🖼 {attachImg.name}
+            <button onClick={() => setAttachImg(null)} className="text-slate-400 hover:text-rose-600">
+              ×
+            </button>
+          </span>
+        )}
+        <span className="text-xs text-slate-400">Optional — the same image goes to every recipient.</span>
+      </div>
 
       <div className="mb-2 flex items-center gap-2">
         <span className="text-sm font-medium">Recipients from:</span>

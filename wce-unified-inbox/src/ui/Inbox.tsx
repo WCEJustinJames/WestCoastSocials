@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fileToBase64, type PickedImage } from '../lib/attachment'
 import type { Database } from '../types/database'
 
 type Conversation = Database['public']['Tables']['inbox_conversations']['Row'] & {
@@ -25,6 +26,8 @@ export function Inbox() {
   const [replyStatus, setReplyStatus] = useState<string | null>(null)
   // id of the AI-suggested `pending` draft loaded into the composer (null = none)
   const [pendingDraftId, setPendingDraftId] = useState<string | null>(null)
+  // image attached to the outgoing reply (null = none)
+  const [attachImg, setAttachImg] = useState<PickedImage | null>(null)
 
   // scroll container for the open thread, so it opens on the most recent exchange
   const threadRef = useRef<HTMLDivElement>(null)
@@ -73,6 +76,7 @@ export function Inbox() {
     setReplyText('')
     setReplyStatus(null)
     setPendingDraftId(null)
+    setAttachImg(null)
     if (!activeId) return
 
     let cancelled = false
@@ -157,19 +161,25 @@ export function Inbox() {
   const active = conversations.find((c) => c.id === activeId) ?? null
 
   async function sendReply() {
-    if (!active || !replyText.trim()) return
+    if (!active || (!replyText.trim() && !attachImg)) return
     setReplyStatus('Queuing…')
     const content = replyText.trim()
+    const attach = {
+      attachment_data: attachImg?.dataBase64 ?? null,
+      attachment_name: attachImg?.name ?? null,
+      attachment_mime: attachImg?.mime ?? null,
+    }
     // If an AI draft is loaded, approve that row (preserving its `ai` provenance
     // and any edits); otherwise create a fresh manual draft. Either way it lands
     // as `approved` and the outbox sends it on the next pass.
     const op = pendingDraftId
-      ? supabase.from('inbox_drafts').update({ content, status: 'approved' }).eq('id', pendingDraftId)
+      ? supabase.from('inbox_drafts').update({ content, status: 'approved', ...attach }).eq('id', pendingDraftId)
       : supabase.from('inbox_drafts').insert({
           conversation_id: active.id,
           content,
           status: 'approved',
           generated_by: 'manual',
+          ...attach,
         })
     const { error } = await op
     if (error) {
@@ -177,6 +187,7 @@ export function Inbox() {
       return
     }
     setReplyText('')
+    setAttachImg(null)
     setPendingDraftId(null)
     setReplyStatus('Approved ✓ — sends on the next sync (~15s), then appears above.')
     setTimeout(() => setReplyStatus(null), 6000)
@@ -308,12 +319,44 @@ export function Inbox() {
                 className="w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
               />
               <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="text-[11px] text-slate-400">
-                  {replyStatus ?? 'Approve & send goes out via your local sync. ⌘/Ctrl+Enter to send.'}
-                </span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <label className="shrink-0 cursor-pointer rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+                    📎 Image
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0]
+                        e.target.value = ''
+                        if (!f) return
+                        try {
+                          setAttachImg(await fileToBase64(f))
+                          setReplyStatus(null)
+                        } catch (err) {
+                          setReplyStatus(err instanceof Error ? err.message : 'Could not read image')
+                        }
+                      }}
+                    />
+                  </label>
+                  {attachImg && (
+                    <span className="inline-flex max-w-[12rem] items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs">
+                      <span className="truncate">🖼 {attachImg.name}</span>
+                      <button
+                        onClick={() => setAttachImg(null)}
+                        className="shrink-0 text-slate-400 hover:text-rose-600"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )}
+                  <span className="truncate text-[11px] text-slate-400">
+                    {replyStatus ?? '⌘/Ctrl+Enter to send'}
+                  </span>
+                </div>
                 <button
                   onClick={() => void sendReply()}
-                  disabled={!replyText.trim()}
+                  disabled={!replyText.trim() && !attachImg}
                   className="shrink-0 rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
                 >
                   Approve &amp; send

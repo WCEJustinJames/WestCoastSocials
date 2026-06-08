@@ -41,6 +41,14 @@ _Last updated: 2026-06-07. Read this first when resuming._
   those off disk, runs Claude **vision** to extract the fields, and saves to a new `inbox_receipts`
   table (migration `0003`, `review_status='pending'`, dedup on message id). Probe: `npm run beeper:receipts`.
   Next: review UI + push confirmed mobiles into the CRM so they're reachable via new-SMS.
+- **Image attachments (2026-06-07), BUILT, needs a live send to confirm.** Both the Inbox composer
+  and Batches take an image (📎 button). The browser base64-stores it on the draft/batch row
+  (`attachment_data/name/mime`, migration `0004`); the local sender uploads it to Beeper
+  (`POST /v1/assets/upload/base64` → `uploadID`) and sends with the attachment. One image per draft /
+  per batch (re-uploaded per recipient since upload IDs are temporary). New-SMS recipients (no thread)
+  get the text first, then the image as a follow-up message. 8MB cap. Only build/typecheck-verified —
+  needs one real send to confirm the bridge upload/attach shape end-to-end (`src/lib/attachment.ts`,
+  `uploadAssetBase64` in the Beeper client, `SendOptions.attachment` through the adapter/outbox/batches).
 - All code is on branch **`claude/laughing-ritchie-Xmvvk`** in
   **`WCEJustinJames/WestCoastSocials`**, folder **`wce-unified-inbox/`**, draft **PR #2**.
   (A standalone repo, `WCEJustinJames/West-Coast-Game-Messaging`, was also created 2026-06-07

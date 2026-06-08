@@ -78,6 +78,25 @@ export interface SendMessageResponse {
   error?: string
 }
 
+/** Reference to a temporary upload, attached to an outgoing message. */
+export interface BeeperAttachmentInput {
+  uploadID: string
+  mimeType?: string
+  fileName?: string
+  type?: 'image' | 'video' | 'audio' | 'file' | 'gif' | 'voice-note' | 'sticker'
+  size?: { width: number; height: number }
+}
+
+export interface UploadAssetResponse {
+  uploadID?: string
+  mimeType?: string
+  fileName?: string
+  fileSize?: number
+  width?: number
+  height?: number
+  error?: string
+}
+
 export class BeeperClient {
   private readonly baseUrl: string
   private readonly token: string
@@ -161,20 +180,43 @@ export class BeeperClient {
     })
   }
 
+  /**
+   * Upload a file (base64, no data: prefix) to a temporary store and get an
+   * uploadID to reference on send. JSON in/out — no multipart needed.
+   */
+  uploadAssetBase64(
+    content: string,
+    fileName?: string,
+    mimeType?: string,
+  ): Promise<UploadAssetResponse> {
+    return this.request<UploadAssetResponse>('/v1/assets/upload/base64', {
+      method: 'POST',
+      body: JSON.stringify({ content, fileName, mimeType }),
+    })
+  }
+
   sendMessage(
     chatID: string,
     text: string,
-    replyToMessageID?: string,
+    opts: { replyToMessageID?: string; attachment?: BeeperAttachmentInput } = {},
   ): Promise<SendMessageResponse> {
     if (this.v === 'v1') {
       return this.request<SendMessageResponse>(
         `/v1/chats/${encodeURIComponent(chatID)}/messages`,
-        { method: 'POST', body: JSON.stringify({ text, replyToMessageID }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            text,
+            replyToMessageID: opts.replyToMessageID,
+            attachment: opts.attachment,
+          }),
+        },
       )
     }
+    // v0 has no attachment support; send text only.
     return this.request<SendMessageResponse>('/v0/send-message', {
       method: 'POST',
-      body: JSON.stringify({ chatID, text, replyToMessageID }),
+      body: JSON.stringify({ chatID, text, replyToMessageID: opts.replyToMessageID }),
     })
   }
 

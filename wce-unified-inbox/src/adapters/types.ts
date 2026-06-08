@@ -54,6 +54,19 @@ export interface SendResult {
   error?: string
 }
 
+/** An image (or other file) to attach to an outgoing message. */
+export interface OutgoingAttachment {
+  /** base64 file content, no `data:` prefix. */
+  dataBase64: string
+  fileName?: string
+  mimeType?: string
+}
+
+export interface SendOptions {
+  replyToMessageId?: string
+  attachment?: OutgoingAttachment
+}
+
 export interface ChannelAdapter {
   readonly id: AdapterId
 
@@ -74,7 +87,7 @@ export interface ChannelAdapter {
   sendMessage?(
     externalChatId: string,
     text: string,
-    replyToMessageId?: string,
+    opts?: SendOptions,
   ): Promise<SendResult>
 
   /**
@@ -83,5 +96,10 @@ export interface ChannelAdapter {
    * existing thread. Optional — only adapters that can cold-start a chat
    * implement it.
    */
-  startChatAndSend?(accountId: string, participant: string, text: string): Promise<SendResult>
+  startChatAndSend?(
+    accountId: string,
+    participant: string,
+    text: string,
+    opts?: SendOptions,
+  ): Promise<SendResult>
 }
