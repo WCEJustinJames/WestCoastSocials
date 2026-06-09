@@ -7,7 +7,7 @@
 // PostgREST caps each page at 1000 rows — paginate with limit/offset for larger views.
 
 const GUARD = "wcp_probe_5f3a9c21d8b74e60aa17";
-const ALLOWED = new Set(["lp_player_summary", "lp_churn", "lp_event_enriched", "lp_entry_enriched", "lp_event_summary"]);
+const ALLOWED = new Set(["lp_player_summary", "lp_churn", "lp_event_enriched", "lp_entry_enriched", "lp_event_summary", "lp_outreach_targets"]);
 
 Deno.serve(async (req) => {
   let body: any = {};

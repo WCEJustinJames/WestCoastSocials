@@ -81,6 +81,29 @@ where entries_jul_dec_2025 >= 15 and drop_pct >= 70
 order by drop_abs desc;
 ```
 
+## CRM enrichment (inbox_outreach)
+
+The harvested history feeds the outreach CRM:
+
+- **`scripts/enrich_outreach_crm.sql`** — backfills `last_active` (exact last
+  attendance) and adds each player's **favourite venue** (only when attended more
+  than once), matched by unique normalized name. High precision: messy/ambiguous
+  CRM labels are left untouched.
+- **`scripts/crm_venue_cleanup_and_tag.sql`** — normalizes `venues` to one
+  canonical label per room (Airtable mixed `MCT`/`Market City Tavern` etc.) and
+  tags the churned-regular segment in the otherwise-unused `activity` field
+  (`activity = 'churned_regular'`).
+- **`lp_outreach_targets`** view — the ready outreach list: churned regulars
+  (15+ entries Jul–Dec 2025, 70%+ drop) joined to a contactable CRM row, one row
+  per player, with night/venue/last-seen and phone/DNM status.
+
+Run order after a harvest refresh: `enrich_outreach_crm.sql` →
+`crm_venue_cleanup_and_tag.sql`. All three are idempotent.
+
+> Note: `inbox_outreach` mirrors Airtable (`airtable_id`, `synced_at`). If a
+> one-way Airtable→Supabase sync runs, confirm it won't overwrite `last_active`,
+> `venues`, or `activity`; otherwise re-run these scripts after each sync.
+
 ## Notes / caveats
 
 - **Re-entries**: `lp_events.entries` is the full field size; per player, `entry_count`
