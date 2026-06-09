@@ -117,19 +117,14 @@ export class BeeperAdapter implements ChannelAdapter {
     text: string,
     opts: SendOptions = {},
   ): Promise<SendResult> {
-    // POST /v1/chats resolves/creates the chat AND sends when messageText is set.
-    // Verified against gmessages: participant is the +E.164 phone number.
+    // Resolve/create the chat first (no inline messageText — that create-call
+    // text isn't reliably delivered for SMS), then send via the proven
+    // sendMessage path that Phase A confirmed actually delivers.
     const chat = (await this.client.createChat(accountId, [participant], {
       type: 'single',
-      messageText: text,
     })) as { id?: string; chatID?: string }
     const chatId = chat.id ?? chat.chatID
     if (!chatId) return { ok: false, error: 'could not create chat' }
-    // New chats can't carry an attachment in the create call, so send the image
-    // as a follow-up message to the chat we just created.
-    if (opts.attachment) {
-      return this.sendMessage(chatId, '', { attachment: opts.attachment })
-    }
-    return { ok: true, pendingMessageId: chatId }
+    return this.sendMessage(chatId, text, opts)
   }
 }
