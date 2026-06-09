@@ -2,8 +2,9 @@
 //
 // Modes (request body { "mode": ... }):
 //   - "sync"      -> pull the calendar (getEventList) and upsert public.tournament_events
-//   - "countdown" -> push ALL of today's games (the 6x day-of fires)
-//   - "teaser"    -> push ALL of tomorrow's games (the night-before 9pm fire)
+//   - "tick"      -> per-game scheduler (teaser + countdown + in-event); run every 30 min
+//   - "countdown" -> push ALL of today's games   (legacy fixed-time fires)
+//   - "teaser"    -> push ALL of tomorrow's games (legacy night-before fire)
 //   - { "tournamentEventId": "..." } -> explicit single-event push override (testing)
 //   - sync + { "dryRun": true }       -> list upcoming events, write nothing
 //
@@ -183,9 +184,10 @@ function hasGraphqlErrors(text: string): boolean {
 async function sendPush(
   cookie: string, sessionGroupId: string, clubId: string,
   source: string, mode: string, targetDate: string, tournamentEventId: string,
+  templateParts: string[] = TEMPLATE_PARTS,
 ): Promise<{ ok: boolean; status: number | null; unauth: boolean }> {
   const batchedBody = JSON.stringify([
-    { operationName: "sendTournamentPushNotification", query: MUTATION, variables: { clubId, tournamentEventId, templateParts: TEMPLATE_PARTS } },
+    { operationName: "sendTournamentPushNotification", query: MUTATION, variables: { clubId, tournamentEventId, templateParts } },
   ]);
 
   let status: number | null = null;
@@ -312,6 +314,153 @@ async function runSync(cookie: string, sessionGroupId: string, clubId: string, d
   return new Response(JSON.stringify({ ok: true, events: events.length, tournaments: upserted }), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
+// ---------------------------------------------------------------------------
+// Tick scheduler. One cron fires every 30 min (mode "tick"); for each upcoming
+// or in-progress game the function computes that game's own fire instants and
+// sends any slot whose 30-min bucket is "now" and hasn't been sent yet.
+//
+// Buckets (auto, by Perth start time): start <= 14:00 -> daytime, else evening.
+//   Evening  countdown (Perth): 06 09 12 15 17 18
+//   Daytime  countdown (Perth): 06 09 10 11 12 12:30
+//   Teaser:   20:30 the night before
+//   In-event: start +30/+60/+90/+120/+150 (every 30 min, first 150 min)
+// A countdown fire is kept only if it falls at/before start; later clock-times
+// are dropped so they never collide with the in-event series (e.g. an 11:30
+// start drops its 12:00/12:30 countdowns — in-event covers those instants).
+// ---------------------------------------------------------------------------
+
+const PERTH = "+08:00";
+const TICK_MS = 30 * 60 * 1000;
+const TEASER_HHMM = "20:30";
+const IN_EVENT_OFFSETS_MIN = [30, 60, 90, 120, 150];
+const COUNTDOWN: Record<"daytime" | "evening", string[]> = {
+  evening: ["06:00", "09:00", "12:00", "15:00", "17:00", "18:00"],
+  daytime: ["06:00", "09:00", "10:00", "11:00", "12:00", "12:30"],
+};
+// In-event pushes target an already-started game; "timeRelative" may read oddly
+// there. Swap in a "live now" / "late reg" token once we confirm what LetsPoker
+// exposes. Until then it mirrors the standard parts.
+const IN_EVENT_TEMPLATE_PARTS = TEMPLATE_PARTS;
+
+// Absolute instant for a Perth local date (YYYY-MM-DD) at HH:MM.
+function perthInstant(date: string, hhmm: string): Date {
+  return new Date(`${date}T${hhmm}:00${PERTH}`);
+}
+
+function bucketOf(startsAt: string | null): "daytime" | "evening" {
+  if (!startsAt) return "evening";
+  const d = new Date(startsAt);
+  const minsOfDay = ((d.getUTCHours() + 8) % 24) * 60 + d.getUTCMinutes();
+  return minsOfDay <= 14 * 60 ? "daytime" : "evening";
+}
+
+type Game = { tournament_event_id: string; event_date: string; starts_at: string | null };
+type Fire = { slot: string; at: number };
+
+// Every fire instant a game should produce, with a stable slot label for dedupe.
+function firesFor(g: Game): Fire[] {
+  const fires: Fire[] = [];
+  const startMs = g.starts_at ? new Date(g.starts_at).getTime() : null;
+
+  // Teaser: 20:30 the night before (= event-date 20:30 minus 24h).
+  fires.push({ slot: "teaser", at: perthInstant(g.event_date, TEASER_HHMM).getTime() - 24 * 3600 * 1000 });
+
+  // Countdown clock-times, dropped once they pass start (in-event covers those).
+  for (const t of COUNTDOWN[bucketOf(g.starts_at)]) {
+    const at = perthInstant(g.event_date, t).getTime();
+    if (startMs !== null && at > startMs) continue;
+    fires.push({ slot: `cd-${t.replace(":", "")}`, at });
+  }
+
+  // In-event series, relative to the game's own start.
+  if (startMs !== null) {
+    for (const m of IN_EVENT_OFFSETS_MIN) fires.push({ slot: `ie-${m}`, at: startMs + m * 60000 });
+  }
+  return fires;
+}
+
+// Non-excluded games on the given Perth dates (id, date, start).
+async function lookupGames(dates: string[]): Promise<Game[]> {
+  const url = env("SUPABASE_URL");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) return [];
+  try {
+    const inList = dates.map((d) => `"${d}"`).join(",");
+    const res = await fetch(
+      `${url}/rest/v1/tournament_events?event_date=in.(${inList})&excluded=is.false&select=tournament_event_id,event_date,starts_at`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    );
+    const rows = await res.json();
+    if (Array.isArray(rows)) return rows as Game[];
+  } catch (_e) {
+    // fall through
+  }
+  return [];
+}
+
+// Claim a slot in letspoker_fired. Returns true only if WE inserted it (so the
+// push fires exactly once); false if it was already claimed.
+async function claimSlot(eventId: string, slot: string): Promise<boolean> {
+  const url = env("SUPABASE_URL");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) return false;
+  try {
+    const res = await fetch(`${url}/rest/v1/letspoker_fired`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        Prefer: "resolution=ignore-duplicates,return=representation",
+      },
+      body: JSON.stringify({ event_id: eventId, slot }),
+    });
+    const rows = await res.json().catch(() => []);
+    return Array.isArray(rows) && rows.length > 0;
+  } catch (_e) {
+    return false;
+  }
+}
+
+// Release a claim so a failed send retries on the next tick.
+async function releaseSlot(eventId: string, slot: string) {
+  const url = env("SUPABASE_URL");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) return;
+  try {
+    await fetch(`${url}/rest/v1/letspoker_fired?event_id=eq.${eventId}&slot=eq.${slot}`, {
+      method: "DELETE",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: "return=minimal" },
+    });
+  } catch (_e) {
+    // best-effort
+  }
+}
+
+async function runTick(cookie: string, sessionGroupId: string, clubId: string): Promise<Response> {
+  const nowBucket = Math.floor(Date.now() / TICK_MS);
+  // today ±1 Perth day covers teaser (night before), countdown, and in-event spillover.
+  const games = await lookupGames([perthDate(-1), perthDate(0), perthDate(1)]);
+
+  const results: unknown[] = [];
+  for (const g of games) {
+    for (const f of firesFor(g)) {
+      if (Math.floor(f.at / TICK_MS) !== nowBucket) continue; // not due in this tick
+      if (!(await claimSlot(g.tournament_event_id, f.slot))) continue; // already sent
+      const parts = f.slot.startsWith("ie-") ? IN_EVENT_TEMPLATE_PARTS : TEMPLATE_PARTS;
+      const r = await sendPush(cookie, sessionGroupId, clubId, `tick:${f.slot}`, "tick", g.event_date, g.tournament_event_id, parts);
+      if (!r.ok) await releaseSlot(g.tournament_event_id, f.slot); // let it retry next tick
+      results.push({ eventId: g.tournament_event_id, slot: f.slot, ...r });
+    }
+  }
+
+  const allOk = results.every((r) => (r as { ok: boolean }).ok);
+  return new Response(JSON.stringify({ ok: allOk, mode: "tick", fired: results }), {
+    status: allOk ? 200 : 502,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   const cookie = await getCookie();
   // Not secret (constant ids); overridable via env if they ever change.
@@ -342,6 +491,9 @@ Deno.serve(async (req) => {
 
   // Calendar sync.
   if (mode === "sync") return await runSync(cookie, sessionGroupId, clubId, dryRun);
+
+  // Tick scheduler: per-game fire times (teaser + countdown + in-event).
+  if (mode === "tick") return await runTick(cookie, sessionGroupId, clubId);
 
   // teaser targets tomorrow's games; countdown targets today's.
   const targetDate = mode === "teaser" ? perthDate(1) : perthDate(0);
