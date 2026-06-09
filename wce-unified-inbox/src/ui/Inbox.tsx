@@ -18,6 +18,7 @@ export function Inbox() {
   const [query, setQuery] = useState('')
   const [network, setNetwork] = useState<string>('all')
   const [unreadOnly, setUnreadOnly] = useState(false)
+  const [showBlocked, setShowBlocked] = useState(false)
   // conversation IDs whose messages match a content search (null = not searching content)
   const [contentMatches, setContentMatches] = useState<Set<string> | null>(null)
 
@@ -147,6 +148,7 @@ export function Inbox() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return conversations.filter((c) => {
+      if (!showBlocked && c.hidden) return false
       if (network !== 'all' && c.network !== network) return false
       if (unreadOnly && c.unread_count <= 0) return false
       if (q) {
@@ -156,7 +158,13 @@ export function Inbox() {
       }
       return true
     })
-  }, [conversations, query, network, unreadOnly, contentMatches])
+  }, [conversations, query, network, unreadOnly, contentMatches, showBlocked])
+
+  async function setBlocked(id: string, val: boolean) {
+    await supabase.from('inbox_conversations').update({ hidden: val }).eq('id', id)
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, hidden: val } : c)))
+    if (val && activeId === id) setActiveId(null)
+  }
 
   const active = conversations.find((c) => c.id === activeId) ?? null
 
@@ -241,6 +249,15 @@ export function Inbox() {
             />
             Unread only
           </label>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={showBlocked}
+              onChange={(e) => setShowBlocked(e.target.checked)}
+              className="accent-emerald-600"
+            />
+            Show blocked
+          </label>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -249,23 +266,34 @@ export function Inbox() {
             <p className="p-4 text-sm text-slate-400">No conversations match.</p>
           )}
           {filtered.map((c) => (
-            <button
+            <div
               key={c.id}
-              onClick={() => setActiveId(c.id)}
-              className={`block w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 ${
+              className={`group flex items-start gap-1 border-b border-slate-100 hover:bg-slate-50 ${
                 activeId === c.id ? 'bg-slate-100' : ''
-              }`}
+              } ${c.hidden ? 'opacity-60' : ''}`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-medium">{nameOf(c)}</span>
-                <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-400">
-                  {c.network}
-                </span>
-              </div>
-              {c.unread_count > 0 && (
-                <span className="text-xs text-emerald-600">{c.unread_count} unread</span>
-              )}
-            </button>
+              <button
+                onClick={() => setActiveId(c.id)}
+                className="block flex-1 px-4 py-3 text-left"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-medium">{nameOf(c)}</span>
+                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-400">
+                    {c.network}
+                  </span>
+                </div>
+                {c.unread_count > 0 && (
+                  <span className="text-xs text-emerald-600">{c.unread_count} unread</span>
+                )}
+              </button>
+              <button
+                onClick={() => void setBlocked(c.id, !c.hidden)}
+                title={c.hidden ? 'Unblock' : 'Block / hide sender'}
+                className="px-2 py-3 text-[10px] text-slate-300 hover:text-rose-600"
+              >
+                {c.hidden ? 'unblock' : 'block'}
+              </button>
+            </div>
           ))}
         </div>
 
