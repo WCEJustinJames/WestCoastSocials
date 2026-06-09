@@ -40,6 +40,10 @@ running table, not from `getEventList` — supply it explicitly to `push`.
 
 - **sync** — diff `getEventList(includeCash:true)` vs the tournament-only list,
   upsert cash-only events into `public.cash_events`.
+- **prefill** — `{ mode:"prefill", horizonDays?, lookbackDays? }` — for each
+  upcoming scheduled game, copy the entrants of the **same weekly game last
+  week** (same venue + weekday) into a `cash_plan` + `cash_seat_roster`. Pure
+  DB (no cookie); idempotent. Backed by `public.prefill_cash_from_history`.
 - **open** — `{ mode:"open", date|planId, dryRun? }` — create the plan's
   `stakes[]` + `game_types[]`. `dryRun` reports the intended calls.
 - **seat** — `{ mode:"seat", date|planId, paymentMethod?, dryRun? }` — register

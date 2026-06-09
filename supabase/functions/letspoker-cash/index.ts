@@ -3,15 +3,12 @@
 // and pushes per cash event. Same admin GraphQL endpoint, same cookie auth.
 //
 // Modes (request body { "mode": ... }):
-//   - "sync"  -> diff getEventList(includeCash:true) vs the tournament-only list
-//                and upsert the cash-only events into public.cash_events.
-//   - "open"  -> for a date or planId, create the planned cash stakes + game
-//                types (createCashStake / createCashGameType). dryRun supported.
-//   - "seat"  -> register the plan's roster names onto its event
-//                (registerPlayerIntoEvent). One name/user per Perth day across
-//                tournament + cash (cash_day_user_ledger). dryRun DEFAULT true.
-//   - "push"  -> sendCashPushNotification for an event/table. dryRun supported.
-//   - "tick"  -> orchestrate open + seat + push for today's plans (cron).
+//   - "sync"    -> diff getEventList(includeCash:true) vs the tournament-only list.
+//   - "prefill" -> prefill upcoming rosters from the same weekly game last week.
+//   - "open"    -> create the planned cash stakes + game types. dryRun supported.
+//   - "seat"    -> register the plan's roster names onto its event. dryRun DEFAULT true.
+//   - "push"    -> sendCashPushNotification for an event/table. dryRun supported.
+//   - "tick"    -> orchestrate open + seat for today's plans (cron).
 //
 // Discovered LP cash schema (admin GraphQL, introspection off — mapped via
 // field-suggestion probing):
@@ -467,9 +464,29 @@ async function runPush(
   return json({ ok: r.ok, status: r.status, error: r.error }, r.ok ? 200 : 502);
 }
 
+/* ------------------------------ prefill ------------------------------ */
+// Prefill upcoming events' rosters from the same weekly game last week, via the
+// public.prefill_cash_from_history RPC (set-based matching lives in SQL).
+async function runPrefill(opts: { horizonDays?: number; lookbackDays?: number }): Promise<Response> {
+  const res = await rest(`/rest/v1/rpc/prefill_cash_from_history`, {
+    method: "POST",
+    body: JSON.stringify({
+      horizon_days: opts.horizonDays ?? 14,
+      lookback_days: opts.lookbackDays ?? 45,
+    }),
+  });
+  const text = await res.text();
+  let rows: unknown = text;
+  try { rows = JSON.parse(text); } catch { /* keep text */ }
+  const ok = res.ok;
+  await logCash({ source: "prefill", op: "prefill", ref: null, http_status: res.status, ok,
+    detail: `prefill ${ok ? "ok" : "failed"}: ${text.slice(0, 300)}` });
+  return json({ ok, mode: "prefill", results: rows }, ok ? 200 : 502);
+}
+
 /* ------------------------------- tick -------------------------------- */
 // Orchestrate today's plans: open (once) then seat. Push is left explicit
-// because it needs a live tableId. Idempotency via cash_fired.
+// because it needs a live tableId.
 async function runTick(
   cookie: string, sessionGroupId: string, clubId: string, dryRun: boolean,
 ): Promise<Response> {
@@ -500,6 +517,9 @@ Deno.serve(async (req) => {
   const mode = typeof body.mode === "string" ? body.mode : "sync";
   // Seat is money-touching: dryRun defaults TRUE unless explicitly disabled.
   const dryRun = mode === "seat" || mode === "tick" ? body.dryRun !== false : body.dryRun === true;
+
+  // prefill needs no cookie (pure DB).
+  if (mode === "prefill") return await runPrefill({ horizonDays: body.horizonDays, lookbackDays: body.lookbackDays });
 
   if (!cookie) {
     const detail = "Missing config: no LetsPoker cookie (letspoker_auth / LETSPOKER_COOKIE)";
