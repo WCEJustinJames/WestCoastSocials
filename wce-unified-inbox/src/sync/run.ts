@@ -88,11 +88,14 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   const once = process.argv.includes('--once')
-  await runOnce()
+  // Don't let a transient first-pass error (e.g. a dropped Supabase HTTP/2
+  // session) kill the whole process — log it and keep looping; the next pass
+  // retries. Approved sends are never lost, they just go on a later pass.
+  await runOnce().catch((err) => console.error('[mirror] error:', err instanceof Error ? err.message : err))
   if (once) return
   console.log(`[mirror] polling every ${env.syncIntervalMs}ms — Ctrl+C to stop`)
   setInterval(() => {
-    runOnce().catch((err) => console.error('[mirror] error:', err))
+    runOnce().catch((err) => console.error('[mirror] error:', err instanceof Error ? err.message : err))
   }, env.syncIntervalMs)
 }
 
