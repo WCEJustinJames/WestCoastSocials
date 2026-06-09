@@ -77,3 +77,13 @@ alter table public.cash_seat_roster     enable row level security;
 alter table public.cash_day_user_ledger enable row level security;
 alter table public.cash_open_log        enable row level security;
 alter table public.cash_fired           enable row level security;
+
+-- The edge function talks to PostgREST as service_role (which bypasses RLS).
+-- Tables created via migration don't always inherit Supabase's default API
+-- grants, so grant them explicitly. anon/authenticated stay governed by RLS
+-- (no policies = no access), so this is safe.
+grant all on public.cash_events, public.cash_plan, public.cash_seat_roster,
+  public.cash_day_user_ledger, public.cash_open_log, public.cash_fired
+  to service_role, anon, authenticated;
+grant usage, select on all sequences in schema public
+  to service_role, anon, authenticated;
