@@ -103,10 +103,10 @@ function base32Decode(s: string): Uint8Array {
 }
 
 // RFC 6238 TOTP — the same 6-digit code an authenticator app shows.
-async function totp(secret: string, timeStep = 30, digits = 6): Promise<string> {
+async function totp(secret: string, timeStep = 30, digits = 6, offsetSteps = 0): Promise<string> {
   const key = base32Decode(secret);
   const msg = new Uint8Array(8);
-  let counter = Math.floor(Date.now() / 1000 / timeStep);
+  let counter = Math.floor(Date.now() / 1000 / timeStep) + offsetSteps;
   for (let i = 7; i >= 0; i--) { msg[i] = counter & 0xff; counter = Math.floor(counter / 256); }
   const ck = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", ck, msg));
@@ -629,14 +629,16 @@ Deno.serve(async (req) => {
     // no/invalid body — default to countdown
   }
 
-  // Debug: return the TOTP code we generate, to compare against the authenticator app.
+  // Debug: codes for a ±2-window range (immune to chat lag) + the server clock,
+  // to compare against the authenticator app and rule out seed/clock issues.
   if (mode === "totpcheck") {
     const seed = env("LETSPOKER_TOTP_SECRET");
     if (!seed) return new Response(JSON.stringify({ ok: false, error: "no LETSPOKER_TOTP_SECRET" }), { status: 500, headers: { "Content-Type": "application/json" } });
     try {
-      const code = await totp(seed);
-      const secondsRemaining = 30 - (Math.floor(Date.now() / 1000) % 30);
-      return new Response(JSON.stringify({ ok: true, code, secondsRemaining }), { status: 200, headers: { "Content-Type": "application/json" } });
+      const codes: Record<string, string> = {};
+      for (const o of [-2, -1, 0, 1, 2]) codes[String(o)] = await totp(seed, 30, 6, o);
+      const now = Date.now();
+      return new Response(JSON.stringify({ ok: true, codes, epochMs: now, serverUtc: new Date(now).toISOString(), secondsRemaining: 30 - (Math.floor(now / 1000) % 30) }), { status: 200, headers: { "Content-Type": "application/json" } });
     } catch (e) {
       return new Response(JSON.stringify({ ok: false, error: String(e) }), { status: 500, headers: { "Content-Type": "application/json" } });
     }
