@@ -484,10 +484,11 @@ const COUNTDOWN: Record<"daytime" | "evening", string[]> = {
   evening: ["06:00", "09:00", "12:00", "15:00", "17:00", "18:00"],
   daytime: ["06:00", "09:00", "10:00", "11:00", "12:00", "12:30"],
 };
-// In-event pushes target an already-started game; "timeRelative" may read oddly
-// there. Swap in a "live now" / "late reg" token once we confirm what LetsPoker
-// exposes. Until then it mirrors the standard parts.
-const IN_EVENT_TEMPLATE_PARTS = TEMPLATE_PARTS;
+// In-event pushes target an already-started game, where "timeRelative" reads
+// oddly. These tokens suit a live game: event name + players remaining + live
+// prize pool (the guaranteed floor, i.e. max of GTD/collected) + late-reg time.
+// Keys captured verbatim from the LetsPoker push composer.
+const IN_EVENT_TEMPLATE_PARTS = ["eventName", "playerCount", "prizePool", "lateEntry"];
 
 // Absolute instant for a Perth local date (YYYY-MM-DD) at HH:MM.
 function perthInstant(date: string, hhmm: string): Date {
