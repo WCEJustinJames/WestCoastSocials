@@ -70,6 +70,11 @@ export function Batches() {
   const [items, setItems] = useState<ItemRow[]>([])
   const [include, setInclude] = useState<Record<string, boolean>>({})
   const [edits, setEdits] = useState<Record<string, string>>({})
+  // per-recipient name/phone corrections made in the preview
+  const [nameEdits, setNameEdits] = useState<Record<string, string>>({})
+  const [phoneEdits, setPhoneEdits] = useState<Record<string, string>>({})
+  const [findText, setFindText] = useState('')
+  const [replaceText, setReplaceText] = useState('')
 
   useEffect(() => {
     let q = supabase
@@ -287,6 +292,16 @@ export function Batches() {
     setItems(list)
     setInclude(Object.fromEntries(list.map((it) => [it.id, !it.guard_flag])))
     setEdits(Object.fromEntries(list.map((it) => [it.id, it.rendered_text])))
+    setNameEdits(
+      Object.fromEntries(
+        list.map((it) => [it.id, ((it.data as { name?: string } | null)?.name ?? '')]),
+      ),
+    )
+    setPhoneEdits(
+      Object.fromEntries(
+        list.map((it) => [it.id, ((it.data as { phone?: string } | null)?.phone ?? '')]),
+      ),
+    )
     setBatchId(batch.id)
     setBusy(false)
     setStatus(null)
@@ -308,10 +323,29 @@ export function Batches() {
     setStatus('Approving…')
     for (const it of items) {
       if (include[it.id] && sendableItem(it)) {
+        const d = (it.data ?? {}) as Record<string, unknown> & { outreach_id?: string; name?: string; phone?: string }
+        const newName = (nameEdits[it.id] ?? '').trim()
+        const newPhone = (phoneEdits[it.id] ?? '').trim()
+        // Corrected number/name flow into the send (and the CRM record below).
+        const data = { ...d, name: newName || d.name, phone: newPhone || d.phone }
         await supabase
           .from('inbox_batch_items')
-          .update({ status: 'approved', rendered_text: edits[it.id] ?? it.rendered_text })
+          .update({
+            status: 'approved',
+            rendered_text: edits[it.id] ?? it.rendered_text,
+            data: data as Json,
+          })
           .eq('id', it.id)
+        // Persist name/number fixes back to the CRM player.
+        if (d.outreach_id && (newName !== (d.name ?? '') || newPhone !== (d.phone ?? ''))) {
+          await supabase
+            .from('inbox_outreach')
+            .update({
+              ...(newName ? { player_name: newName } : {}),
+              ...(newPhone ? { phone: newPhone } : {}),
+            })
+            .eq('id', d.outreach_id)
+        }
       } else {
         await supabase.from('inbox_batch_items').update({ status: 'skipped' }).eq('id', it.id)
       }
@@ -342,10 +376,26 @@ export function Batches() {
     setItems([])
     setInclude({})
     setEdits({})
+    setNameEdits({})
+    setPhoneEdits({})
+    setFindText('')
+    setReplaceText('')
     setSelected(new Set())
     setName('')
     setTemplate('')
     setAttachImg(null)
+  }
+
+  // Find & replace across every message in the preview (literal, all occurrences).
+  function applyReplace() {
+    if (!findText) return
+    setEdits((prev) => {
+      const next = { ...prev }
+      for (const id in next) next[id] = next[id].split(findText).join(replaceText)
+      return next
+    })
+    setStatus(`Replaced “${findText}” in all messages.`)
+    setTimeout(() => setStatus(null), 2500)
   }
 
   // ---- Preview phase ----
@@ -392,9 +442,34 @@ export function Batches() {
         </div>
         {status && <p className="mb-3 text-sm text-emerald-700">{status}</p>}
 
+        {/* Find & replace across all messages — edit wording without rebuilding */}
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 text-sm">
+          <span className="text-xs font-medium text-slate-500">Find &amp; replace:</span>
+          <input
+            value={findText}
+            onChange={(e) => setFindText(e.target.value)}
+            placeholder="find"
+            className="w-40 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+          />
+          <input
+            value={replaceText}
+            onChange={(e) => setReplaceText(e.target.value)}
+            placeholder="replace with"
+            className="w-40 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+          />
+          <button
+            onClick={applyReplace}
+            disabled={!findText}
+            className="rounded-md bg-slate-700 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-40"
+          >
+            Replace in all
+          </button>
+          <span className="text-xs text-slate-400">— edits apply to every message; your selection stays.</span>
+        </div>
+
         <ul className="space-y-2">
           {items.map((it) => {
-            const data = it.data as { name?: string; network?: string; region?: string } | null
+            const data = it.data as { network?: string; region?: string } | null
             const canSend = sendableItem(it)
             return (
               <li
@@ -405,15 +480,33 @@ export function Batches() {
                     : 'border-slate-200 bg-slate-50 opacity-70'
                 }`}
               >
-                <div className="mb-1 flex items-center gap-2">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
                   <input
                     type="checkbox"
                     checked={(include[it.id] ?? false) && canSend}
                     disabled={!canSend}
                     onChange={() => setInclude((p) => ({ ...p, [it.id]: !p[it.id] }))}
                   />
-                  <span className="text-sm font-medium">{data?.name ?? 'Unknown'}</span>
+                  <input
+                    value={nameEdits[it.id] ?? ''}
+                    onChange={(e) => setNameEdits((p) => ({ ...p, [it.id]: e.target.value }))}
+                    placeholder="name"
+                    className="w-40 rounded-md border border-slate-200 px-2 py-0.5 text-sm font-medium outline-none focus:border-emerald-500"
+                  />
+                  <input
+                    value={phoneEdits[it.id] ?? ''}
+                    onChange={(e) => setPhoneEdits((p) => ({ ...p, [it.id]: e.target.value }))}
+                    placeholder="number"
+                    className="w-32 rounded-md border border-slate-200 px-2 py-0.5 text-xs outline-none focus:border-emerald-500"
+                  />
                   <span className="text-xs text-slate-400">{data?.network ?? data?.region}</span>
+                  <button
+                    onClick={() => setInclude((p) => ({ ...p, [it.id]: false }))}
+                    title="Remove from this batch"
+                    className="text-xs text-slate-300 hover:text-rose-600"
+                  >
+                    remove
+                  </button>
                   {it.guard_flag && (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
                       ⚠ {it.guard_reason}
