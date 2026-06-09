@@ -202,7 +202,11 @@ export function Batches() {
       })
       .filter((r) => {
         const o = outreach.find((x) => x.id === r.key)!
-        if (region !== 'all' && o.region !== region) return false
+        if (region !== 'all') {
+          const rg = (o.region ?? '').toLowerCase()
+          // "All Areas" players always match any region search.
+          if (!rg.includes('all area') && !rg.includes(region.toLowerCase())) return false
+        }
         if (stake !== 'all' && !(o.stakes ?? []).includes(stake)) return false
         if (activity !== 'all' && o.activity !== activity) return false
         if (cDay !== 'all' && o.contact_day !== cDay) return false
@@ -517,10 +521,16 @@ export function Batches() {
             </select>
           ) : (
             <>
-              <select value={region} onChange={(e) => setRegion(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
-                <option value="all">All regions</option>
-                {regions.map((r) => (<option key={r} value={r}>{r}</option>))}
-              </select>
+              <input
+                list="crm-region-list"
+                value={region === 'all' ? '' : region}
+                onChange={(e) => setRegion(e.target.value.trim() || 'all')}
+                placeholder="Region…"
+                className="w-32 rounded-md border border-slate-300 px-2 py-1"
+              />
+              <datalist id="crm-region-list">
+                {regions.map((r) => (<option key={r} value={r} />))}
+              </datalist>
               <select value={stake} onChange={(e) => setStake(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
                 <option value="all">All stakes</option>
                 {stakesOpts.map((s) => (<option key={s} value={s}>{s}</option>))}

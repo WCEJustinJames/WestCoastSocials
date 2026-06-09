@@ -134,7 +134,10 @@ export function Players() {
     const q = query.trim().toLowerCase()
     return rows.filter((r) => {
       if (!showHidden && r.hidden) return false
-      if (regionFilter !== 'all' && r.region !== regionFilter) return false
+      if (regionFilter !== 'all') {
+        const rg = (r.region ?? '').toLowerCase()
+        if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
+      }
       if (q && !(r.player_name ?? '').toLowerCase().includes(q) && !(r.phone ?? '').includes(q))
         return false
       return true
@@ -362,16 +365,16 @@ export function Players() {
           placeholder="Search name or phone…"
           className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
         />
-        <select
-          value={regionFilter}
-          onChange={(e) => setRegionFilter(e.target.value)}
-          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-        >
-          <option value="all">All regions</option>
-          {regions.map((r) => (
-            <option key={r} value={r}>{r}</option>
-          ))}
-        </select>
+        <input
+          list="players-region-list"
+          value={regionFilter === 'all' ? '' : regionFilter}
+          onChange={(e) => setRegionFilter(e.target.value.trim() || 'all')}
+          placeholder="Region…"
+          className="w-40 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+        />
+        <datalist id="players-region-list">
+          {regions.map((r) => (<option key={r} value={r} />))}
+        </datalist>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
           show hidden
