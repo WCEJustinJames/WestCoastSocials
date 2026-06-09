@@ -38,6 +38,7 @@ const LIST_QUERY = `query getTournamentList($clubId: ID!, $startDate: DateTime!,
 
 // Headless login (discovered via field-suggestion probing; introspection is off).
 // authToken is the TOTP 6-digit code; the session returns as Set-Cookie.
+// NOTE: username is namespaced by session group, e.g. "wcp:Claude" (LETSPOKER_USERNAME).
 const LOGIN_MUTATION = `mutation adminLogin($username: String!, $password: String!, $authToken: String!) {
   adminLogin(username: $username, password: $password, authToken: $authToken) {
     user { id }
@@ -103,10 +104,10 @@ function base32Decode(s: string): Uint8Array {
 }
 
 // RFC 6238 TOTP — the same 6-digit code an authenticator app shows.
-async function totp(secret: string, timeStep = 30, digits = 6, offsetSteps = 0): Promise<string> {
+async function totp(secret: string, timeStep = 30, digits = 6): Promise<string> {
   const key = base32Decode(secret);
   const msg = new Uint8Array(8);
-  let counter = Math.floor(Date.now() / 1000 / timeStep) + offsetSteps;
+  let counter = Math.floor(Date.now() / 1000 / timeStep);
   for (let i = 7; i >= 0; i--) { msg[i] = counter & 0xff; counter = Math.floor(counter / 256); }
   const ck = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", ck, msg));
@@ -370,7 +371,7 @@ async function runSync(cookie: string, sessionGroupId: string, clubId: string, d
 // Headless login: mint a fresh session cookie from username + password + TOTP and
 // store it in letspoker_auth for getCookie(). On any failure the old cookie is
 // left untouched (fail-safe) and Justin is alerted.
-async function runLogin(overrideToken?: string): Promise<Response> {
+async function runLogin(): Promise<Response> {
   const username = env("LETSPOKER_USERNAME");
   const password = env("LETSPOKER_PASSWORD");
   const seed = env("LETSPOKER_TOTP_SECRET");
@@ -378,7 +379,7 @@ async function runLogin(overrideToken?: string): Promise<Response> {
   const url = env("SUPABASE_URL");
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
 
-  if (!username || !password || (!seed && !overrideToken)) {
+  if (!username || !password || !seed) {
     const detail = "login misconfigured: need LETSPOKER_USERNAME, LETSPOKER_PASSWORD, LETSPOKER_TOTP_SECRET";
     await logFire({ source: "login", tournament_event_id: null, http_status: null, ok: false, detail });
     await alertJustin("LetsPoker auto-login misconfigured", detail);
@@ -387,7 +388,7 @@ async function runLogin(overrideToken?: string): Promise<Response> {
 
   let authToken: string;
   try {
-    authToken = overrideToken ?? await totp(seed as string);
+    authToken = await totp(seed);
   } catch (e) {
     const detail = `login: TOTP failed — is LETSPOKER_TOTP_SECRET valid base32? ${e}`;
     await logFire({ source: "login", tournament_event_id: null, http_status: null, ok: false, detail });
@@ -615,38 +616,20 @@ Deno.serve(async (req) => {
 
   let mode = "countdown";
   let overrideEventId: string | undefined;
-  let overrideAuthToken: string | undefined;
   let dryRun = false;
   try {
     if (req.headers.get("content-type")?.includes("application/json")) {
       const body = await req.json();
       if (body && typeof body.mode === "string") mode = body.mode;
       if (body && typeof body.tournamentEventId === "string") overrideEventId = body.tournamentEventId;
-      if (body && typeof body.authToken === "string") overrideAuthToken = body.authToken;
       if (body && body.dryRun === true) dryRun = true;
     }
   } catch {
     // no/invalid body — default to countdown
   }
 
-  // Debug: codes for a ±2-window range (immune to chat lag) + the server clock,
-  // to compare against the authenticator app and rule out seed/clock issues.
-  if (mode === "totpcheck") {
-    const seed = env("LETSPOKER_TOTP_SECRET");
-    if (!seed) return new Response(JSON.stringify({ ok: false, error: "no LETSPOKER_TOTP_SECRET" }), { status: 500, headers: { "Content-Type": "application/json" } });
-    try {
-      const codes: Record<string, string> = {};
-      for (const o of [-2, -1, 0, 1, 2]) codes[String(o)] = await totp(seed, 30, 6, o);
-      const now = Date.now();
-      return new Response(JSON.stringify({ ok: true, codes, epochMs: now, serverUtc: new Date(now).toISOString(), secondsRemaining: 30 - (Math.floor(now / 1000) % 30) }), { status: 200, headers: { "Content-Type": "application/json" } });
-    } catch (e) {
-      return new Response(JSON.stringify({ ok: false, error: String(e) }), { status: 500, headers: { "Content-Type": "application/json" } });
-    }
-  }
-
-  // Headless login bootstraps the cookie — runs without one. Optional body.authToken
-  // overrides the generated TOTP (used to isolate seed vs. login-shape problems).
-  if (mode === "login") return await runLogin(overrideAuthToken);
+  // Headless login bootstraps the cookie — runs without one.
+  if (mode === "login") return await runLogin();
 
   // Cookie is required for any LetsPoker call.
   if (!cookie) {
