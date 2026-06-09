@@ -398,6 +398,17 @@ export function Batches() {
     setTimeout(() => setStatus(null), 2500)
   }
 
+  // Tick/untick every sendable recipient at once.
+  const allSendableIncluded =
+    items.some((it) => sendableItem(it)) && items.every((it) => !sendableItem(it) || include[it.id])
+  function toggleAllIncluded(checked: boolean) {
+    setInclude((prev) => {
+      const next = { ...prev }
+      for (const it of items) if (sendableItem(it)) next[it.id] = checked
+      return next
+    })
+  }
+
   // ---- Preview phase ----
   if (batchId) {
     return (
@@ -466,6 +477,15 @@ export function Batches() {
           </button>
           <span className="text-xs text-slate-400">— edits apply to every message; your selection stays.</span>
         </div>
+
+        <label className="mb-2 flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={allSendableIncluded}
+            onChange={(e) => toggleAllIncluded(e.target.checked)}
+          />
+          Select all ({includedCount}/{items.filter((it) => sendableItem(it)).length} sendable)
+        </label>
 
         <ul className="space-y-2">
           {items.map((it) => {
