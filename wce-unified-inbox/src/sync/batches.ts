@@ -51,6 +51,22 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
     .slice(0, 5)
   if (batches.length === 0) return { sent: 0, failed: 0 }
 
+  // Reclaim items orphaned by a crashed worker. A healthy pass caps at
+  // MAX_PER_PASS sends (~30s), so anything stuck in `sending` for minutes was
+  // abandoned mid-send. The cutoff is well past a normal pass, so two healthy
+  // windows running at once never reset each other's in-flight claims.
+  const staleCutoff = new Date(now - 5 * 60_000).toISOString()
+  await db
+    .from('inbox_batch_items')
+    .update({ status: 'approved', claimed_at: null })
+    .eq('status', 'sending')
+    .lt('claimed_at', staleCutoff)
+  await db
+    .from('inbox_batch_items')
+    .update({ status: 'approved', claimed_at: null })
+    .eq('status', 'sending')
+    .is('claimed_at', null)
+
   let sent = 0
   let failed = 0
 
@@ -76,6 +92,18 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
       .limit(remaining)
 
     for (const item of items ?? []) {
+      // Atomically claim the item: flip approved -> sending only if it's still
+      // approved. This is a single conditional UPDATE, so if a second sync
+      // window is running, exactly one wins the claim and the other skips —
+      // no double-send. (The fix for the duplicate run-wce.bat window.)
+      const { data: claimed } = await db
+        .from('inbox_batch_items')
+        .update({ status: 'sending', claimed_at: new Date().toISOString() })
+        .eq('id', item.id)
+        .eq('status', 'approved')
+        .select('id')
+      if (!claimed || claimed.length === 0) continue // another worker took it
+
       const data = item.data as {
         conversation_id?: string
         beeper_chat_id?: string
@@ -146,14 +174,15 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
       await sleep(SEND_DELAY_MS)
     }
 
-    // Flip the batch to `sent` only once no approved items are left to drain.
-    const { data: stillApproved } = await db
+    // Flip the batch to `sent` only once nothing is left to drain — no
+    // `approved` items waiting and none still mid-send (`sending`).
+    const { data: stillPending } = await db
       .from('inbox_batch_items')
       .select('id')
       .eq('batch_id', batch.id)
-      .eq('status', 'approved')
+      .in('status', ['approved', 'sending'])
       .limit(1)
-    if (!stillApproved || stillApproved.length === 0) {
+    if (!stillPending || stillPending.length === 0) {
       await db.from('inbox_batches').update({ status: 'sent' }).eq('id', batch.id)
     }
   }

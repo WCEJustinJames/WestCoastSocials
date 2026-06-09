@@ -15,6 +15,7 @@ export type Database = {
       inbox_batch_items: {
         Row: {
           batch_id: string
+          claimed_at: string | null
           created_at: string
           data: Json
           guard_flag: boolean
@@ -28,6 +29,7 @@ export type Database = {
         }
         Insert: {
           batch_id: string
+          claimed_at?: string | null
           created_at?: string
           data?: Json
           guard_flag?: boolean
@@ -41,6 +43,7 @@ export type Database = {
         }
         Update: {
           batch_id?: string
+          claimed_at?: string | null
           created_at?: string
           data?: Json
           guard_flag?: boolean
@@ -550,6 +553,7 @@ export type Database = {
         | 'pending'
         | 'approved'
         | 'skipped'
+        | 'sending'
         | 'sent'
         | 'failed'
       inbox_batch_status: 'draft' | 'approved' | 'sending' | 'sent' | 'canceled'
