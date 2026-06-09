@@ -70,6 +70,10 @@ export function Batches() {
   const [items, setItems] = useState<ItemRow[]>([])
   const [include, setInclude] = useState<Record<string, boolean>>({})
   const [edits, setEdits] = useState<Record<string, string>>({})
+  // previously-built batches you can reload the recipient list from
+  const [pastBatches, setPastBatches] = useState<
+    { id: string; name: string; status: string; created_at: string }[]
+  >([])
   // per-recipient name/phone corrections made in the preview
   const [nameEdits, setNameEdits] = useState<Record<string, string>>({})
   const [phoneEdits, setPhoneEdits] = useState<Record<string, string>>({})
@@ -224,6 +228,36 @@ export function Batches() {
   function switchSource(s: Source) {
     setSource(s)
     setSelected(new Set())
+  }
+
+  function loadPastBatches() {
+    supabase
+      .from('inbox_batches')
+      .select('id, name, status, created_at')
+      .order('created_at', { ascending: false })
+      .limit(50)
+      .then(({ data }) => setPastBatches((data as typeof pastBatches) ?? []))
+  }
+  useEffect(loadPastBatches, [])
+
+  // Reload the recipients from a past batch into the current compose selection.
+  async function loadList(id: string) {
+    const { data } = await supabase.from('inbox_batch_items').select('data').eq('batch_id', id)
+    const keys = new Set<string>()
+    let isCrm = false
+    for (const it of data ?? []) {
+      const d = it.data as { outreach_id?: string; conversation_id?: string } | null
+      if (d?.outreach_id) {
+        keys.add(d.outreach_id)
+        isCrm = true
+      } else if (d?.conversation_id) {
+        keys.add(d.conversation_id)
+      }
+    }
+    setSource(isCrm ? 'crm' : 'inbox')
+    setSelected(keys)
+    setStatus(`Loaded ${keys.size} recipients from that list — edit the template and Build preview.`)
+    setTimeout(() => setStatus(null), 6000)
   }
   function toggle(key: string) {
     setSelected((prev) => {
@@ -557,6 +591,30 @@ export function Batches() {
         Use <code className="rounded bg-slate-100 px-1">{'{{name}}'}</code> or{' '}
         <code className="rounded bg-slate-100 px-1">{'{{first_name}}'}</code> to personalise.
       </p>
+
+      {pastBatches.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-xs font-medium text-slate-500">Reuse a past list:</span>
+          <select
+            defaultValue=""
+            onChange={(e) => {
+              if (e.target.value) void loadList(e.target.value)
+              e.target.value = ''
+            }}
+            className="max-w-xs flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
+          >
+            <option value="">— pick a previous batch —</option>
+            {pastBatches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} · {new Date(b.created_at).toLocaleDateString()} · {b.status}
+              </option>
+            ))}
+          </select>
+          <button onClick={loadPastBatches} className="text-xs text-emerald-700 hover:underline">
+            refresh
+          </button>
+        </div>
+      )}
 
       <label className="mb-1 block text-sm font-medium">Batch name (for your reference)</label>
       <input
