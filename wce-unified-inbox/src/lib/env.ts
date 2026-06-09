@@ -25,6 +25,14 @@ export const env = {
   airtableBaseId: process.env.AIRTABLE_BASE_ID ?? 'appTPf6j5S1MdNXEf',
   airtableOutreachTable: process.env.AIRTABLE_OUTREACH_TABLE ?? 'Player Outreach',
   outreachSyncMinutes: Number(process.env.OUTREACH_SYNC_MINUTES ?? 10),
+  // Auto-reply to inbound replies (poker game invites). When on, the sync reads
+  // unhandled inbound messages, thanks/acknowledges the simple ones (confirm or
+  // decline) automatically, and texts a confirmed-players digest to notifyPhone.
+  // Anything needing a human (real questions, money) is escalated, not faked.
+  autoReply: (process.env.AUTO_REPLY ?? 'on').toLowerCase() !== 'off',
+  autoReplyMaxPerPass: Number(process.env.AUTO_REPLY_MAX_PER_PASS ?? 15),
+  // Where the "who confirmed" digest texts go (Justin's mobile, +E.164).
+  notifyPhone: process.env.NOTIFY_PHONE ?? '+61459686980',
   // Receipt guardrail: the recipient/operator signs every slip, so their name
   // and number must never be extracted as a *player*. Comma-separated.
   receiptBlockNames: (process.env.RECEIPT_BLOCK_NAMES ?? 'justin lewis,jj lewis,j j lewis,lewis,justin')

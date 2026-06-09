@@ -14,6 +14,7 @@ import { processOutbox } from './outbox'
 import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
 import { syncOutreach } from './outreach'
+import { processReplies } from './notify'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -32,6 +33,9 @@ if (anthropic) {
 }
 if (env.airtableKey) {
   console.log(`[outreach] Airtable CRM sync on (every ${env.outreachSyncMinutes}m)`)
+}
+if (anthropic && env.autoReply) {
+  console.log(`[reply] auto-reply on — digest texts to ${env.notifyPhone}`)
 }
 
 // Airtable CRM sync runs on its own slower cadence, not every pass.
@@ -69,6 +73,27 @@ async function runOnce(): Promise<void> {
       console.log(`[outreach] synced=${o.synced} players from Airtable`)
     } catch (e) {
       console.error('[outreach] sync error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Auto-reply: thank/acknowledge inbound replies and text Justin who confirmed.
+  if (anthropic && env.autoReply) {
+    try {
+      const rep = await processReplies(
+        supabaseAdmin,
+        adapter,
+        anthropic,
+        env.anthropicModel,
+        env.autoReplyMaxPerPass,
+        env.notifyPhone,
+      )
+      if (rep.replied || rep.confirmed || rep.escalated) {
+        console.log(
+          `[reply] replied=${rep.replied} confirmed=${rep.confirmed} escalated=${rep.escalated}`,
+        )
+      }
+    } catch (e) {
+      console.error('[reply] error:', e instanceof Error ? e.message : e)
     }
   }
 

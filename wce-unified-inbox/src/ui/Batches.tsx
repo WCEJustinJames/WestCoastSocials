@@ -90,13 +90,27 @@ export function Batches() {
   }, [showHidden])
 
   useEffect(() => {
-    let q = supabase
-      .from('inbox_outreach')
-      .select('*')
-      .eq('do_not_message', false)
-      .order('player_name', { ascending: true })
-    if (!showHidden) q = q.eq('hidden', false)
-    q.then(({ data }) => setOutreach((data as OutreachRow[]) ?? []))
+    // Page through the whole CRM — PostgREST caps a single response at 1000
+    // rows, and there are more players than that, so a plain select() silently
+    // drops everyone past the first 1000 (names from the back of the alphabet).
+    ;(async () => {
+      const all: OutreachRow[] = []
+      const PAGE = 1000
+      for (let from = 0; ; from += PAGE) {
+        let q = supabase
+          .from('inbox_outreach')
+          .select('*')
+          .eq('do_not_message', false)
+          .order('player_name', { ascending: true })
+          .range(from, from + PAGE - 1)
+        if (!showHidden) q = q.eq('hidden', false)
+        const { data } = await q
+        const rows = (data as OutreachRow[]) ?? []
+        all.push(...rows)
+        if (rows.length < PAGE) break
+      }
+      setOutreach(all)
+    })()
   }, [source, showHidden])
 
   async function toggleHide(key: string, currentlyHidden: boolean) {

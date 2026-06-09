@@ -99,19 +99,29 @@ export function Players() {
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
 
-  function load() {
-    supabase
-      .from('inbox_outreach')
-      .select('*')
-      .order('player_name', { ascending: true })
-      .then(({ data }) => {
-        const list = (data as Row[]) ?? []
-        setRows(list)
-        setEdits(Object.fromEntries(list.map((r) => [r.id, toEdit(r)])))
-        setRenames({})
-      })
+  async function load() {
+    // Page through every player — a single select() is capped at 1000 rows by
+    // PostgREST, which would hide everyone past the first 1000 (e.g. names late
+    // in the alphabet). There are more players than that.
+    const list: Row[] = []
+    const PAGE = 1000
+    for (let from = 0; ; from += PAGE) {
+      const { data } = await supabase
+        .from('inbox_outreach')
+        .select('*')
+        .order('player_name', { ascending: true })
+        .range(from, from + PAGE - 1)
+      const rows = (data as Row[]) ?? []
+      list.push(...rows)
+      if (rows.length < PAGE) break
+    }
+    setRows(list)
+    setEdits(Object.fromEntries(list.map((r) => [r.id, toEdit(r)])))
+    setRenames({})
   }
-  useEffect(load, [])
+  useEffect(() => {
+    void load()
+  }, [])
 
   const regionCounts = useMemo(() => {
     const m = new Map<string, number>()

@@ -281,6 +281,7 @@ export type Database = {
       inbox_messages: {
         Row: {
           adapter_source: Database['public']['Enums']['inbox_adapter']
+          auto_handled: boolean
           batch_item_id: string | null
           conversation_id: string
           created_at: string
@@ -292,6 +293,7 @@ export type Database = {
           network: string
           person_id: string | null
           raw: Json | null
+          reply_intent: string | null
           sender_id: string | null
           sender_name: string | null
           sort_key: string | null
@@ -300,6 +302,7 @@ export type Database = {
         }
         Insert: {
           adapter_source: Database['public']['Enums']['inbox_adapter']
+          auto_handled?: boolean
           batch_item_id?: string | null
           conversation_id: string
           created_at?: string
@@ -311,6 +314,7 @@ export type Database = {
           network: string
           person_id?: string | null
           raw?: Json | null
+          reply_intent?: string | null
           sender_id?: string | null
           sender_name?: string | null
           sort_key?: string | null
@@ -319,6 +323,7 @@ export type Database = {
         }
         Update: {
           adapter_source?: Database['public']['Enums']['inbox_adapter']
+          auto_handled?: boolean
           batch_item_id?: string | null
           conversation_id?: string
           created_at?: string
@@ -330,6 +335,7 @@ export type Database = {
           network?: string
           person_id?: string | null
           raw?: Json | null
+          reply_intent?: string | null
           sender_id?: string | null
           sender_name?: string | null
           sort_key?: string | null
