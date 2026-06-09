@@ -36,15 +36,20 @@ export function normalizeAuMobile(raw: string): string | null {
  * same gate as everything else.
  */
 export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<BatchResult> {
-  const { data: batches, error } = await db
+  const { data: allBatches, error } = await db
     .from('inbox_batches')
-    .select('id, attachment_data, attachment_name, attachment_mime')
+    .select('id, attachment_data, attachment_name, attachment_mime, scheduled_for')
     .in('status', ['approved', 'sending'])
-    // Hold scheduled batches until their time; send immediately when unscheduled.
-    .or(`scheduled_for.is.null,scheduled_for.lte.${new Date().toISOString()}`)
-    .limit(5)
+    .limit(20)
   if (error) throw error
-  if (!batches || batches.length === 0) return { sent: 0, failed: 0 }
+  // Hold scheduled batches until their time; send unscheduled ones immediately.
+  // (Filtered here, not in the query — a millisecond dot in an ISO timestamp
+  // breaks PostgREST's dot-delimited .or() filter.)
+  const now = Date.now()
+  const batches = (allBatches ?? [])
+    .filter((b) => !b.scheduled_for || new Date(b.scheduled_for).getTime() <= now)
+    .slice(0, 5)
+  if (batches.length === 0) return { sent: 0, failed: 0 }
 
   let sent = 0
   let failed = 0
