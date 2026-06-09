@@ -1,6 +1,7 @@
 // LetsPoker tournament push — headless, fully-automated.
 //
 // Modes (request body { "mode": ... }):
+//   - "login"     -> mint a fresh session cookie (username+password+TOTP) into letspoker_auth
 //   - "sync"      -> pull the calendar (getEventList) and upsert public.tournament_events
 //   - "tick"      -> per-game scheduler (teaser + countdown + in-event); run every 30 min
 //   - "countdown" -> push ALL of today's games   (legacy fixed-time fires)
@@ -35,6 +36,14 @@ const LIST_QUERY = `query getTournamentList($clubId: ID!, $startDate: DateTime!,
   }
 }`;
 
+// Headless login (discovered via field-suggestion probing; introspection is off).
+// authToken is the TOTP 6-digit code; the session returns as Set-Cookie.
+const LOGIN_MUTATION = `mutation adminLogin($username: String!, $password: String!, $authToken: String!) {
+  adminLogin(username: $username, password: $password, authToken: $authToken) {
+    user { id }
+  }
+}`;
+
 const TEMPLATE_PARTS = ["timeRelative", "eventName", "guarantee", "location"];
 
 function env(name: string): string | undefined {
@@ -61,6 +70,50 @@ function letspokerHeaders(cookie: string, sessionGroupId: string): HeadersInit {
     "x-session-groupid": sessionGroupId,
     Cookie: cookie,
   };
+}
+
+// Login headers — same as letspokerHeaders but with no Cookie (we're minting one).
+function loginHeaders(sessionGroupId: string): HeadersInit {
+  return {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "x-app-section": "admin",
+    "x-app-version": "2.0.1",
+    "x-session-groupid": sessionGroupId,
+  };
+}
+
+// RFC 4648 base32 decode (TOTP seeds are base32, no padding needed).
+function base32Decode(s: string): Uint8Array {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const clean = s.toUpperCase().replace(/=+$/, "").replace(/\s/g, "");
+  let bits = 0, value = 0;
+  const out: number[] = [];
+  for (const ch of clean) {
+    const idx = alphabet.indexOf(ch);
+    if (idx === -1) throw new Error(`invalid base32 char: ${ch}`);
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((value >>> bits) & 0xff);
+    }
+  }
+  return new Uint8Array(out);
+}
+
+// RFC 6238 TOTP — the same 6-digit code an authenticator app shows.
+async function totp(secret: string, timeStep = 30, digits = 6): Promise<string> {
+  const key = base32Decode(secret);
+  const msg = new Uint8Array(8);
+  let counter = Math.floor(Date.now() / 1000 / timeStep);
+  for (let i = 7; i >= 0; i--) { msg[i] = counter & 0xff; counter = Math.floor(counter / 256); }
+  const ck = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", ck, msg));
+  const offset = sig[sig.length - 1] & 0x0f;
+  const bin = ((sig[offset] & 0x7f) << 24) | ((sig[offset + 1] & 0xff) << 16) |
+    ((sig[offset + 2] & 0xff) << 8) | (sig[offset + 3] & 0xff);
+  return (bin % 10 ** digits).toString().padStart(digits, "0");
 }
 
 // The session cookie: prefer the auto-refreshed one in letspoker_auth, fall back
@@ -314,6 +367,99 @@ async function runSync(cookie: string, sessionGroupId: string, clubId: string, d
   return new Response(JSON.stringify({ ok: true, events: events.length, tournaments: upserted }), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
+// Headless login: mint a fresh session cookie from username + password + TOTP and
+// store it in letspoker_auth for getCookie(). On any failure the old cookie is
+// left untouched (fail-safe) and Justin is alerted.
+async function runLogin(): Promise<Response> {
+  const username = env("LETSPOKER_USERNAME");
+  const password = env("LETSPOKER_PASSWORD");
+  const seed = env("LETSPOKER_TOTP_SECRET");
+  const sessionGroupId = env("LETSPOKER_SESSION_GROUPID") ?? "wcp";
+  const url = env("SUPABASE_URL");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (!username || !password || !seed) {
+    const detail = "login misconfigured: need LETSPOKER_USERNAME, LETSPOKER_PASSWORD, LETSPOKER_TOTP_SECRET";
+    await logFire({ source: "login", tournament_event_id: null, http_status: null, ok: false, detail });
+    await alertJustin("LetsPoker auto-login misconfigured", detail);
+    return new Response(JSON.stringify({ ok: false, error: detail }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+
+  let authToken: string;
+  try {
+    authToken = await totp(seed);
+  } catch (e) {
+    const detail = `login: TOTP failed — is LETSPOKER_TOTP_SECRET valid base32? ${e}`;
+    await logFire({ source: "login", tournament_event_id: null, http_status: null, ok: false, detail });
+    await alertJustin("LetsPoker auto-login: bad TOTP secret", detail);
+    return new Response(JSON.stringify({ ok: false, error: detail }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+
+  let status: number | null = null;
+  let text = "";
+  let setCookies: string[] = [];
+  try {
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: loginHeaders(sessionGroupId),
+      body: JSON.stringify([{ operationName: "adminLogin", query: LOGIN_MUTATION, variables: { username, password, authToken } }]),
+    });
+    status = res.status;
+    setCookies = (res.headers as { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+    text = await res.text();
+  } catch (e) {
+    const detail = `login network error: ${e}`;
+    await logFire({ source: "login", tournament_event_id: null, http_status: null, ok: false, detail });
+    await alertJustin("LetsPoker auto-login failed (network)", detail);
+    return new Response(JSON.stringify({ ok: false, error: detail }), { status: 502, headers: { "Content-Type": "application/json" } });
+  }
+
+  if (status !== 200 || looksUnauthenticated(status, text) || hasGraphqlErrors(text)) {
+    const detail = `login failed status=${status} body=${text.slice(0, 300)}`;
+    await logFire({ source: "login", tournament_event_id: null, http_status: status, ok: false, detail });
+    await alertJustin("LetsPoker auto-login failed", `Credentials/TOTP rejected, or the login shape changed.\n\n${detail}`);
+    return new Response(JSON.stringify({ ok: false, status, error: "login failed" }), { status: 502, headers: { "Content-Type": "application/json" } });
+  }
+
+  // Assemble the Cookie header from every non-empty Set-Cookie pair.
+  const cookie = setCookies
+    .map((c) => c.split(";")[0].trim())
+    .filter((p) => { const i = p.indexOf("="); return i > 0 && p.slice(i + 1).length > 0; })
+    .join("; ");
+
+  if (!cookie) {
+    const detail = `login returned 200 but no usable Set-Cookie (count=${setCookies.length})`;
+    await logFire({ source: "login", tournament_event_id: null, http_status: status, ok: false, detail });
+    await alertJustin("LetsPoker auto-login: no cookie returned", detail);
+    return new Response(JSON.stringify({ ok: false, error: detail }), { status: 502, headers: { "Content-Type": "application/json" } });
+  }
+
+  // Persist for getCookie() (id=1 singleton upsert). Never log the cookie itself.
+  if (url && key) {
+    const up = await fetch(`${url}/rest/v1/letspoker_auth?on_conflict=id`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({ id: 1, cookie, refreshed_at: new Date().toISOString() }),
+    });
+    if (!up.ok) {
+      const detail = `login: cookie minted but DB store failed: ${up.status} ${(await up.text()).slice(0, 200)}`;
+      await logFire({ source: "login", tournament_event_id: null, http_status: up.status, ok: false, detail });
+      await alertJustin("LetsPoker auto-login: cookie store failed", detail);
+      return new Response(JSON.stringify({ ok: false, error: detail }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }
+
+  const detail = `login ok — fresh cookie stored (${cookie.length} chars from ${setCookies.length} set-cookie)`;
+  console.log(`[letspoker-push] ${detail}`);
+  await logFire({ source: "login", tournament_event_id: null, http_status: 200, ok: true, detail });
+  return new Response(JSON.stringify({ ok: true, stored: Boolean(url && key), cookieLength: cookie.length }), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+
 // ---------------------------------------------------------------------------
 // Tick scheduler. One cron fires every 30 min (mode "tick"); for each upcoming
 // or in-progress game the function computes that game's own fire instants and
@@ -480,6 +626,9 @@ Deno.serve(async (req) => {
   } catch {
     // no/invalid body — default to countdown
   }
+
+  // Headless login bootstraps the cookie — runs without one.
+  if (mode === "login") return await runLogin();
 
   // Cookie is required for any LetsPoker call.
   if (!cookie) {
