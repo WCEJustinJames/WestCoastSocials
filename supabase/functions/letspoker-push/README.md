@@ -4,33 +4,42 @@ Headless, start-to-finish automation of the captured LetsPoker admin push
 (`sendTournamentPushNotification`). **Interim** — LetsPoker is being replaced.
 Auth is the admin **session cookie** (the one fragile bit; it expires).
 
-LetsPoker renders `timeRelative` server-side at send time, so every fire is the
-identical call.
+LetsPoker renders the template blocks server-side at send time, so every fire is
+the identical call.
 
 ## How it runs itself
 
 1. **Sync** (every 4h) pulls the LetsPoker calendar (`getEventList`) and upserts
    every upcoming tournament into `public.tournament_events`, keyed by event id
    (a night can have several games at different venues — each is its own row).
-2. **Countdown** (6× day-of) pushes **every** game scheduled today.
-3. **Teaser** (night-before 9pm) pushes **every** game scheduled tomorrow.
+2. **Tick** (every 30 min) computes each game's *own* fire instants and sends any
+   slot due in the current 30-min bucket, exactly once.
 
-No manual event-id entry — the calendar feeds itself. If there's a game, it's
-pushed; if a night has none, the fire no-ops.
+Each game is auto-bucketed by its Perth start time (`≤ 14:00` → daytime, else
+evening) and fires on this schedule:
+
+- **Teaser** — 20:30 the night before.
+- **Countdown** — evening `06 09 12 15 17 18`, daytime `06 09 10 11 12 12:30`
+  (Perth). Clock-times at/after the game's start are dropped — the in-event
+  series covers those instants instead.
+- **In-event** — start `+30/+60/+90/+120/+150` (every 30 min, first 150 min).
+
+No manual event-id entry — the calendar feeds itself. Each (event, slot) is
+claimed in `letspoker_fired`, so the 30-min tick never double-sends.
 
 ## Pieces
 
 | File | Role |
 |------|------|
-| `supabase/functions/letspoker-push/index.ts` | Modes: `sync`, `countdown`, `teaser`, plus a `tournamentEventId` override and `dryRun`. Resolves games from `tournament_events`, sends, inspects, **fail-loud alerts**, logs. |
-| `supabase/migrations/20260602000000_letspoker_push_cron.sql` | `tournament_events` + `letspoker_push_log` tables, grants, and the three pg_cron jobs. |
+| `supabase/functions/letspoker-push/index.ts` | Modes: `sync`, `tick`, legacy `countdown`/`teaser`, plus a `tournamentEventId` override and `dryRun`. Resolves games from `tournament_events`, computes per-game fires, sends, inspects, **fail-loud alerts**, logs. |
+| `supabase/migrations/20260602000000_letspoker_push_cron.sql` | `tournament_events` + `letspoker_push_log` tables, grants. (Original fixed-time jobs — superseded by the tick.) |
+| `supabase/migrations/20260609000000_letspoker_tick_schedule.sql` | `letspoker_fired` idempotency table; retires the fixed-time jobs and schedules the 30-min `tick`. |
 
 ## Schedule — Australia/Perth (UTC+8, no DST)
 
-| Job | mode | Perth | UTC cron |
-|-----|------|-------|----------|
-| `letspoker-tournament-push` | countdown | 06:00 / 09:00 / 12:00 / 14:00 / 16:00 / 17:00 | `0 1,4,6,8,9,22 * * *` |
-| `letspoker-evening-teaser` | teaser | 21:00 | `0 13 * * *` |
+| Job | mode | Cadence | UTC cron |
+|-----|------|---------|----------|
+| `letspoker-tick` | tick | every 30 min (per-game fires computed in code) | `0,30 * * * *` |
 | `letspoker-calendar-sync` | sync | every 4h | `15 */4 * * *` |
 
 ## Secret — set directly in Supabase, never through chat/code/git
