@@ -5,7 +5,15 @@
 insert into lp_excluded_players (player_id, full_name, reason) values
   ('15e87437aed38b5c', 'Leanne Chapman', 'banned'),
   ('ebdc1b2e56d61b0d', 'Meng Yeow',      'banned'),
-  ('b1c8eb47c138b8cf', 'Harry Bui',      'banned')
+  ('b1c8eb47c138b8cf', 'Harry Bui',      'banned'),
+  -- removed from the win-back list by request
+  ('5bb92a117b09f8f5', 'Maxime Jacq',        'excluded'),
+  ('c346ac2d2ac40a3e', 'Diksha Gosavi',      'excluded'),
+  ('344fe6d603ffb89d', 'Jaime Dalton-Allen', 'excluded'),
+  ('bba5addf2169ebfd', 'Damian Song',        'excluded'),
+  ('391ff544a77daa88', 'Cheng Chow',         'excluded'),
+  ('bffb0b4d7d14a9c5', 'Ali James',          'excluded'),
+  ('31e136742becdbbd', 'Lorinda LJ Johnson', 'excluded')
 on conflict (player_id) do update set reason = excluded.reason, full_name = excluded.full_name;
 
 -- Mirror into the CRM: drop the churned tag, mark do-not-message, note the ban.
