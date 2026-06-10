@@ -4,6 +4,7 @@
  *   npm run sync          # poll forever
  *   npm run sync:once     # single pass, then exit
  */
+import os from 'node:os'
 import Anthropic from '@anthropic-ai/sdk'
 import { env, requireEnv } from '../lib/env'
 import { supabaseAdmin } from '../lib/supabaseAdmin'
@@ -65,6 +66,19 @@ async function runOnce(): Promise<void> {
   console.log(
     `[mirror ${new Date().toISOString()}] accounts=${r.accounts} chats=${r.chats} scanned=${r.scanned} inserted=${r.inserted}`,
   )
+
+  // Liveness heartbeat — lets us (and any watcher) tell at a glance whether this
+  // backend is actually running. Best-effort; never let it break a pass. The
+  // heartbeat table isn't in the generated types, hence the narrow cast.
+  try {
+    await (supabaseAdmin as unknown as {
+      from: (t: string) => { upsert: (v: unknown) => Promise<unknown> }
+    })
+      .from('inbox_sync_heartbeat')
+      .upsert({ id: 1, last_run: new Date().toISOString(), host: os.hostname(), note: `inserted=${r.inserted}` })
+  } catch {
+    /* ignore */
+  }
 
   // LetsPoker App Chats: mirror the player messenger alongside Beeper (no-op
   // until configured). Same normalized pipeline — its threads land in the inbox
