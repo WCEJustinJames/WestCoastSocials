@@ -33,6 +33,10 @@ export const env = {
   autoReplyMaxPerPass: Number(process.env.AUTO_REPLY_MAX_PER_PASS ?? 15),
   // Where the "who confirmed" digest texts go (Justin's mobile, +E.164).
   notifyPhone: process.env.NOTIFY_PHONE ?? '+61459686980',
+  // Beeper GROUP chat to also post confirmations into (e.g. the cash-games
+  // coordination group). Matched by title (case-insensitive contains). Empty
+  // disables group posting.
+  notifyGroupName: process.env.NOTIFY_GROUP_NAME ?? 'CASH GAMES West Coast Poker',
   // LetsPoker (lets.poker) operator integration — the App Chats player messenger
   // and tournament data behind the wcp.admin.lets.poker dashboard. Off until a
   // token is set. baseUrl/paths are env-overridable so they can be pinned to the

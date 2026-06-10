@@ -156,6 +156,26 @@ export class BeeperClient {
     return this.request<SearchMessagesResponse>(`${path}?${qs.toString()}`)
   }
 
+  /**
+   * Find a GROUP chat's id by (case-insensitive, contains) title match. Used to
+   * post confirmations into a coordination group. Scans recent group chats, so
+   * the group needs recent activity ("bump" it in Beeper if it isn't showing).
+   */
+  async resolveGroupChatId(title: string): Promise<string | null> {
+    const needle = title.trim().toLowerCase()
+    if (!needle) return null
+    let cursor: string | undefined
+    for (let page = 0; page < 10; page++) {
+      const res = await this.searchMessages({ chatType: 'group', limit: 20, cursor, direction: 'before' })
+      for (const [chatId, c] of Object.entries(res.chats ?? {})) {
+        if ((c.title ?? '').toLowerCase().includes(needle)) return c.id ?? chatId
+      }
+      if (!res.hasMore || !res.oldestCursor) break
+      cursor = res.oldestCursor
+    }
+    return null
+  }
+
   /** Merged contact book for an account (used to add new recipients by name/number). */
   listContacts(accountID: string, limit = 20): Promise<unknown> {
     const qs = new URLSearchParams({ limit: String(limit) })

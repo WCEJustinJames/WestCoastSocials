@@ -21,13 +21,15 @@ import { processReplies } from './notify'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
-const adapter = new BeeperAdapter(
-  new BeeperClient({
-    baseUrl: env.beeperBaseUrl,
-    token: env.beeperToken,
-    apiVersion: env.beeperApiVersion,
-  }),
-)
+const beeperClient = new BeeperClient({
+  baseUrl: env.beeperBaseUrl,
+  token: env.beeperToken,
+  apiVersion: env.beeperApiVersion,
+})
+const adapter = new BeeperAdapter(beeperClient)
+
+// Resolved lazily (group chat id for posting confirmations), cached once found.
+let notifyGroupChatId: string | null = null
 
 // LetsPoker App Chats — opt-in, only mirrors once LETSPOKER_TOKEN is set.
 const letspoker = new LetsPokerAdapter(
@@ -93,6 +95,17 @@ async function runOnce(): Promise<void> {
 
   // Auto-reply: thank/acknowledge inbound replies and text Justin who confirmed.
   if (anthropic && env.autoReply) {
+    // Resolve the cash-games group once (so confirmations can be posted there).
+    if (env.notifyGroupName && !notifyGroupChatId) {
+      try {
+        notifyGroupChatId = await beeperClient.resolveGroupChatId(env.notifyGroupName)
+        if (notifyGroupChatId) {
+          console.log(`[reply] group "${env.notifyGroupName}" -> ${notifyGroupChatId}`)
+        }
+      } catch (e) {
+        console.error('[reply] group resolve error:', e instanceof Error ? e.message : e)
+      }
+    }
     try {
       const rep = await processReplies(
         supabaseAdmin,
@@ -101,6 +114,7 @@ async function runOnce(): Promise<void> {
         env.anthropicModel,
         env.autoReplyMaxPerPass,
         env.notifyPhone,
+        notifyGroupChatId,
       )
       if (rep.replied || rep.confirmed || rep.escalated) {
         console.log(

@@ -40,8 +40,10 @@ When auto_ok is true, write "reply": the exact text Justin would send back. Rule
 - Use the player's first name if it's obvious from their name. No emojis unless their message uses them. Do NOT state any specific time, place, or buy-in.
 When auto_ok is false, set "reply" to "".
 
+Also extract "note": any game/stake/seat detail the player stated (e.g. "$2/5 seat 7", "2/5/10", "save me a seat"). Keep it short; empty string if none.
+
 Respond with ONLY a JSON array, one object per message, in the same order:
-[{"i":0,"intent":"no","auto_ok":true,"reply":"..."}]
+[{"i":0,"intent":"yes","auto_ok":true,"reply":"...","note":"$2/5 seat 7"}]
 No prose, no code fences.`
 
 interface ConvJob {
@@ -57,6 +59,7 @@ interface Verdict {
   intent: 'yes' | 'no' | 'maybe' | 'other'
   auto_ok: boolean
   reply: string
+  note?: string
 }
 
 /**
@@ -77,6 +80,7 @@ export async function processReplies(
   model: string,
   maxPerPass: number,
   notifyPhone: string,
+  notifyGroupChatId: string | null = null,
   notifyAccount = 'gmessages',
 ): Promise<ReplyResult> {
   const since = new Date(Date.now() - LOOKBACK_MS).toISOString()
@@ -185,7 +189,7 @@ export async function processReplies(
   }
 
   let replied = 0
-  const confirmedNames: string[] = []
+  const confirmedEntries: string[] = [] // "Name — $2/5 seat 7"
   const declinedNames: string[] = []
   const needYou: string[] = []
 
@@ -193,7 +197,8 @@ export async function processReplies(
     const job = jobs[i]
     const v = verdicts.find((x) => x.i === i) ?? verdicts[i]
     const intent = v?.intent ?? 'other'
-    const firstName = job.name.split(/\s+/)[0]
+    const name = cleanName(job.name)
+    const note = (v?.note ?? '').trim()
 
     if (v && v.auto_ok && v.reply && intent !== 'other' && adapter.sendMessage) {
       try {
@@ -205,9 +210,9 @@ export async function processReplies(
       await sleep(SEND_DELAY_MS)
     }
 
-    if (intent === 'yes') confirmedNames.push(firstName)
-    else if (intent === 'no') declinedNames.push(firstName)
-    else needYou.push(`${firstName} ("${job.transcript.slice(0, 60)}")`)
+    if (intent === 'yes') confirmedEntries.push(note ? `${name} — ${note}` : name)
+    else if (intent === 'no') declinedNames.push(name)
+    else needYou.push(`${name} ("${job.transcript.slice(0, 60)}")`)
 
     await db
       .from('inbox_messages')
@@ -215,23 +220,43 @@ export async function processReplies(
       .in('id', job.messageIds)
   }
 
-  // Text Justin a digest — but only when there's something he'd want to know
-  // (new confirmations or a reply that needs him). Pure declines stay silent.
-  if ((confirmedNames.length || needYou.length) && adapter.startChatAndSend) {
+  // Text Justin a digest — only when there's something he'd want to know (new
+  // confirmations or a reply that needs him). Pure declines stay silent.
+  if ((confirmedEntries.length || needYou.length) && adapter.startChatAndSend) {
     const parts: string[] = []
-    if (confirmedNames.length)
-      parts.push(`✅ Confirmed (${confirmedNames.length}): ${confirmedNames.join(', ')}`)
+    if (confirmedEntries.length)
+      parts.push(`✅ Confirmed (${confirmedEntries.length}): ${confirmedEntries.join(', ')}`)
     if (declinedNames.length) parts.push(`🙅 Can't make it (${declinedNames.length})`)
     if (needYou.length) parts.push(`⚠️ Needs you (${needYou.length}): ${needYou.join('; ')}`)
-    const digest = `WCP replies:\n${parts.join('\n')}`
     try {
-      await adapter.startChatAndSend(notifyAccount, notifyPhone, digest)
+      await adapter.startChatAndSend(notifyAccount, notifyPhone, `WCP replies:\n${parts.join('\n')}`)
     } catch (e) {
       console.error('[reply] digest send error:', e instanceof Error ? e.message : e)
     }
   }
 
-  return { replied, confirmed: confirmedNames.length, escalated: needYou.length }
+  // Post fresh confirmations into the cash-games coordination group.
+  if (confirmedEntries.length && notifyGroupChatId && adapter.sendMessage) {
+    const msg = `🟢 Cash tonight — just confirmed:\n${confirmedEntries.map((e) => `• ${e}`).join('\n')}`
+    try {
+      await adapter.sendMessage(notifyGroupChatId, msg)
+    } catch (e) {
+      console.error('[reply] group post error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  return { replied, confirmed: confirmedEntries.length, escalated: needYou.length }
+}
+
+/** Strip the venue/stake noise operators put in contact names, for display. */
+function cleanName(raw: string): string {
+  const c = raw
+    .replace(/\$\s*\d[\d/]*/g, '')
+    .replace(/\b(cash|poker|mct|mct's|tourney|tournament|game|games|and|vm|nlh|plo|woodvale|kenwick|southside|south|north|central)\b/gi, '')
+    .replace(/[\/|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return c || raw.split(/\s+/)[0] || 'there'
 }
 
 /** Beeper stores text as rich-text (HTML); flatten it to readable plain text. */
