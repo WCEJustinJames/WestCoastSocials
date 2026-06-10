@@ -38,6 +38,7 @@ When auto_ok is true, write "reply": the exact text Justin would send back. Rule
 - For "yes": acknowledge warmly and that you'll see them tonight.
 - For "maybe": friendly, no pressure, thank them for getting back.
 - Use the player's first name if it's obvious from their name. No emojis unless their message uses them. Do NOT state any specific time, place, or buy-in.
+- NEVER use an em-dash (—) or en-dash (–). Use a comma or a full stop instead.
 When auto_ok is false, set "reply" to "".
 
 Also extract "note": any game/stake/seat detail the player stated (e.g. "$2/5 seat 7", "2/5/10", "save me a seat"). Keep it short; empty string if none.
@@ -202,7 +203,7 @@ export async function processReplies(
 
     if (v && v.auto_ok && v.reply && intent !== 'other' && adapter.sendMessage) {
       try {
-        const r = await adapter.sendMessage(job.chatId, v.reply)
+        const r = await adapter.sendMessage(job.chatId, stripDashes(v.reply))
         if (r.ok) replied++
       } catch (e) {
         console.error(`[reply] send error to ${job.name}:`, e instanceof Error ? e.message : e)
@@ -210,13 +211,13 @@ export async function processReplies(
       await sleep(SEND_DELAY_MS)
     }
 
-    if (intent === 'yes') confirmedEntries.push(note ? `${name} — ${note}` : name)
+    if (intent === 'yes') confirmedEntries.push(note ? `${name} (${note})` : name)
     else if (intent === 'no') declinedNames.push(name)
     else needYou.push(`${name} ("${job.transcript.slice(0, 60)}")`)
 
     await db
       .from('inbox_messages')
-      .update({ auto_handled: true, reply_intent: intent })
+      .update({ auto_handled: true, reply_intent: intent, reply_note: note || null })
       .in('id', job.messageIds)
   }
 
@@ -225,27 +226,91 @@ export async function processReplies(
   if ((confirmedEntries.length || needYou.length) && adapter.startChatAndSend) {
     const parts: string[] = []
     if (confirmedEntries.length)
-      parts.push(`✅ Confirmed (${confirmedEntries.length}): ${confirmedEntries.join(', ')}`)
-    if (declinedNames.length) parts.push(`🙅 Can't make it (${declinedNames.length})`)
-    if (needYou.length) parts.push(`⚠️ Needs you (${needYou.length}): ${needYou.join('; ')}`)
+      parts.push(`Confirmed (${confirmedEntries.length}): ${confirmedEntries.join(', ')}`)
+    if (declinedNames.length) parts.push(`Can't make it (${declinedNames.length})`)
+    if (needYou.length) parts.push(`Needs you (${needYou.length}): ${needYou.join('; ')}`)
     try {
-      await adapter.startChatAndSend(notifyAccount, notifyPhone, `WCP replies:\n${parts.join('\n')}`)
+      await adapter.startChatAndSend(notifyAccount, notifyPhone, stripDashes(`WCP replies:\n${parts.join('\n')}`))
     } catch (e) {
       console.error('[reply] digest send error:', e instanceof Error ? e.message : e)
     }
   }
 
-  // Post fresh confirmations into the cash-games coordination group.
-  if (confirmedEntries.length && notifyGroupChatId && adapter.sendMessage) {
-    const msg = `🟢 Cash tonight — just confirmed:\n${confirmedEntries.map((e) => `• ${e}`).join('\n')}`
-    try {
-      await adapter.sendMessage(notifyGroupChatId, msg)
-    } catch (e) {
-      console.error('[reply] group post error:', e instanceof Error ? e.message : e)
-    }
+  // Keep ONE current seat-list message in the cash-games group: rebuild the full
+  // roster from all of today's confirmations, and if it changed, delete the
+  // previous post and put up the fresh one (so only the latest list is held).
+  if (notifyGroupChatId && confirmedEntries.length) {
+    await syncGroupRoster(db, adapter, notifyGroupChatId)
   }
 
   return { replied, confirmed: confirmedEntries.length, escalated: needYou.length }
+}
+
+/**
+ * Rebuild the full confirmed roster from today's `yes` replies and, if it
+ * changed since last time, delete the previous group message and post the new
+ * one — so the group always holds a single, current seat list for reference.
+ */
+async function syncGroupRoster(db: DB, adapter: ChannelAdapter, groupChatId: string): Promise<void> {
+  const since = new Date(Date.now() - 18 * 60 * 60 * 1000).toISOString()
+  const { data: yes } = await db
+    .from('inbox_messages')
+    .select('conversation_id, sender_name, reply_note, timestamp')
+    .eq('direction', 'inbound')
+    .eq('reply_intent', 'yes')
+    .gt('timestamp', since)
+    .order('timestamp', { ascending: false })
+
+  // One entry per player (latest reply wins), preserving first-confirmed order.
+  const seen = new Set<string>()
+  const entries: string[] = []
+  for (const r of (yes ?? []).slice().reverse()) {
+    const key = r.conversation_id ?? r.sender_name ?? ''
+    if (seen.has(key)) continue
+    seen.add(key)
+    const nm = cleanName(r.sender_name ?? 'Player')
+    const note = (r.reply_note ?? '').trim()
+    entries.push(note ? `${nm} (${note})` : nm)
+  }
+  if (entries.length === 0) return
+
+  const body = stripDashes(
+    `CASH tonight, confirmed (${entries.length}):\n` +
+      entries.map((e, i) => `${i + 1}. ${e}`).join('\n'),
+  )
+  const hash = String(entries.length) + ':' + entries.join('|')
+
+  const { data: prevRows } = await db
+    .from('inbox_group_post')
+    .select('message_id, roster_hash')
+    .eq('id', 1)
+    .limit(1)
+  const prev = (prevRows ?? [])[0] as { message_id?: string; roster_hash?: string } | undefined
+  if (prev?.roster_hash === hash) return // nothing changed
+
+  // Delete the previous roster message so only the latest remains.
+  if (prev?.message_id && adapter.deleteMessage) {
+    try {
+      await adapter.deleteMessage(groupChatId, prev.message_id)
+    } catch (e) {
+      console.error('[reply] group delete error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  if (!adapter.sendMessage) return
+  const r = await adapter.sendMessage(groupChatId, body)
+  await db
+    .from('inbox_group_post')
+    .update({ chat_id: groupChatId, message_id: r.pendingMessageId ?? null, roster_hash: hash, updated_at: new Date().toISOString() })
+    .eq('id', 1)
+}
+
+/** West Coast Poker's no-em-dash rule: replace —/– with a comma (or strip). */
+function stripDashes(text: string): string {
+  return text
+    .replace(/\s*[—–]\s*/g, ', ')
+    .replace(/\s*-\s+/g, ', ') // a spaced hyphen used as a dash
+    .replace(/,\s*,/g, ',')
 }
 
 /** Strip the venue/stake noise operators put in contact names, for display. */

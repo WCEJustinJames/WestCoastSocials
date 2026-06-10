@@ -102,4 +102,7 @@ export interface ChannelAdapter {
     text: string,
     opts?: SendOptions,
   ): Promise<SendResult>
+
+  /** Delete a previously-sent message (used to keep a single live roster post). */
+  deleteMessage?(externalChatId: string, externalMessageId: string): Promise<void>
 }

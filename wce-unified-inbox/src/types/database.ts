@@ -12,6 +12,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      inbox_group_post: {
+        Row: {
+          id: number
+          chat_id: string | null
+          message_id: string | null
+          roster_hash: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          chat_id?: string | null
+          message_id?: string | null
+          roster_hash?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          chat_id?: string | null
+          message_id?: string | null
+          roster_hash?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       inbox_batch_items: {
         Row: {
           batch_id: string
@@ -294,6 +318,7 @@ export type Database = {
           person_id: string | null
           raw: Json | null
           reply_intent: string | null
+          reply_note: string | null
           sender_id: string | null
           sender_name: string | null
           sort_key: string | null
@@ -315,6 +340,7 @@ export type Database = {
           person_id?: string | null
           raw?: Json | null
           reply_intent?: string | null
+          reply_note?: string | null
           sender_id?: string | null
           sender_name?: string | null
           sort_key?: string | null
@@ -336,6 +362,7 @@ export type Database = {
           person_id?: string | null
           raw?: Json | null
           reply_intent?: string | null
+          reply_note?: string | null
           sender_id?: string | null
           sender_name?: string | null
           sort_key?: string | null

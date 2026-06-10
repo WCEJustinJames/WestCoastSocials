@@ -245,6 +245,19 @@ export class BeeperClient {
     })
   }
 
+  /** Delete a message. DELETE /v1/chats/{chatID}/messages/{messageID} (may 204). */
+  async deleteMessage(chatID: string, messageID: string): Promise<void> {
+    const res = await fetch(
+      `${this.baseUrl}/v1/chats/${encodeURIComponent(chatID)}/messages/${encodeURIComponent(messageID)}`,
+      {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(BeeperClient.REQUEST_TIMEOUT_MS),
+        headers: { Authorization: `Bearer ${this.token}` },
+      },
+    )
+    if (!res.ok) throw new Error(`delete message -> ${res.status} ${res.statusText}`.trim())
+  }
+
   /**
    * Fetch an attachment's bytes through the bridge. GET /v1/assets/serve accepts
    * mxc:// / localmxc:// / file:// URLs, so this works whether or not Beeper has

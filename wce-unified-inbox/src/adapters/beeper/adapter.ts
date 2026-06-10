@@ -111,6 +111,10 @@ export class BeeperAdapter implements ChannelAdapter {
     return { ok: !r.error, pendingMessageId: r.pendingMessageID, error: r.error }
   }
 
+  async deleteMessage(externalChatId: string, externalMessageId: string): Promise<void> {
+    await this.client.deleteMessage(externalChatId, externalMessageId)
+  }
+
   async startChatAndSend(
     accountId: string,
     participant: string,
