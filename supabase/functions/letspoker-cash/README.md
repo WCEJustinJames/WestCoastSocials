@@ -70,3 +70,11 @@ running table, not from `getEventList` — supply it explicitly to `push`.
 3. Set `CASH_PAYMENT_METHOD` (or pass `paymentMethod`) — the string LP expects
    for a comp/house registration.
 4. Call `open` (live), then `seat` with `dryRun:false`.
+
+## Scheduling
+
+A daily pg_cron job **`letspoker-cash-prefill`** (`0 21 * * *` UTC = 05:00 Perth)
+calls this function with `{"mode":"prefill"}`, so each upcoming day's roster is
+auto-built from the same weekly game the week before. It reads the function URL
+from the `letspoker_cash_function_url` vault secret and reuses the existing
+`letspoker_push_function_token` for auth — mirroring the `letspoker-*` crons.
