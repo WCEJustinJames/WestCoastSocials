@@ -33,6 +33,18 @@ export const env = {
   autoReplyMaxPerPass: Number(process.env.AUTO_REPLY_MAX_PER_PASS ?? 15),
   // Where the "who confirmed" digest texts go (Justin's mobile, +E.164).
   notifyPhone: process.env.NOTIFY_PHONE ?? '+61459686980',
+  // LetsPoker (lets.poker) operator integration — the App Chats player messenger
+  // and tournament data behind the wcp.admin.lets.poker dashboard. Off until a
+  // token is set. baseUrl/paths are env-overridable so they can be pinned to the
+  // exact endpoints captured from the admin web app without a code change.
+  letspokerBaseUrl: process.env.LETSPOKER_BASE_URL ?? 'https://wcp.admin.lets.poker',
+  letspokerToken: process.env.LETSPOKER_TOKEN ?? '',
+  letspokerClubId: process.env.LETSPOKER_CLUB_ID ?? '',
+  letspokerChatsPath: process.env.LETSPOKER_CHATS_PATH ?? '/api/app-chats',
+  letspokerMessagesPath: process.env.LETSPOKER_MESSAGES_PATH ?? '/api/app-chats/{chatId}/messages',
+  letspokerSendPath: process.env.LETSPOKER_SEND_PATH ?? '/api/app-chats/{chatId}/messages',
+  letspokerEntrantsPath:
+    process.env.LETSPOKER_ENTRANTS_PATH ?? '/api/tournaments/{tournamentId}/players',
   // Receipt guardrail: the recipient/operator signs every slip, so their name
   // and number must never be extracted as a *player*. Comma-separated.
   receiptBlockNames: (process.env.RECEIPT_BLOCK_NAMES ?? 'justin lewis,jj lewis,j j lewis,lewis,justin')

@@ -9,6 +9,8 @@ import { env, requireEnv } from '../lib/env'
 import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { BeeperClient } from '../adapters/beeper/client'
 import { BeeperAdapter } from '../adapters/beeper/adapter'
+import { LetsPokerClient } from '../adapters/letspoker/client'
+import { LetsPokerAdapter } from '../adapters/letspoker/adapter'
 import { mirrorInbound } from './mirror'
 import { processOutbox } from './outbox'
 import { processBatches } from './batches'
@@ -25,6 +27,22 @@ const adapter = new BeeperAdapter(
     apiVersion: env.beeperApiVersion,
   }),
 )
+
+// LetsPoker App Chats — opt-in, only mirrors once LETSPOKER_TOKEN is set.
+const letspoker = new LetsPokerAdapter(
+  new LetsPokerClient({
+    baseUrl: env.letspokerBaseUrl,
+    token: env.letspokerToken,
+    clubId: env.letspokerClubId,
+    chatsPath: env.letspokerChatsPath,
+    messagesPath: env.letspokerMessagesPath,
+    sendPath: env.letspokerSendPath,
+    entrantsPath: env.letspokerEntrantsPath,
+  }),
+)
+if (env.letspokerToken) {
+  console.log('[letspoker] App Chats mirror on')
+}
 
 // AI drafting is opt-in: only runs when ANTHROPIC_API_KEY is set.
 const anthropic = env.anthropicKey ? new Anthropic({ apiKey: env.anthropicKey }) : null
@@ -47,6 +65,18 @@ async function runOnce(): Promise<void> {
   console.log(
     `[mirror ${new Date().toISOString()}] accounts=${r.accounts} chats=${r.chats} scanned=${r.scanned} inserted=${r.inserted}`,
   )
+
+  // LetsPoker App Chats: mirror the player messenger alongside Beeper (no-op
+  // until configured). Same normalized pipeline — its threads land in the inbox
+  // tagged adapter='letspoker'.
+  if (env.letspokerToken) {
+    try {
+      const lp = await mirrorInbound(supabaseAdmin, letspoker, since)
+      console.log(`[letspoker] chats=${lp.chats} scanned=${lp.scanned} inserted=${lp.inserted}`)
+    } catch (e) {
+      console.error('[letspoker] mirror error:', e instanceof Error ? e.message : e)
+    }
+  }
 
   // Phase A: send any drafts the human approved in the UI.
   const out = await processOutbox(supabaseAdmin, adapter)
