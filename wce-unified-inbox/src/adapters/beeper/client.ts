@@ -108,9 +108,14 @@ export class BeeperClient {
     this.v = opts.apiVersion ?? 'v1'
   }
 
+  // A hung Beeper request must never freeze the sync loop (one slow call after
+  // downtime once blocked all sends for hours). Abort anything that takes too long.
+  private static readonly REQUEST_TIMEOUT_MS = 20_000
+
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       ...init,
+      signal: AbortSignal.timeout(BeeperClient.REQUEST_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${this.token}`,
         'Content-Type': 'application/json',
@@ -227,6 +232,7 @@ export class BeeperClient {
    */
   async serveAsset(url: string): Promise<Buffer> {
     const res = await fetch(`${this.baseUrl}/v1/assets/serve?url=${encodeURIComponent(url)}`, {
+      signal: AbortSignal.timeout(BeeperClient.REQUEST_TIMEOUT_MS),
       headers: { Authorization: `Bearer ${this.token}` },
     })
     if (!res.ok) {

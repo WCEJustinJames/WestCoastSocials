@@ -62,35 +62,22 @@ let lastOutreachSync = 0
 
 async function runOnce(): Promise<void> {
   const since = new Date(Date.now() - env.syncLookbackDays * 86_400_000)
-  const r = await mirrorInbound(supabaseAdmin, adapter, since)
-  console.log(
-    `[mirror ${new Date().toISOString()}] accounts=${r.accounts} chats=${r.chats} scanned=${r.scanned} inserted=${r.inserted}`,
-  )
 
-  // Liveness heartbeat — lets us (and any watcher) tell at a glance whether this
-  // backend is actually running. Best-effort; never let it break a pass. The
-  // heartbeat table isn't in the generated types, hence the narrow cast.
+  // Heartbeat first, so liveness reflects the loop turning even when the mirror
+  // (below) is slow. Best-effort; the table isn't in the generated types.
   try {
     await (supabaseAdmin as unknown as {
       from: (t: string) => { upsert: (v: unknown) => Promise<unknown> }
     })
       .from('inbox_sync_heartbeat')
-      .upsert({ id: 1, last_run: new Date().toISOString(), host: os.hostname(), note: `inserted=${r.inserted}` })
+      .upsert({ id: 1, last_run: new Date().toISOString(), host: os.hostname() })
   } catch {
     /* ignore */
   }
 
-  // LetsPoker App Chats: mirror the player messenger alongside Beeper (no-op
-  // until configured). Same normalized pipeline — its threads land in the inbox
-  // tagged adapter='letspoker'.
-  if (env.letspokerToken) {
-    try {
-      const lp = await mirrorInbound(supabaseAdmin, letspoker, since)
-      console.log(`[letspoker] chats=${lp.chats} scanned=${lp.scanned} inserted=${lp.inserted}`)
-    } catch (e) {
-      console.error('[letspoker] mirror error:', e instanceof Error ? e.message : e)
-    }
-  }
+  // SENDS FIRST. A slow or hung inbound mirror must never delay approved sends
+  // again (one stuck Beeper call after downtime once blocked every text for
+  // hours). Everything that sends runs before the mirror.
 
   // Phase A: send any drafts the human approved in the UI.
   const out = await processOutbox(supabaseAdmin, adapter)
@@ -102,22 +89,6 @@ async function runOnce(): Promise<void> {
   const batch = await processBatches(supabaseAdmin, adapter)
   if (batch.sent || batch.failed) {
     console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
-  }
-
-  // Player Outreach CRM: mirror Airtable on a slow cadence (not every pass).
-  if (env.airtableKey && Date.now() - lastOutreachSync > env.outreachSyncMinutes * 60_000) {
-    lastOutreachSync = Date.now()
-    try {
-      const o = await syncOutreach(
-        supabaseAdmin,
-        env.airtableKey,
-        env.airtableBaseId,
-        env.airtableOutreachTable,
-      )
-      console.log(`[outreach] synced=${o.synced} players from Airtable`)
-    } catch (e) {
-      console.error('[outreach] sync error:', e instanceof Error ? e.message : e)
-    }
   }
 
   // Auto-reply: thank/acknowledge inbound replies and text Justin who confirmed.
@@ -141,6 +112,22 @@ async function runOnce(): Promise<void> {
     }
   }
 
+  // Player Outreach CRM: mirror Airtable on a slow cadence (not every pass).
+  if (env.airtableKey && Date.now() - lastOutreachSync > env.outreachSyncMinutes * 60_000) {
+    lastOutreachSync = Date.now()
+    try {
+      const o = await syncOutreach(
+        supabaseAdmin,
+        env.airtableKey,
+        env.airtableBaseId,
+        env.airtableOutreachTable,
+      )
+      console.log(`[outreach] synced=${o.synced} players from Airtable`)
+    } catch (e) {
+      console.error('[outreach] sync error:', e instanceof Error ? e.message : e)
+    }
+  }
+
   // AI drafting: suggest replies into inbox_drafts as `pending` for review.
   if (anthropic) {
     const d = await generateDrafts(
@@ -151,6 +138,28 @@ async function runOnce(): Promise<void> {
     )
     if (d.generated) {
       console.log(`[drafts] generated=${d.generated} skipped=${d.skipped}`)
+    }
+  }
+
+  // Inbound mirror LAST. Each Beeper request is now bounded by a timeout, so a
+  // stuck call can't freeze the loop; and running after the sends means a slow
+  // mirror never holds them up.
+  try {
+    const r = await mirrorInbound(supabaseAdmin, adapter, since)
+    console.log(
+      `[mirror ${new Date().toISOString()}] accounts=${r.accounts} chats=${r.chats} scanned=${r.scanned} inserted=${r.inserted}`,
+    )
+  } catch (e) {
+    console.error('[mirror] error:', e instanceof Error ? e.message : e)
+  }
+
+  // LetsPoker App Chats: mirror alongside Beeper (no-op until configured).
+  if (env.letspokerToken) {
+    try {
+      const lp = await mirrorInbound(supabaseAdmin, letspoker, since)
+      console.log(`[letspoker] chats=${lp.chats} scanned=${lp.scanned} inserted=${lp.inserted}`)
+    } catch (e) {
+      console.error('[letspoker] mirror error:', e instanceof Error ? e.message : e)
     }
   }
 }
