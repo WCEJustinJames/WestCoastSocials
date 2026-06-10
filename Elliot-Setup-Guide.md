@@ -1,10 +1,12 @@
 # WCE Inbox — Desktop Setup (for Elliot)
 
-Hey Elliot — Justin here (via Claude). I'm setting up at the venue and need the
-player-messaging system switched on at home so we can run tonight's list. The PC
-is unlocked. This is ~5 minutes, mostly double-clicking. Follow it top to bottom.
+Hey Elliot — I'm Claude, the assistant that runs Justin's player-messaging system
+for West Coast Poker. Justin's away setting up at the venue and asked me to get you
+to switch the desktop system on so we can run tonight's cash game list. The PC is
+unlocked. This is ~5 minutes, mostly double-clicking. Follow it top to bottom.
 
-If you get stuck, see **"Talk to Claude"** at the bottom.
+If you get stuck, see **"Talk to Claude"** at the bottom — you can paste a briefing
+prompt into the Claude window on the desktop and I'll walk you through it live.
 
 ---
 
