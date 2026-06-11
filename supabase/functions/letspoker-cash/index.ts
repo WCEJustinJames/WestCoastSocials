@@ -259,6 +259,7 @@ type Plan = {
   id: string; event_date: string; label: string | null; event_id: string | null;
   buyin_variant_id: string | null; stakes: any[]; game_types: any[];
   anticipated_tables: number | null; anticipated_players: number | null; status: string;
+  push_event_id: string | null; table_ids: any[];
 };
 
 async function loadPlans(opts: { planId?: string; date?: string }): Promise<Plan[]> {
@@ -445,23 +446,89 @@ async function runSeat(
 }
 
 /* ------------------------------- push -------------------------------- */
+// Claim a (cash event, slot) once in cash_fired so a push never double-sends.
+// Returns true only if WE claimed it.
+async function claimCashSlot(eventKey: string, slot: string): Promise<boolean> {
+  const res = await rest(`/rest/v1/cash_fired`, {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+    body: JSON.stringify({ event_id: eventKey, slot }),
+  });
+  const rows = await res.json().catch(() => []);
+  return Array.isArray(rows) && rows.length > 0;
+}
+async function releaseCashSlot(eventKey: string, slot: string) {
+  await rest(`/rest/v1/cash_fired?event_id=eq.${encodeURIComponent(eventKey)}&slot=eq.${encodeURIComponent(slot)}`,
+    { method: "DELETE", headers: { Prefer: "return=minimal" } });
+}
+
+// Fire one sendCashPushNotification for one table. Logs + alerts on failure.
+async function fireCashPush(
+  cookie: string, sgid: string, clubId: string, eventId: string,
+  table: { id: string; name?: string }, templateParts: string[], source: string,
+): Promise<{ ok: boolean; status: number | null; error: string | null }> {
+  const r = await gql(cookie, sgid, "sendCashPushNotification", CASH_PUSH,
+    { clubId, tableId: table.id, tournamentEventId: eventId, templateParts });
+  const detail = `sendCashPushNotification event=${eventId} table=${table.id}(${table.name ?? ""}) ${source} status=${r.status} ${r.ok ? "OK" : (r.error ?? r.text.slice(0, 200))}`;
+  await logCash({ source: "push", op: "push", ref: eventId, http_status: r.status, ok: r.ok, detail });
+  if (!r.ok) await alertJustin("LetsPoker cash push failed", detail);
+  return { ok: r.ok, status: r.status, error: r.error };
+}
+
+// Push notifications for cash tables. Two shapes:
+//   - manual: { eventId, tableId } -> push that one table (testing).
+//   - plan-based: { planId | date } -> fan out over the plan's push_event_id +
+//     table_ids. A `slot` (default today's Perth date) dedupes via cash_fired so
+//     repeated calls only send once per table per slot.
+// Outward-facing (real players) -> dryRun defaults true.
 async function runPush(
   cookie: string, sessionGroupId: string, clubId: string,
-  opts: { eventId?: string; tableId?: string; templateParts?: string[]; dryRun: boolean },
+  opts: { planId?: string; date?: string; eventId?: string; tableId?: string;
+          templateParts?: string[]; slot?: string; dryRun: boolean },
 ): Promise<Response> {
-  if (!opts.eventId || !opts.tableId) {
-    return json({ ok: false, error: "push needs eventId (tournamentEventId) and tableId" }, 400);
+  const templateParts = opts.templateParts
+    ?? env("CASH_PUSH_TEMPLATE_PARTS")?.split(",").map((s) => s.trim()).filter(Boolean)
+    ?? CASH_TEMPLATE_PARTS;
+
+  // Manual single-table push (testing).
+  if (opts.eventId && opts.tableId) {
+    if (opts.dryRun) {
+      return json({ ok: true, dryRun: true, wouldPush: { eventId: opts.eventId, tableId: opts.tableId, templateParts } });
+    }
+    const r = await fireCashPush(cookie, sessionGroupId, clubId, opts.eventId, { id: opts.tableId }, templateParts, "manual");
+    return json({ ok: r.ok, status: r.status, error: r.error }, r.ok ? 200 : 502);
   }
-  const templateParts = opts.templateParts ?? CASH_TEMPLATE_PARTS;
-  if (opts.dryRun) {
-    return json({ ok: true, dryRun: true, wouldPush: { eventId: opts.eventId, tableId: opts.tableId, templateParts } });
+
+  // Plan-based fan-out over each table.
+  const plans = await loadPlans({ planId: opts.planId, date: opts.date ?? perthDate(0) });
+  if (!plans.length) return json({ ok: true, skipped: true, reason: "no matching cash_plan rows" });
+
+  const results: unknown[] = [];
+  for (const p of plans) {
+    const eventId = p.push_event_id;
+    const tables = (Array.isArray(p.table_ids) ? p.table_ids : []) as { id: string; name?: string }[];
+    if (!eventId || !tables.length) {
+      results.push({ planId: p.id, skipped: true, reason: "plan missing push_event_id / table_ids (awaiting capture)" });
+      continue;
+    }
+    const slot = opts.slot ?? p.event_date; // one push per table per day by default
+    for (const t of tables) {
+      if (opts.dryRun) {
+        results.push({ planId: p.id, table: t.id, dryRun: true, wouldPush: { eventId, tableId: t.id, templateParts } });
+        continue;
+      }
+      const slotKey = `push-${t.id}-${slot}`;
+      if (!(await claimCashSlot(eventId, slotKey))) {
+        results.push({ planId: p.id, table: t.id, skipped: true, reason: "already pushed this slot" });
+        continue;
+      }
+      const r = await fireCashPush(cookie, sessionGroupId, clubId, eventId, t, templateParts, `plan:${p.id}`);
+      if (!r.ok) await releaseCashSlot(eventId, slotKey); // let it retry
+      results.push({ planId: p.id, table: t.id, ...r });
+    }
   }
-  const r = await gql(cookie, sessionGroupId, "sendCashPushNotification", CASH_PUSH,
-    { clubId, tableId: opts.tableId, tournamentEventId: opts.eventId, templateParts });
-  const detail = `sendCashPushNotification event=${opts.eventId} table=${opts.tableId} status=${r.status} ${r.ok ? "OK" : (r.error ?? r.text.slice(0, 200))}`;
-  await logCash({ source: "push", op: "push", ref: opts.eventId, http_status: r.status, ok: r.ok, detail });
-  if (!r.ok) await alertJustin("LetsPoker cash push failed", detail);
-  return json({ ok: r.ok, status: r.status, error: r.error }, r.ok ? 200 : 502);
+  const ok = results.every((r: any) => r.dryRun || r.skipped || r.ok);
+  return json({ ok, mode: "push", dryRun: opts.dryRun, results }, ok ? 200 : 502);
 }
 
 /* ------------------------------ prefill ------------------------------ */
@@ -485,8 +552,8 @@ async function runPrefill(opts: { horizonDays?: number; lookbackDays?: number })
 }
 
 /* ------------------------------- tick -------------------------------- */
-// Orchestrate today's plans: open (once) then seat. Push is left explicit
-// because it needs a live tableId.
+// Orchestrate today's plans: open (once), seat, then push. Push is a no-op
+// until a plan has push_event_id + table_ids (from the cash-control capture).
 async function runTick(
   cookie: string, sessionGroupId: string, clubId: string, dryRun: boolean,
 ): Promise<Response> {
@@ -500,6 +567,8 @@ async function runTick(
     }
     const s = await runSeat(cookie, sessionGroupId, clubId, { planId: p.id, dryRun });
     out.push({ planId: p.id, seat: await s.json() });
+    const ps = await runPush(cookie, sessionGroupId, clubId, { planId: p.id, dryRun });
+    out.push({ planId: p.id, push: await ps.json() });
   }
   return json({ ok: true, mode: "tick", date, dryRun, plans: plans.length, out });
 }
@@ -515,8 +584,9 @@ Deno.serve(async (req) => {
     if (req.headers.get("content-type")?.includes("application/json")) body = await req.json();
   } catch { /* no body */ }
   const mode = typeof body.mode === "string" ? body.mode : "sync";
-  // Seat is money-touching: dryRun defaults TRUE unless explicitly disabled.
-  const dryRun = mode === "seat" || mode === "tick" ? body.dryRun !== false : body.dryRun === true;
+  // Outward-facing ops (seat, push, tick) default dryRun TRUE unless disabled.
+  const dryRun = mode === "seat" || mode === "tick" || mode === "push"
+    ? body.dryRun !== false : body.dryRun === true;
 
   // prefill needs no cookie (pure DB).
   if (mode === "prefill") return await runPrefill({ horizonDays: body.horizonDays, lookbackDays: body.lookbackDays });
@@ -532,7 +602,7 @@ Deno.serve(async (req) => {
     case "sync": return await runSync(cookie, sessionGroupId, clubId);
     case "open": return await runOpen(cookie, sessionGroupId, clubId, { planId: body.planId, date: body.date, dryRun });
     case "seat": return await runSeat(cookie, sessionGroupId, clubId, { planId: body.planId, date: body.date, dryRun, paymentMethod: body.paymentMethod });
-    case "push": return await runPush(cookie, sessionGroupId, clubId, { eventId: body.eventId, tableId: body.tableId, templateParts: body.templateParts, dryRun });
+    case "push": return await runPush(cookie, sessionGroupId, clubId, { planId: body.planId, date: body.date, eventId: body.eventId, tableId: body.tableId, templateParts: body.templateParts, slot: body.slot, dryRun });
     case "tick": return await runTick(cookie, sessionGroupId, clubId, dryRun);
     default: return json({ ok: false, error: `unknown mode: ${mode}` }, 400);
   }

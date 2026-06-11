@@ -50,7 +50,14 @@ running table, not from `getEventList` — supply it explicitly to `push`.
   the plan's roster names onto `event_id`. **Money-touching → `dryRun` defaults
   to `true`**; set `dryRun:false` to fire. Enforces one name/user per Perth day
   across tournament + cash via `cash_day_user_ledger`.
-- **push** — `{ mode:"push", eventId, tableId, templateParts?, dryRun? }`.
+- **push** — notify players per cash table. Two shapes:
+  - manual: `{ mode:"push", eventId, tableId, templateParts?, dryRun? }` (testing).
+  - plan-based: `{ mode:"push", date|planId, slot?, dryRun? }` — fans out
+    `sendCashPushNotification` over the plan's `push_event_id` + `table_ids`.
+  Outward-facing → **`dryRun` defaults true**; idempotent per table per `slot`
+  (via `cash_fired`). No-ops with `awaiting capture` until the plan has
+  `push_event_id` + `table_ids` set (from the cash-control capture). Templates
+  default to `CASH_PUSH_TEMPLATE_PARTS` (env) or `["eventName","location"]`.
 - **tick** — orchestrates today's plans (open then seat). `dryRun` defaults true.
 
 ## Data model
