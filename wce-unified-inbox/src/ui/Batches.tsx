@@ -53,6 +53,7 @@ export function Batches() {
   const [region, setRegion] = useState('all')
   const [stake, setStake] = useState('all')
   const [activity, setActivity] = useState('all')
+  const [venue, setVenue] = useState('all')
   const [recipientQuery, setRecipientQuery] = useState('')
   // Which channel to contact CRM players on when more than one is available.
   const [channel, setChannel] = useState<'auto' | 'sms' | 'thread'>('auto')
@@ -173,6 +174,10 @@ export function Batches() {
     () => Array.from(new Set(outreach.map((o) => o.activity).filter(Boolean) as string[])).sort(),
     [outreach],
   )
+  const venuesOpts = useMemo(
+    () => Array.from(new Set(outreach.flatMap((o) => o.venues ?? []))).sort(),
+    [outreach],
+  )
   const networks = useMemo(
     () => Array.from(new Set(conversations.map((c) => c.network))).sort(),
     [conversations],
@@ -270,12 +275,13 @@ export function Batches() {
         }
         if (stake !== 'all' && !(o.stakes ?? []).includes(stake)) return false
         if (activity !== 'all' && o.activity !== activity) return false
+        if (venue !== 'all' && !(o.venues ?? []).includes(venue)) return false
         if (cDay !== 'all' && o.contact_day !== cDay) return false
         if (cWindow !== 'all' && o.contact_window !== cWindow) return false
         if (q && !r.name.toLowerCase().includes(q)) return false
         return true
       })
-  }, [source, conversations, outreach, network, region, stake, activity, recipientQuery, channel, cDay, cWindow, listId, listMembers])
+  }, [source, conversations, outreach, network, region, stake, activity, venue, recipientQuery, channel, cDay, cWindow, listId, listMembers])
 
   function switchSource(s: Source) {
     setSource(s)
@@ -778,6 +784,10 @@ export function Batches() {
               <select value={activity} onChange={(e) => setActivity(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
                 <option value="all">All activity</option>
                 {activities.map((a) => (<option key={a} value={a}>{a}</option>))}
+              </select>
+              <select value={venue} onChange={(e) => setVenue(e.target.value)} title="Venue tag" className="rounded-md border border-slate-300 px-2 py-1">
+                <option value="all">All venues</option>
+                {venuesOpts.map((v) => (<option key={v} value={v}>{v}</option>))}
               </select>
               <select
                 value={channel}

@@ -39,6 +39,7 @@ export function Lists() {
   const [query, setQuery] = useState('')
   const [regionFilter, setRegionFilter] = useState('all')
   const [activityFilter, setActivityFilter] = useState('all')
+  const [venueFilter, setVenueFilter] = useState('all')
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -190,6 +191,10 @@ export function Lists() {
     () => Array.from(new Set(players.map((p) => p.activity).filter(Boolean) as string[])).sort(),
     [players],
   )
+  const venueOpts = useMemo(
+    () => Array.from(new Set(players.flatMap((p) => p.venues ?? []))).sort(),
+    [players],
+  )
 
   const playerName = (p: OutreachRow) =>
     p.player_name || [p.first_name, p.last_name].filter(Boolean).join(' ') || '—'
@@ -204,11 +209,12 @@ export function Lists() {
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
       }
       if (activityFilter !== 'all' && p.activity !== activityFilter) return false
+      if (venueFilter !== 'all' && !(p.venues ?? []).includes(venueFilter)) return false
       if (q && !playerName(p).toLowerCase().includes(q) && !(p.phone ?? '').includes(q))
         return false
       return true
     })
-  }, [players, members, query, regionFilter, activityFilter])
+  }, [players, members, query, regionFilter, activityFilter, venueFilter])
 
   const memberRows = useMemo(
     () => players.filter((p) => members.has(p.id)),
@@ -384,6 +390,14 @@ export function Lists() {
                 >
                   <option value="all">All activity</option>
                   {activities.map((a) => (<option key={a} value={a}>{a}</option>))}
+                </select>
+                <select
+                  value={venueFilter}
+                  onChange={(e) => setVenueFilter(e.target.value)}
+                  className="rounded-md border border-slate-300 px-1 py-1"
+                >
+                  <option value="all">All venues</option>
+                  {venueOpts.map((v) => (<option key={v} value={v}>{v}</option>))}
                 </select>
                 <button
                   onClick={() => void addAllFiltered()}
