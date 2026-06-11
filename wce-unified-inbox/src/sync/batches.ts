@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
+import { env } from '../lib/env'
 
 type DB = SupabaseClient<Database>
 
@@ -38,16 +39,22 @@ export function normalizeAuMobile(raw: string): string | null {
 export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<BatchResult> {
   const { data: allBatches, error } = await db
     .from('inbox_batches')
-    .select('id, attachment_data, attachment_name, attachment_mime, scheduled_for')
+    .select('id, attachment_data, attachment_name, attachment_mime, scheduled_for, is_outreach')
     .in('status', ['approved', 'sending'])
     .limit(20)
   if (error) throw error
+  // Daily outreach cutoff: after OUTREACH_CUTOFF (local time) proactive invite
+  // blasts (is_outreach) stop. Reply/confirmation batches (is_outreach=false)
+  // still go, so seats can be confirmed and players thanked late in the day.
+  const local = new Date()
+  const pastOutreachCutoff = local.getHours() * 60 + local.getMinutes() >= env.outreachCutoffMins
   // Hold scheduled batches until their time; send unscheduled ones immediately.
   // (Filtered here, not in the query — a millisecond dot in an ISO timestamp
   // breaks PostgREST's dot-delimited .or() filter.)
   const now = Date.now()
   const batches = (allBatches ?? [])
     .filter((b) => !b.scheduled_for || new Date(b.scheduled_for).getTime() <= now)
+    .filter((b) => !(pastOutreachCutoff && b.is_outreach !== false))
     .slice(0, 5)
   if (batches.length === 0) return { sent: 0, failed: 0 }
 
