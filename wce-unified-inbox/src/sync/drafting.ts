@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
+import { VOICE } from './voice'
 
 type DB = SupabaseClient<Database>
 
@@ -23,11 +24,10 @@ const SYSTEM_PROMPT = `You draft suggested reply messages for the West Coast Pok
 
 Write the reply Justin would send next, given the conversation so far.
 
+${VOICE}
+
 Rules:
-- Warm, friendly, casual — like a real person texting, not a marketing bot. Australian English.
-- Keep it short (1-3 sentences), the length of a normal text message.
-- Do NOT invent specifics you can't see — no made-up event names, dates, times, venues, prices, or promises. If a detail is needed but unknown, keep it general or gently ask.
-- No emojis unless the player's own tone clearly invites it. No greeting like "Hi [name]" unless it fits.
+- Do NOT invent specifics you can't see, no made-up event names, dates, times, venues, prices, or promises. If a detail is needed but unknown, keep it general or ask.
 - This is only a suggestion a human will review and edit, so aim for a sensible default, not a hedge.
 - Respond with ONLY the message text to send. No preamble, no quotes, no explanation, no notes about your reasoning.`
 
