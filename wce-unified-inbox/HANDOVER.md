@@ -18,6 +18,7 @@ _Last updated: 2026-06-11 (Thu), mid-afternoon Perth._
 - **Messaging rules in code**: no self-introduction; no em-dashes (stripped); **outreach window 10:00–16:30** (`inbox_batches.is_outreach`; replies/confirmations exempt); double-send claim guard; 20s Beeper timeout + sends run before the mirror.
 - **Scheduled task** auto-starts the sync on boot, restarts on crash, disables sleep (permanent).
 - **Heartbeat** (`inbox_sync_heartbeat`, `note`=SYNC_VERSION) for liveness + which code is running.
+- **Core player lists (Lists tab) + list-driven Batches** (branch `claude/fervent-shannon-9tvyfi`, draft PR #7; tables live). `inbox_lists`/`inbox_list_members` (migration `0005`, applied to Supabase). One standing list per scheduled event; in Batches (CRM source) a **List:** dropdown selects the whole list in one click. Lists seeded and populated: **Friday Leederville (154 players** — collated from 12 months of TD-sheet cash tabs + banking receipts + CRM, fuzzy-merged, banned excluded; 67 with phones), **Friday Kenwick (28** from venue tags), plus empty Friday Cash Game / Friday Tournament starters.
 
 ## ⚠️ KNOWN ISSUE — desktop on stale code
 The desktop sync reports `note='letspoker-inbox-sync'`, `host=null` — that is NOT the latest branch code (latest = `outreach-window-10to1630`). So the outreach window + recent fixes are NOT live on the PC (Claude is enforcing the window operationally meanwhile). Likely a competing checkout/scheduled task from a parallel automation, or a `git pull` that isn't landing.
@@ -50,7 +51,7 @@ The desktop sync reports `note='letspoker-inbox-sync'`, `host=null` — that is 
 6. **Engine guardrails to build**: (a) skip outreach to anyone with an unanswered message; (b) exclude tourney-predominant players from cash sends (needs tourney-vs-cash classification). Need desktop on current code.
 7. **Other-venue TD grinds**: Kingsley (Tue), Bentley (Mon), Planet Royale (Sun) not scraped. (MCT + Woodvale + Leederville done.)
 8. **Duplicate-number players** — merge (Dee Gupta, Andy Brown, Ethan Crifo, Tu Le have 2+ numbers). **Merge rule**: show the differences between records, default to the mobile that matches the phone's contact list.
-9. **Per-game weekly core lists** — proper multi-list/segment backbone (a player can be on MCT + Woodvale + Kenwick). Currently approximated via activity='Cash' + region + stakes.
+9. **Per-game weekly core lists** — backbone now EXISTS (Lists tab, PR #7, see What's LIVE). Remaining: build/populate lists for MCT, Woodvale, Kingsley, Bentley, Planet Royale (Leederville + Kenwick done).
 10. **LetsPoker tournament/event/attendance CSV exports** — not yet pulled (would give per-event attendance + finish tourney-vs-cash classification).
 
 ## Justin's working style

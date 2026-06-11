@@ -396,6 +396,69 @@ export type Database = {
           },
         ]
       }
+      inbox_lists: {
+        Row: {
+          created_at: string
+          event_day: string | null
+          event_time: string | null
+          id: string
+          name: string
+          notes: string | null
+          venue: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_day?: string | null
+          event_time?: string | null
+          id?: string
+          name: string
+          notes?: string | null
+          venue?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_day?: string | null
+          event_time?: string | null
+          id?: string
+          name?: string
+          notes?: string | null
+          venue?: string | null
+        }
+        Relationships: []
+      }
+      inbox_list_members: {
+        Row: {
+          added_at: string
+          list_id: string
+          outreach_id: string
+        }
+        Insert: {
+          added_at?: string
+          list_id: string
+          outreach_id: string
+        }
+        Update: {
+          added_at?: string
+          list_id?: string
+          outreach_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'inbox_list_members_list_id_fkey'
+            columns: ['list_id']
+            isOneToOne: false
+            referencedRelation: 'inbox_lists'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'inbox_list_members_outreach_id_fkey'
+            columns: ['outreach_id']
+            isOneToOne: false
+            referencedRelation: 'inbox_outreach'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       inbox_outreach: {
         Row: {
           activity: string | null

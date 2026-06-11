@@ -8,6 +8,10 @@ type ConvRow = Database['public']['Tables']['inbox_conversations']['Row'] & {
 }
 type OutreachRow = Database['public']['Tables']['inbox_outreach']['Row']
 type ItemRow = Database['public']['Tables']['inbox_batch_items']['Row']
+type ListRow = Pick<
+  Database['public']['Tables']['inbox_lists']['Row'],
+  'id' | 'name' | 'event_day'
+>
 type Source = 'inbox' | 'crm'
 
 const GUARD_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -57,6 +61,10 @@ export function Batches() {
   const [cDay, setCDay] = useState('all')
   const [cWindow, setCWindow] = useState('all')
   const [scheduleAt, setScheduleAt] = useState('')
+  // core player lists (Lists tab) usable as a one-click recipient source
+  const [lists, setLists] = useState<ListRow[]>([])
+  const [listId, setListId] = useState('all')
+  const [listMembers, setListMembers] = useState<Set<string>>(new Set())
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [name, setName] = useState('')
@@ -112,6 +120,35 @@ export function Batches() {
       setOutreach(all)
     })()
   }, [source, showHidden])
+
+  useEffect(() => {
+    supabase
+      .from('inbox_lists')
+      .select('id, name, event_day')
+      .order('created_at', { ascending: true })
+      .then(({ data }) => setLists((data as ListRow[]) ?? []))
+  }, [])
+
+  // Picking a list narrows recipients to its members and selects them all, so
+  // a weekly send is: pick list → write template → build preview.
+  async function pickList(id: string) {
+    setListId(id)
+    if (id === 'all') {
+      setListMembers(new Set())
+      return
+    }
+    const { data } = await supabase
+      .from('inbox_list_members')
+      .select('outreach_id')
+      .eq('list_id', id)
+    const ids = new Set((data ?? []).map((m) => m.outreach_id))
+    setListMembers(ids)
+    setSelected(ids)
+    const l = lists.find((x) => x.id === id)
+    if (l && !name.trim()) setName(l.name)
+    setStatus(`Loaded list “${l?.name ?? '…'}” — ${ids.size} player(s) selected.`)
+    setTimeout(() => setStatus(null), 5000)
+  }
 
   async function toggleHide(key: string, currentlyHidden: boolean) {
     const table = source === 'inbox' ? 'inbox_conversations' : 'inbox_outreach'
@@ -225,6 +262,7 @@ export function Batches() {
       })
       .filter((r) => {
         const o = outreach.find((x) => x.id === r.key)!
+        if (listId !== 'all' && !listMembers.has(o.id)) return false
         if (region !== 'all') {
           const rg = (o.region ?? '').toLowerCase()
           // "All Areas" players always match any region search.
@@ -237,11 +275,13 @@ export function Batches() {
         if (q && !r.name.toLowerCase().includes(q)) return false
         return true
       })
-  }, [source, conversations, outreach, network, region, stake, activity, recipientQuery, channel, cDay, cWindow])
+  }, [source, conversations, outreach, network, region, stake, activity, recipientQuery, channel, cDay, cWindow, listId, listMembers])
 
   function switchSource(s: Source) {
     setSource(s)
     setSelected(new Set())
+    setListId('all')
+    setListMembers(new Set())
   }
 
   function loadPastBatches() {
@@ -706,6 +746,21 @@ export function Batches() {
             </select>
           ) : (
             <>
+              {lists.length > 0 && (
+                <select
+                  value={listId}
+                  onChange={(e) => void pickList(e.target.value)}
+                  title="Core player list (Lists tab)"
+                  className="rounded-md border border-slate-300 px-2 py-1"
+                >
+                  <option value="all">List: all players</option>
+                  {lists.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}{l.event_day ? ` (${l.event_day})` : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
               <input
                 list="crm-region-list"
                 value={region === 'all' ? '' : region}
