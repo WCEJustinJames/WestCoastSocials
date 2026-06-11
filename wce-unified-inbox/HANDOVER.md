@@ -20,10 +20,11 @@ _Last updated: 2026-06-11 (Thu), mid-afternoon Perth._
 - **Heartbeat** (`inbox_sync_heartbeat`, `note`=SYNC_VERSION) for liveness + which code is running.
 
 ## ⚠️ KNOWN ISSUE — desktop on stale code
-The desktop sync reports `note='letspoker-inbox-sync'`, `host=null` — that is NOT the latest branch code (latest = `outreach-window-10to1630`). So the outreach window + recent fixes are NOT live on the PC (Claude is enforcing the window operationally meanwhile). Likely a competing checkout/scheduled task from a parallel automation, or a `git pull` that isn't landing.
-**Fix:** on the desktop, in `C:\Users\justi\WestCoastSocials\wce-unified-inbox`: `git fetch origin` then `git reset --hard origin/claude/laughing-ritchie-Xmvvk`, then close the sync window + double-click `run-wce.bat`. Confirm heartbeat `note` flips to `outreach-window-10to1630`.
+The desktop sync reports `note='letspoker-inbox-sync'`, `host=null` — that is NOT the latest branch code (latest = `quiet-hours-2100-0900`). So quiet hours, the outreach window and recent fixes are NOT live on the PC (Claude enforces them operationally meanwhile). Per Justin, the working copy is **`Desktop\Claude\Code\Player Messaging\West Coast Game Messaging`** (not `C:\Users\justi\WestCoastSocials`). `run-wce.bat` only pulls on restart, and a restart on 2026-06-11 did NOT flip the version, so the pull isn't landing in that folder.
+**Fix:** on the desktop, open a terminal in that folder and run `git pull origin claude/laughing-ritchie-Xmvvk` by hand — the error it prints (wrong branch / local changes / not a repo) is the diagnosis. If it pulls clean: close the sync window + double-click `run-wce.bat`. Fallback: `git fetch origin` then `git reset --hard origin/claude/laughing-ritchie-Xmvvk`. Confirm heartbeat `note` flips to `quiet-hours-2100-0900`.
 
 ## Operating rules (locked — per Justin)
+- **Hard quiet hours: NO outbound of ANY kind 21:00–09:00** — no batches, drafts, auto-replies, digests or group posts. Nothing exempt. Engine-enforced from code version `quiet-hours-2100-0900` (held sends flush at 09:00); until the desktop runs that version, enforce operationally.
 - Outreach only **10:00–16:30**; after that, replies/confirmations/thanks only.
 - **Cross-game double-tap of regs is fine.** NEVER message someone who hasn't replied to our previous message (no unanswered pile-up). *(enforce in engine — TODO)*
 - **Don't push cash at tournament-predominant players** — match game type to interest. *(enforce in engine — TODO)*

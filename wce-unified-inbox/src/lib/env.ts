@@ -49,6 +49,18 @@ export const env = {
     const [h, m] = (process.env.OUTREACH_CUTOFF ?? '16:30').split(':').map(Number)
     return (h || 0) * 60 + (m || 0)
   })(),
+  // Hard quiet hours (local time): NO outbound of ANY kind between QUIET_START
+  // and QUIET_END — no batches, no approved drafts, no auto-replies, no digests,
+  // no group posts. Unlike the outreach window, nothing is exempt. Everything
+  // queued simply holds and flushes once the quiet window ends.
+  quietStartMins: (() => {
+    const [h, m] = (process.env.QUIET_START ?? '21:00').split(':').map(Number)
+    return (h || 0) * 60 + (m || 0)
+  })(),
+  quietEndMins: (() => {
+    const [h, m] = (process.env.QUIET_END ?? '09:00').split(':').map(Number)
+    return (h || 0) * 60 + (m || 0)
+  })(),
   // LetsPoker (lets.poker) operator integration — the App Chats player messenger
   // and tournament data behind the wcp.admin.lets.poker dashboard. Off until a
   // token is set. baseUrl/paths are env-overridable so they can be pinned to the
@@ -71,6 +83,13 @@ export const env = {
     .split(',')
     .map((s) => s.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, ''))
     .filter(Boolean),
+}
+
+/** True while inside the hard quiet-hours window (handles wrap past midnight). */
+export function inQuietHours(d: Date = new Date()): boolean {
+  const mins = d.getHours() * 60 + d.getMinutes()
+  const { quietStartMins: start, quietEndMins: end } = env
+  return start > end ? mins >= start || mins < end : mins >= start && mins < end
 }
 
 export function requireEnv(keys: (keyof typeof env)[]): void {
