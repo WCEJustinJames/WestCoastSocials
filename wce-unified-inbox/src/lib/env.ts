@@ -37,9 +37,14 @@ export const env = {
   // coordination group). Matched by title (case-insensitive contains). Empty
   // disables group posting.
   notifyGroupName: process.env.NOTIFY_GROUP_NAME ?? 'CASH GAMES West Coast Poker',
-  // Daily cutoff (local time, HH:MM) after which proactive OUTREACH (invite
-  // blasts) stops. Reply/confirmation batches and the auto-reply are unaffected,
-  // so we can still confirm seats and thank players late in the day.
+  // Daily window (local time, HH:MM) for proactive OUTREACH (invite blasts):
+  // it only fires between OUTREACH_START and OUTREACH_CUTOFF. Reply/confirmation
+  // batches and the auto-reply are unaffected, so we can still confirm seats and
+  // thank players outside this window.
+  outreachStartMins: (() => {
+    const [h, m] = (process.env.OUTREACH_START ?? '10:00').split(':').map(Number)
+    return (h || 0) * 60 + (m || 0)
+  })(),
   outreachCutoffMins: (() => {
     const [h, m] = (process.env.OUTREACH_CUTOFF ?? '16:30').split(':').map(Number)
     return (h || 0) * 60 + (m || 0)
