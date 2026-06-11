@@ -1,172 +1,62 @@
-# WCE Unified Inbox — Session Handover
+# HANDOVER — WCE Unified Inbox / Player Messaging
 
-_Last updated: 2026-06-07. Read this first when resuming._
+**How to use this:** start a FRESH chat and say *"Read wce-unified-inbox/HANDOVER.md and continue."* This doc is the source of truth; the previous chat got too long to be fast.
 
-## TL;DR status
-- **Step 1 (inbound mirror) is DONE and working.** 108 people, 111 conversations,
-  1,463 messages mirrored from Beeper into Supabase. The UI works (search,
-  channel filters, unread toggle, clean rich-text rendering).
-- **Phase A (approve-to-send) is DONE and CONFIRMED LIVE (2026-06-07).** Completed a
-  real end-to-end send: approved a draft in the UI → outbox logged `[outbox] sent=1`
-  → message delivered. The send rail (outbox worker + reply composer) is working.
-- **UI polish (2026-06-07):** the open thread now auto-refreshes (polls every 5s) and
-  auto-scrolls to the most recent exchange — no more clicking away/back or manual scroll.
-- **AI drafting (Roadmap item 1) is DONE and CONFIRMED LIVE (2026-06-07).** `[drafts] generated=N`
-  in the sync loop; suggestions pre-fill the composer; approve → outbox sends. Defaults to
-  `claude-opus-4-8`; opt-in via `ANTHROPIC_API_KEY`. (Note: drafts for every inbound-last thread,
-  so it spends until all are covered — set `ANTHROPIC_MODEL=claude-haiku-4-5` to cut cost.)
-- **Batched variations (Roadmap item 2) is BUILT (2026-06-07), not yet live-tested.** New "Batches"
-  tab in the UI: write one template (`{{name}}` / `{{first_name}}`), pick recipients, preview each
-  rendered message (contact-data guard unticks anyone messaged in the last 24h), approve. A throttled
-  server sender (`src/sync/batches.ts`, ~1.5s between sends, 20/pass) pushes approved items through
-  the Beeper adapter — logs `[batch] sent=N`. **Live test:** open Batches, build a tiny batch to a
-  self-thread, approve, watch for `[batch] sent=`.
-- **Player Outreach CRM source (2026-06-07), BUILT, needs Airtable key to populate.** Airtable
-  base "West Coast Event Management" → table "Player Outreach" = **487 players** (Phone on most,
-  but only ~19 have a `Beeper Chat ID` = sendable now; the rest need a chat started from their
-  number — not built yet). New `inbox_outreach` Supabase table (migration `0002`); the sync mirrors
-  Airtable into it when `AIRTABLE_API_KEY` is set (`[outreach] synced=N`, every 10m). Batches has an
-  **Inbox threads / Player Outreach (CRM)** source toggle with region/stakes/activity filters; CRM
-  recipients send via their Beeper Chat ID, un-threaded ones are flagged "no thread" and can't send.
-- **New-SMS sending unlocked (2026-06-07).** Verified `POST /v1/chats` with `participantIDs:["+61…"]`
-  on the `gmessages` account resolves/creates an SMS chat (probe: `npm run beeper:startchat -- "+61…"`).
-  The batch sender now reaches CRM players with **no thread but a phone**: it normalises the number to
-  +61 E.164 and starts the chat + sends in one call (`adapter.startChatAndSend`). In the Batches CRM
-  list these show a **"new SMS"** badge and are **unticked by default** (cold-outreach opt-in; pacing
-  still 1.5s/20-per-pass — Beeper can suspend accounts for volume). Players with neither show "no phone".
-- **Receipt extraction (2026-06-07), BUILT, needs a live run.** The "Poker Banking and Cash Chips"
-  Messenger group holds photos of WCP banking forms (printed template + handwritten First/Surname,
-  **Mobile**, Venue, Club, Tournament/Cash, Winnings, Amount). Beeper exposes each as a local file
-  (`srcURL: file:///C:/Users/justi/AppData/Roaming/BeeperTexts/media/…`). `npm run receipts [N]` reads
-  those off disk, runs Claude **vision** to extract the fields, and saves to a new `inbox_receipts`
-  table (migration `0003`, `review_status='pending'`, dedup on message id). Probe: `npm run beeper:receipts`.
-  Next: review UI + push confirmed mobiles into the CRM so they're reachable via new-SMS.
-- **Image attachments (2026-06-07), BUILT, needs a live send to confirm.** Both the Inbox composer
-  and Batches take an image (📎 button). The browser base64-stores it on the draft/batch row
-  (`attachment_data/name/mime`, migration `0004`); the local sender uploads it to Beeper
-  (`POST /v1/assets/upload/base64` → `uploadID`) and sends with the attachment. One image per draft /
-  per batch (re-uploaded per recipient since upload IDs are temporary). New-SMS recipients (no thread)
-  get the text first, then the image as a follow-up message. 8MB cap. Only build/typecheck-verified —
-  needs one real send to confirm the bridge upload/attach shape end-to-end (`src/lib/attachment.ts`,
-  `uploadAssetBase64` in the Beeper client, `SendOptions.attachment` through the adapter/outbox/batches).
-- All code is on branch **`claude/laughing-ritchie-Xmvvk`** in
-  **`WCEJustinJames/WestCoastSocials`**, folder **`wce-unified-inbox/`**, draft **PR #2**.
-  (A standalone repo, `WCEJustinJames/West-Coast-Game-Messaging`, was also created 2026-06-07
-  as the intended future home — not yet the source of truth; PR #2 here still is.)
+_Last updated: 2026-06-11 (Thu), mid-afternoon Perth._
 
-## Immediate next step (resume here)
-Live-test **batched variations**: open the **Batches** tab, write a short template with
-`{{first_name}}`, pick one or two recipients (a self-thread is safest), Build preview → Approve &
-send, and confirm the sync window logs `[batch] sent=N`. After that, the next targets are the
-**contact-data guard** beyond the 24h flag (Roadmap item 3) and **Phase B auto-send** (item 4).
+---
 
-### AI drafting knobs (.env)
-- `ANTHROPIC_API_KEY` — unset = drafting off. Server-side only (the Node sync); never the browser.
-- `ANTHROPIC_MODEL` — defaults to `claude-opus-4-8`.
-- `DRAFT_MAX_PER_PASS` — cap on suggestions generated per 15s pass (default 5), so it never
-  fans out into a burst of API calls. Drafting only fires for a conversation whose latest
-  message is inbound and that has no open (`pending`/`approved`) draft.
+## Architecture (30-second version)
+- **UI**: Vite/React, reads **Supabase** (project `dexdftcmcixppbuucjfd`).
+- **Sync**: Node process on Justin's always-on home PC (`run-wce.bat` → `npm run sync`, polls ~15s). It is the ONLY thing that talks to **Beeper Desktop** (localhost) for **SMS (Google Messages)** + **Facebook Messenger**.
+- **Cloud Claude has NO direct Beeper access** — it acts only by writing to Supabase (queue `inbox_batches`/items, set flags) and reading results. The PC sync executes them.
+- **Git branch**: `claude/laughing-ritchie-Xmvvk`.
 
-### Getting the local stack running again (verified 2026-06-07)
-1. `.env` needs **`BEEPER_BASE_URL=http://localhost:23373`** — Remote Access is OFF, so the
-   bridge only answers on localhost, never the LAN IP `192.168.0.69`.
-2. `.env` needs a valid `BEEPER_ACCESS_TOKEN=bdapi_…`. Cleanest write that dodges the
-   PowerShell paste/BOM/newline traps: one here-string with the token **inline**, piped to
-   `Set-Content -Encoding ascii`. (Notepad-editing `.env` directly is the no-fuss fallback.)
-3. `npm run beeper:probe` → should list 3 accounts (matrix/Beeper, facebookgo/Facebook,
-   gmessages/Google Messages). Then `npm run sync` (no ECONNREFUSED, no 401).
-4. UI test send: open the **"Justin Lewis" (Google Messages)** self-thread, type a test,
-   **Approve & send**, confirm the sync window logs `[outbox] sent=1` and it lands.
+## What's LIVE / built
+- Inbound mirror; approve-to-send batches; AI drafting.
+- **Auto-reply**: classifies inbound (yes/no/maybe/other), auto-acknowledges simple confirm/decline/maybe, escalates anything needing Justin; texts Justin a **confirmed-names digest**; keeps **one live seat-list posted in the "CASH GAMES West Coast Poker" FB group** (delete+repost on change).
+- **Messaging rules in code**: no self-introduction; no em-dashes (stripped); **outreach window 10:00–16:30** (`inbox_batches.is_outreach`; replies/confirmations exempt); double-send claim guard; 20s Beeper timeout + sends run before the mirror.
+- **Scheduled task** auto-starts the sync on boot, restarts on crash, disables sleep (permanent).
+- **Heartbeat** (`inbox_sync_heartbeat`, `note`=SYNC_VERSION) for liveness + which code is running.
 
-## Architecture (what runs where)
-- **Mirror + outbox** = a Node process on Justin's PC (the only machine that can reach
-  Beeper). `npm run sync` loops every 15s: pulls inbound 1:1 messages AND sends approved drafts.
-- **UI** = Vite/React app reading Supabase. Runs anywhere; he runs it on the desktop
-  (`npm run dev` → http://localhost:5173). Browser never touches Beeper.
-- **Send gate:** UI writes `inbox_drafts` rows with `status='approved'`; the outbox sends
-  them. Nothing sends without an explicit approve. On send failure a draft reverts to
-  `pending` (never silent auto-resend → no double-message risk).
+## ⚠️ KNOWN ISSUE — desktop on stale code
+The desktop sync reports `note='letspoker-inbox-sync'`, `host=null` — that is NOT the latest branch code (latest = `outreach-window-10to1630`). So the outreach window + recent fixes are NOT live on the PC (Claude is enforcing the window operationally meanwhile). Likely a competing checkout/scheduled task from a parallel automation, or a `git pull` that isn't landing.
+**Fix:** on the desktop, in `C:\Users\justi\WestCoastSocials\wce-unified-inbox`: `git fetch origin` then `git reset --hard origin/claude/laughing-ritchie-Xmvvk`, then close the sync window + double-click `run-wce.bat`. Confirm heartbeat `note` flips to `outreach-window-10to1630`.
 
-## Key facts
-**Beeper bridge** (verified against live `/v1/spec`, OpenAPI 5.0.0, Beeper 4.2.876):
-- `http://localhost:23373`, bearer token auth. Remote Access = OFF (keep it off).
-- `GET /v1/accounts`, `GET /v1/messages/search` (limit hard-capped at 20 → cursor paging),
-  `POST /v1/chats/{chatID}/messages` (send; returns `{chatID, pendingMessageID}`, no success field),
-  `ws://localhost:23373/v1/ws` (live events — not used yet).
-- Connected accounts: `matrix` (Beeper), `facebookgo` (Facebook/Messenger), `gmessages`
-  (Google Messages = SMS). WhatsApp / Instagram / other SMS numbers from the brief are
-  **not connected in Beeper yet** — they'll flow in automatically when added (no code change).
+## Operating rules (locked — per Justin)
+- Outreach only **10:00–16:30**; after that, replies/confirmations/thanks only.
+- **Cross-game double-tap of regs is fine.** NEVER message someone who hasn't replied to our previous message (no unanswered pile-up). *(enforce in engine — TODO)*
+- **Don't push cash at tournament-predominant players** — match game type to interest. *(enforce in engine — TODO)*
+- No self-intro; no em-dashes.
+- **$5/10 runs only the last game of the month** → $5/10-only players are a monthly list, not weekly.
+- **Venues**: North = Woodvale + Kingsley; South = Kenwick + MCT. **Days**: Mon Bentley, Tue Kingsley, Wed MCT, Thu Woodvale, Fri Kenwick (evening) + Leederville (daygames), Sun Planet Royale.
 
-**Supabase** project "WCE App" — ref `dexdftcmcixppbuucjfd`, region ap-southeast-2.
-- Inbox tables (all `inbox_`-prefixed): people, identities, conversations, messages,
-  batches, batch_items, drafts. Coexist with existing `letspoker_*` / `tournament_events` / `wcp_sync`.
-- RLS enabled but **permissive** (local single-user). `anon` + `authenticated` have table
-  GRANTs. The mirror uses the **publishable key** (`sb_publishable_…`) for both keys in `.env`
-  (works because of permissive RLS + grants — no service_role secret needed locally).
+## Data state (CRM = `inbox_outreach`)
+- `activity='Cash'` segment ≈ 194 players (with numbers); ~1070 rows have phones.
+- **LetsPoker**: NO API (cookie-auth GraphQL; data only via CSV export; App Chats can't be a live channel). Player export imported → 56 had mobiles (**29 new added**); full 1950-name roster used to build the games-played **chase list**.
+- **Stakes/region tagged**: 60 players (stakes array + region North/South/ALL Areas). 34 ambiguous (shorthand matched >1 record — needs disambiguation). 54 in the stake lists have no number.
+- **do_not_message**: Aaron Marshall, Juneyong Park, Carla, "Dylan MCT VM", Mouloud Khenfri, Mike Brown, Daisy, **Hayley Chipun (Chiplin), Jaime Dalton**. Also exclude the **"Bazza Smith" FB thread** (not in CRM, FB-only). **Jason Lei** = on holiday ~3 weeks (noted, NOT banned).
 
-**Local machine (Windows):** repo at `C:\Users\justi\WestCoastSocials\wce-unified-inbox`.
-Node + Git installed. PowerShell execution policy set to RemoteSigned (CurrentUser).
-`.env` is gitignored and lives in that folder.
+## Active sends (today)
+- **Woodvale (Thu) $2/5 + $2/5/10** — 75/76 SMS invites delivered; game 6pm. Confirmed: Paul Derrick, Ling Xu (main table), Ethan Crifo, Dee Gupta (in person), Ali Seif (2/5/10). Replies handled: Ali (straddle), 0418 516 760 (tourney link), James Newberry (seat 7/8), + invited Jerome Brooking, Ciaran Paxman, Zac Pongas, Paul Rhoades. **David Aces** wants last night's MCT winner photos — JUSTIN to send (Claude can't access the image files).
+- **Leederville Friday daygame** — ~36 invites **scheduled 8pm tonight** (`is_outreach=false` so it bypasses the cutoff). 3 removed (unanswered Woodvale invite).
 
-## Runtime commands (Windows, two PowerShell windows)
-- Window 1: `npm run dev` → the UI at http://localhost:5173 (leave running).
-- Window 2: `npm run sync` → mirror + outbox loop (leave running). `npm run sync:once` = one pass.
-- `npm run beeper:probe` → sanity-check the bridge + token.
-- To update after a push: stop, `git pull`, restart.
+## PARKED / INCOMPLETE (priority order)
+1. **Fix desktop stale code** (see KNOWN ISSUE) — unblocks the outreach window + all recent code.
+2. **Facebook Messenger outreach** — big one. Many chase-list regulars are reachable on Messenger but were never sent game invites (all outreach was SMS): **Danny Poolman (79 games), Gary O'Doherty (64), Brion Weedman, Tom Lab, Prak Sangthong, Jaxon Byrne, Chris Smitton, Vanda Williams, Ciaran Paxman, Jake Connelly**, etc. Fold FB threads into outreach via `channel='thread'`, deduped vs SMS, excluding do_not_message (incl. the Bazza thread). *(Offered to punch tonight's Woodvale to them over Messenger — awaiting Justin's go.)*
+3. **Kenwick FC Friday EVENING game (tomorrow)** — grind Friday-Kenwick TD for evening regs, match numbers, schedule a send for **tomorrow daytime** (in-window), worded as the "last Friday-night event until something better comes along." NOT started.
+4. **34 ambiguous stakes matches** — disambiguate (two Paul Derricks, multiple Andys/Chrises…).
+5. **Chase list** — top players by games with no number (overlaps #2 — many are on Messenger). Justin supplies numbers for the rest (name + contact screenshot → Claude slots in with region/stakes).
+6. **Engine guardrails to build**: (a) skip outreach to anyone with an unanswered message; (b) exclude tourney-predominant players from cash sends (needs tourney-vs-cash classification). Need desktop on current code.
+7. **Other-venue TD grinds**: Kingsley (Tue), Bentley (Mon), Planet Royale (Sun) not scraped. (MCT + Woodvale + Leederville done.)
+8. **Duplicate-number players** — merge (Dee Gupta, Andy Brown, Ethan Crifo, Tu Le have 2+ numbers). **Merge rule**: show the differences between records, default to the mobile that matches the phone's contact list.
+9. **Per-game weekly core lists** — proper multi-list/segment backbone (a player can be on MCT + Woodvale + Kenwick). Currently approximated via activity='Cash' + region + stakes.
+10. **LetsPoker tournament/event/attendance CSV exports** — not yet pulled (would give per-event attendance + finish tourney-vs-cash classification).
 
-## Gotchas that ate most of the last session (avoid these)
-1. **PowerShell paste concatenation:** pasting a second command before the first finished
-   ran them merged (e.g. `npm run sync(Get-Content…)` which piped npm output over `.env`).
-   → Give Justin **one command at a time**; tell him to press Enter and wait for the prompt.
-2. **Token trailing newline:** copying the token brought a `\n`, so `Bearer …\n` → 401.
-   → Trim it. Cleanest: write `.env` with a single here-string command that includes the token.
-3. **`Set-Content -Encoding utf8` adds a BOM** in Windows PowerShell 5.1 (corrupts the first
-   env var). → Use `-Encoding ascii`.
-4. **RLS ≠ grants:** permissive RLS still 42501'd until `anon`/`authenticated` got table GRANTs
-   (now in migration `0001_inbox_init.sql`).
+## Justin's working style
+Step-by-step walkthroughs, no long reports, go with your read, assume he'll take suggestions. Don't nag about token/secret exposure.
 
-## Security TODO (not yet done)
-- **Rotate the Beeper token** — several flashed through the chat transcript. Generate a fresh
-  one, update `.env`. (Low urgency now: Remote Access is off, so leaked tokens are local-only.)
-- Before any hosted/remote deploy: tighten RLS to authenticated-only, drop `anon` grants, add
-  Supabase Auth login, and never bundle a service_role key in the browser.
-
-## Roadmap (after live send is confirmed)
-1. **AI drafting** — generate suggested replies into `inbox_drafts` as `pending`; Justin edits/approves
-   in the UI. Needs an `ANTHROPIC_API_KEY` (Claude API) added to `.env` + a draft-generation step.
-2. **Batched variations** — `inbox_batches` + `inbox_batch_items` (already in schema): approve a
-   template + variation logic once, preview each rendered message, send. Same approve surface.
-3. **Contact-data guard** — before draft/batch, check recent outbound per person
-   (`inbox_people.last_outbound_at`, maintained by a DB trigger) and flag double-message risk.
-4. **Phase B** — graduate trusted threads to auto-send (paced; Beeper warns send volume can get
-   accounts suspended — throttle).
-5. **LetsPoker adapter** — implement `ChannelAdapter` for LetsPoker; pairs with the existing
-   `LetspokerMCP` repo + `letspoker_*` Supabase tables. Slots in with no schema change.
-6. **Repo home** — currently staged inside `WestCoastSocials`. Justin wants it separate but said
-   leave the empty `WCE-APP` repo alone; the session integration can't create repos. Decide a home.
-
-## Players tab — region/venue & tags/stakes dropdowns (DONE 2026-06-07)
-The Players tab (backed by `inbox_outreach`) now edits these via dropdowns instead of free text
-(`src/ui/Players.tsx`). `region` was messy free-text (zones mixed with venue names + typos), and a
-clean `venues` text[] already existed — so they're now **two separate controls**:
-- **Region (zone):** single-select from a **fixed** list `REGIONS = North/South/Central/Both`.
-- **Venue:** multi-select (chips) from a **fixed** list `VENUES` (MCT, Woodvale, Bentley, Kenwick,
-  Kingsley, Leederville, Adriatic, Stirling, Planet Royale) → saved to `venues` text[].
-- **Tags/stakes:** multi-select (chips) from a **fixed** list `STAKES` ($2/5, $5/10, $2/5/10, PLO)
-  → saved to `stakes` text[].
-- All three keep an **Other…** prompt, and any existing non-standard value on a player is preserved
-  and shown as the current selection. The lists are plain consts at the top of `Players.tsx` — edit
-  to change the vocabulary.
-- Open: `stakes` still holds some tag-ish values (`Cash Players | North/South`, `* starred`) — could
-  split into a dedicated tags field/control. The "Tidy region/venue values" merge tool still helps
-  canonicalise the legacy free-text `region` values into the new zones.
-
-## Repo map
-- `src/adapters/types.ts` — `ChannelAdapter` interface (pluggable; LetsPoker slots here).
-- `src/adapters/beeper/{client,adapter,probe}.ts` — Beeper REST client + adapter + probe script.
-- `src/sync/{mirror,identity,outbox,run}.ts` — inbound mirror, cross-channel identity matching,
-  approve-to-send outbox, entrypoint loop.
-- `src/ui/Inbox.tsx` — the inbox UI (list + thread + search/filter + reply composer).
-- `src/lib/{supabase,supabaseAdmin,env}.ts` — Supabase clients + env loading.
-- `src/types/database.ts` — generated Supabase types.
-- `supabase/migrations/0001_inbox_init.sql` — full schema + RLS + grants (already applied).
+## Useful IDs
+- Supabase project: `dexdftcmcixppbuucjfd`
+- LetsPoker club id: `8f025bf9ecfa14c8` (admin `wcp.admin.lets.poker`, GraphQL `/api/graphql`, cookie auth — no usable API)
+- Cash group resolved chat id starts `!COGOX…` (stored in `inbox_group_post` once a roster posts)
