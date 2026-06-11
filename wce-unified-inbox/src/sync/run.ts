@@ -6,7 +6,7 @@
  */
 import os from 'node:os'
 import Anthropic from '@anthropic-ai/sdk'
-import { env, requireEnv } from '../lib/env'
+import { env, requireEnv, inQuietHours } from '../lib/env'
 import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { BeeperClient } from '../adapters/beeper/client'
 import { BeeperAdapter } from '../adapters/beeper/adapter'
@@ -21,7 +21,7 @@ import { processReplies } from './notify'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'outreach-window-10to1630'
+const SYNC_VERSION = 'quiet-hours-2100-0900'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -66,6 +66,9 @@ if (anthropic && env.autoReply) {
 // Airtable CRM sync runs on its own slower cadence, not every pass.
 let lastOutreachSync = 0
 
+// Log quiet-hours transitions once, not every 15s pass.
+let wasQuiet = false
+
 async function runOnce(): Promise<void> {
   const since = new Date(Date.now() - env.syncLookbackDays * 86_400_000)
 
@@ -85,20 +88,34 @@ async function runOnce(): Promise<void> {
   // again (one stuck Beeper call after downtime once blocked every text for
   // hours). Everything that sends runs before the mirror.
 
+  // Hard quiet hours: between QUIET_START and QUIET_END (default 21:00-09:00)
+  // every send rail is held — approved drafts, batches, auto-replies, digests,
+  // group posts. Nothing is exempt, per Justin. The inbound mirror and AI
+  // drafting below still run, so the queue flushes the moment quiet hours end.
+  const quiet = inQuietHours()
+  if (quiet !== wasQuiet) {
+    console.log(
+      quiet
+        ? '[quiet] quiet hours, holding ALL outbound sends until the window ends'
+        : '[quiet] quiet hours over, outbound sends resume',
+    )
+    wasQuiet = quiet
+  }
+
   // Phase A: send any drafts the human approved in the UI.
-  const out = await processOutbox(supabaseAdmin, adapter)
+  const out = quiet ? { sent: 0, failed: 0 } : await processOutbox(supabaseAdmin, adapter)
   if (out.sent || out.failed) {
     console.log(`[outbox] sent=${out.sent} failed=${out.failed}`)
   }
 
   // Batched variations: send items from any batch the human approved (throttled).
-  const batch = await processBatches(supabaseAdmin, adapter)
+  const batch = quiet ? { sent: 0, failed: 0 } : await processBatches(supabaseAdmin, adapter)
   if (batch.sent || batch.failed) {
     console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
   }
 
   // Auto-reply: thank/acknowledge inbound replies and text Justin who confirmed.
-  if (anthropic && env.autoReply) {
+  if (!quiet && anthropic && env.autoReply) {
     // Resolve the cash-games group once (so confirmations can be posted there).
     if (env.notifyGroupName && !notifyGroupChatId) {
       try {

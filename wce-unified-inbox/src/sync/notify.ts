@@ -13,7 +13,9 @@ export interface ReplyResult {
 
 // Pace auto-replies like batch sends (Beeper suspends accounts that fire fast).
 const SEND_DELAY_MS = 1500
-const LOOKBACK_MS = 12 * 60 * 60 * 1000
+// Must outlast the 12h quiet window (21:00-09:00): a reply landing just before
+// 9pm is held overnight and still needs to be inside the lookback at 9am.
+const LOOKBACK_MS = 16 * 60 * 60 * 1000
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

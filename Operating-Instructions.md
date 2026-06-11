@@ -31,6 +31,7 @@ list runs, then babysit it.
 - `Cash` playlist (~174 players, CRM `activity='Cash'`) is the master cash list.
 
 ## Hard rules — never break
+- **No outbound of any kind 9pm–9am** (quiet hours; the code holds everything and flushes after 9am).
 - Player messages: **never introduce yourself or name the business**; assume an existing relationship.
 - **Never use an em-dash (—) or en-dash (–)** — comma or full stop only (code also strips them).
 - **Only ONE sync window**, ever.
