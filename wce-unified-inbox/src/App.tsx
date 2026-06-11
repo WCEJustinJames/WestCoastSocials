@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Inbox } from './ui/Inbox'
 import { Batches } from './ui/Batches'
+import { Lists } from './ui/Lists'
 import { Receipts } from './ui/Receipts'
 import { Players } from './ui/Players'
 
-type View = 'inbox' | 'batches' | 'receipts' | 'players'
+type View = 'inbox' | 'batches' | 'lists' | 'receipts' | 'players'
 
 export default function App() {
   const [view, setView] = useState<View>('inbox')
@@ -18,6 +19,9 @@ export default function App() {
         <TabButton active={view === 'batches'} onClick={() => setView('batches')}>
           Batches
         </TabButton>
+        <TabButton active={view === 'lists'} onClick={() => setView('lists')}>
+          Lists
+        </TabButton>
         <TabButton active={view === 'receipts'} onClick={() => setView('receipts')}>
           Receipts
         </TabButton>
@@ -30,6 +34,8 @@ export default function App() {
           <Inbox />
         ) : view === 'batches' ? (
           <Batches />
+        ) : view === 'lists' ? (
+          <Lists />
         ) : view === 'receipts' ? (
           <Receipts />
         ) : (
