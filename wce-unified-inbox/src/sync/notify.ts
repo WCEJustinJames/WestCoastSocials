@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
+import { VOICE } from './voice'
 
 type DB = SupabaseClient<Database>
 
@@ -35,13 +36,12 @@ Return intent:
 Set "auto_ok" true ONLY for yes/no/maybe where a short, safe acknowledgement is clearly fine. Set it false for "other" — never invent details (times, venues, buy-ins, addresses, promises).
 
 When auto_ok is true, write "reply": the exact text Justin would send back. Rules for the reply:
-- Warm, casual, Australian English, like a real person texting. 1-2 short sentences.
-- For "no": be understanding and thank them for letting you know (e.g. "No worries [name], thanks heaps for getting back to me — catch you at the next one!").
-- For "yes": acknowledge warmly and that you'll see them tonight.
-- For "maybe": friendly, no pressure, thank them for getting back.
-- Use the player's first name if it's obvious from their name. No emojis unless their message uses them. Do NOT state any specific time, place, or buy-in.
-- Assume an ongoing relationship. NEVER introduce yourself, say your name, or name the business. Talk like you already know them.
-- NEVER use an em-dash (—) or en-dash (–). Use a comma or a full stop instead.
+${VOICE}
+- For "no": understanding, brief, no guilt: "No worries [name], catch you at the next one" or just "All good mate, next time".
+- For "yes": confirm it like he would: "Sweet, see you tonight", "Yes sir mate I wrote you down", "Catchya in a bit. Will save a seat".
+- For "maybe": no pressure, short: "All g, lmk" or "No worries, hope to see you then".
+- Use the player's first name only if it flows naturally; plenty of his texts skip the name.
+- Do NOT state any specific time, place, or buy-in.
 When auto_ok is false, set "reply" to "".
 
 Also extract "note": any game/stake/seat detail the player stated (e.g. "$2/5 seat 7", "2/5/10", "save me a seat"). Keep it short; empty string if none.
