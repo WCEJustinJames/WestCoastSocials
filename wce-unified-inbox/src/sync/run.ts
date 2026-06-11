@@ -19,6 +19,10 @@ import { generateDrafts } from './drafting'
 import { syncOutreach } from './outreach'
 import { processReplies } from './notify'
 
+// Bumped on meaningful deploys so we can see (via the heartbeat) which code the
+// desktop is actually running, and confirm a restart picked up the latest.
+const SYNC_VERSION = 'outreach-window-10to1630'
+
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
 const beeperClient = new BeeperClient({
@@ -72,7 +76,7 @@ async function runOnce(): Promise<void> {
       from: (t: string) => { upsert: (v: unknown) => Promise<unknown> }
     })
       .from('inbox_sync_heartbeat')
-      .upsert({ id: 1, last_run: new Date().toISOString(), host: os.hostname() })
+      .upsert({ id: 1, last_run: new Date().toISOString(), host: os.hostname(), note: SYNC_VERSION })
   } catch {
     /* ignore */
   }
