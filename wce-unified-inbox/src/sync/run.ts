@@ -25,6 +25,21 @@ const SYNC_VERSION = 'quiet-hours-voice'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
+// Print which Supabase key actually got loaded (a Windows system env var can
+// silently shadow .env, since dotenv never overrides existing process env).
+{
+  const k = env.supabaseServiceKey
+  const kind = k.startsWith('sb_secret_')
+    ? 'secret, correct'
+    : k.startsWith('sb_publishable_')
+      ? 'PUBLISHABLE, WRONG KEY'
+      : k.startsWith('eyJ')
+        ? 'legacy jwt'
+        : 'unrecognised'
+  console.log(`[env] supabase url: ${env.supabaseUrl}`)
+  console.log(`[env] service key: ${k.slice(0, 18)}... (${kind})`)
+}
+
 const beeperClient = new BeeperClient({
   baseUrl: env.beeperBaseUrl,
   token: env.beeperToken,
@@ -73,15 +88,19 @@ async function runOnce(): Promise<void> {
   const since = new Date(Date.now() - env.syncLookbackDays * 86_400_000)
 
   // Heartbeat first, so liveness reflects the loop turning even when the mirror
-  // (below) is slow. Best-effort; the table isn't in the generated types.
+  // (below) is slow. Best-effort, but log failures — a silently dead heartbeat
+  // cost hours of debugging once.
   try {
     await (supabaseAdmin as unknown as {
-      from: (t: string) => { upsert: (v: unknown) => Promise<unknown> }
+      from: (t: string) => { upsert: (v: unknown) => Promise<{ error?: { message?: string } | null }> }
     })
       .from('inbox_sync_heartbeat')
       .upsert({ id: 1, last_run: new Date().toISOString(), host: os.hostname(), note: SYNC_VERSION })
-  } catch {
-    /* ignore */
+      .then((r) => {
+        if (r?.error) console.error('[heartbeat] write failed:', r.error.message ?? r.error)
+      })
+  } catch (e) {
+    console.error('[heartbeat] write failed:', e instanceof Error ? e.message : e)
   }
 
   // SENDS FIRST. A slow or hung inbound mirror must never delay approved sends
