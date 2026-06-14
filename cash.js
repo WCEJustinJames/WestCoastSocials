@@ -121,6 +121,7 @@ function renderRoster() {
               ${r.seat_status === 'skipped'
                 ? `<button class="icon-btn" data-act="include">Include</button>`
                 : `<button class="icon-btn" data-act="exclude">Exclude</button>`}
+              <button class="icon-btn" data-act="never" title="Never auto-seat in any event">🚫 Never</button>
               <button class="icon-btn danger" data-act="remove">Remove</button>
             </div></td>
           </tr>`).join('')}
@@ -135,7 +136,25 @@ function renderRoster() {
     const exc = tr.querySelector('[data-act="exclude"]');
     if (inc) inc.addEventListener('click', () => setStatus(id, 'pending'));
     if (exc) exc.addEventListener('click', () => setStatus(id, 'skipped'));
+    tr.querySelector('[data-act="never"]').addEventListener('click', () => neverSeat(id));
   });
+}
+
+// Add a player to the global cash_exclusions list (never auto-seat in any
+// future prefill) and skip them on this event too.
+async function neverSeat(id) {
+  const p = state.plans.find((x) => x.id === state.activePlanId);
+  const row = (state.rostersByPlan[p.id] || []).find((r) => r.id === id);
+  if (!row) return;
+  try {
+    await api(`/cash_exclusions?on_conflict=player_id`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ player_id: row.player_id, player_name: row.player_name, reason: 'via roster UI' }),
+    });
+    await setStatus(id, 'skipped');
+    toast(`${row.player_name} won't be auto-seated again`);
+  } catch (e) { toast(`Couldn't exclude: ${e.message}`, true); }
 }
 
 async function addName() {

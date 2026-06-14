@@ -60,6 +60,13 @@ running table, not from `getEventList` — supply it explicitly to `push`.
   default to `CASH_PUSH_TEMPLATE_PARTS` (env) or `["eventName","location"]`.
 - **tick** — orchestrates today's plans (open then seat). `dryRun` defaults true.
 
+## Exclusions
+
+`public.cash_exclusions` is a persistent never-auto-seat list (opt-outs, staff,
+dummy accounts), matched by `player_id` or name. `prefill` skips excluded
+players every run (via `cash_is_excluded`). The roster page's **🚫 Never**
+button adds a player to it and skips them on the current event.
+
 ## Data model
 
 - `cash_plan` — what to open per event/date (stakes, game types, anticipated
