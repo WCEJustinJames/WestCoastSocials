@@ -1,94 +1,56 @@
 # letspoker-cash
 
-Headless cash-game automation for the LetsPoker (LP) admin GraphQL API, the
-companion to `letspoker-push` (tournaments). It **opens** cash games, **seats**
-reused player names onto events, and **pushes** per cash event. Same endpoint,
-same cookie auth (`letspoker_auth` / `LETSPOKER_COOKIE`), same fail-loud alerts.
+Headless cash-game automation for LetsPoker (LP), companion to `letspoker-push`.
+It **opens** cash tables, **seats** reused tournament names onto them (the
+money-saving "fill"), and **pushes** per table — all on the day's cash event.
 
-## Discovered LP cash schema
-
-LP's admin GraphQL has introspection disabled; the surface below was mapped via
-field-suggestion probing (validation-only — no mutations were executed).
-
-| Operation | Signature | Purpose |
-|---|---|---|
-| `createCashStake` | `(clubId: ID!, input: SavedCashStakeInput!) : CustomerPreferences!` | Define a stake (shows in lobby) |
-| `createCashGameType` | `(clubId: ID!, input: CashGameTypeInput!) : CustomerPreferences!` | Define a game type |
-| `registerPlayerIntoEvent` | `(clubId: ID!, eventId: ID!, buyinVariantId: ID!, paymentMethod: String!, transactionId: ID!, playerId: ID) : RegisterPlayerIntoEventResponse!` | Seat/register a player into an event (tournament **or** cash) |
-| `sendCashPushNotification` | `(clubId: ID!, tableId: ID!, tournamentEventId: ID!, templateParts: [String!]!)` | Push about a cash table |
-| `getEventList` | `(clubId, startDate, endDate, includeCash)` | Calendar feed (cash events when `includeCash: true`) |
-
-Input shapes (exact, minimal):
-
-```graphql
-input SavedCashStakeInput { blinds: [Float!]!  currency: Currency!  text: String! }
-input CashGameTypeInput   { name: String!      abbreviation: String! }
-```
-
-`Currency` is a string scalar (e.g. `"AUD"`). `transactionId` is a client-minted
-UUID — there is **no** `createTransaction` mutation. `playerId` is optional.
-
-### Not available in the admin API
-There is **no** seat/bot/dummy mutation and **no** live-table runtime query
-(`getCashGames`, `getActiveCashTables`, `getLobby`, `getTables` do not exist),
-and `Tournament` has no `tableId`/`isCash` field. "Filling" a table is therefore
-modelled as **registering real player names** (`registerPlayerIntoEvent`), not
-spawning bots. The `tableId` required by `sendCashPushNotification` comes from a
-running table, not from `getEventList` — supply it explicitly to `push`.
+> The real LP cash API is `createTournamentLogItem`. See **CASH_API.md** for the
+> full decoded spec (eventTypes, the seat chain, how ids resolve).
 
 ## Modes (`POST { "mode": ... }`)
 
-- **sync** — diff `getEventList(includeCash:true)` vs the tournament-only list,
-  upsert cash-only events into `public.cash_events`.
-- **prefill** — `{ mode:"prefill", horizonDays?, lookbackDays? }` — for each
-  upcoming scheduled game, copy the entrants of the **same weekly game last
-  week** (same venue + weekday) into a `cash_plan` + `cash_seat_roster`. Pure
-  DB (no cookie); idempotent. Backed by `public.prefill_cash_from_history`.
-- **open** — `{ mode:"open", date|planId, dryRun? }` — create the plan's
-  `stakes[]` + `game_types[]`. `dryRun` reports the intended calls.
-- **seat** — `{ mode:"seat", date|planId, paymentMethod?, dryRun? }` — register
-  the plan's roster names onto `event_id`. **Money-touching → `dryRun` defaults
-  to `true`**; set `dryRun:false` to fire. Enforces one name/user per Perth day
-  across tournament + cash via `cash_day_user_ledger`.
-- **push** — notify players per cash table. Two shapes:
-  - manual: `{ mode:"push", eventId, tableId, templateParts?, dryRun? }` (testing).
-  - plan-based: `{ mode:"push", date|planId, slot?, dryRun? }` — fans out
-    `sendCashPushNotification` over the plan's `push_event_id` + `table_ids`.
-  Outward-facing → **`dryRun` defaults true**; idempotent per table per `slot`
-  (via `cash_fired`). No-ops with `awaiting capture` until the plan has
-  `push_event_id` + `table_ids` set (from the cash-control capture). Templates
-  default to `CASH_PUSH_TEMPLATE_PARTS` (env) or `["eventName","location"]`.
-- **tick** — orchestrates today's plans (open then seat). `dryRun` defaults true.
+- **prefill** — `{ horizonDays?, lookbackDays? }` — fill each upcoming game's
+  roster from the same weekly game last week (same venue + weekday), honouring
+  `cash_exclusions`. Pure DB; idempotent. Backed by `prefill_cash_from_history`.
+- **log** — `{ date? }` — read-only: resolve the day's cash event and report its
+  open tables, seated count, and free seats. Handy for debugging.
+- **open** — `{ date|planId, start?, dryRun? }` — open the plan's `tables_spec`
+  via `AddTable` (and optionally `Command{start}` the day). `dryRun` supported.
+- **seat** — `{ date|planId, buyin?, buyinPct?, notes?, dryRun? }` — for each
+  pending roster player: `Registered → Seated` into the next free seat across
+  the day's open tables, optional `AddCashBuyin` (`buyinPct` default 0.8 of the
+  table max, i.e. ~75–85%). **Outward-facing → `dryRun` defaults true.** Enforces
+  one name/user per Perth day (`cash_day_user_ledger`); skips already-seated.
+- **push** — `{ date|planId, templateParts?, slot?, dryRun? }` —
+  `sendCashPushNotification` per open table (table ids resolved from the log).
+  **`dryRun` defaults true.** Idempotent per table/slot via `cash_fired`.
+- **tick** — orchestrate open + seat for today's plans (cron). `dryRun` true.
 
-## Exclusions
+## How the day resolves
 
-`public.cash_exclusions` is a persistent never-auto-seat list (opt-outs, staff,
-dummy accounts), matched by `player_id` or name. `prefill` skips excluded
-players every run (via `cash_is_excluded`). The roster page's **🚫 Never**
-button adds a player to it and skips them on the current event.
+The cash "Check-in and cash-games" container is the `getEventList` entry with an
+**empty `eventName`** on that Perth date; its id is the `tournamentId` used by
+every call. Open tables + seat occupancy are read from
+`getTournamentLog(tournamentId, …)`.
 
 ## Data model
 
-- `cash_plan` — what to open per event/date (stakes, game types, anticipated
-  tables/players, `event_id`, `buyin_variant_id`).
-- `cash_seat_roster` — player names to seat for a plan (resolved to `player_id`
-  from the harvested `lp_entries`).
-- `cash_day_user_ledger` — one name/user per Perth day (the cost guard).
-- `cash_events` / `cash_open_log` / `cash_fired` — synced events, audit, dedupe.
-
-## To go live (operator inputs)
-
-1. Insert a `cash_plan` row per event with real `stakes` / `game_types` (and,
-   for seating, `event_id` + `buyin_variant_id`).
-2. Add `cash_seat_roster` rows (the regular names to reuse).
-3. Set `CASH_PAYMENT_METHOD` (or pass `paymentMethod`) — the string LP expects
-   for a comp/house registration.
-4. Call `open` (live), then `seat` with `dryRun:false`.
+- `cash_plan` — per event/date: `tables_spec` (tables to open), anticipated
+  players. (`stakes`/`game_types`/`buyin_variant_id`/`push_event_id`/`table_ids`
+  from earlier iterations are unused by v4 and kept only for history.)
+- `cash_seat_roster` — names to seat (resolved to `player_id` from `lp_entries`).
+- `cash_day_user_ledger` — one name/user per Perth day (cost guard).
+- `cash_exclusions` — never-auto-seat list (honoured by prefill).
+- `cash_open_log` / `cash_fired` — audit + push dedupe.
 
 ## Scheduling
 
-A daily pg_cron job **`letspoker-cash-prefill`** (`0 21 * * *` UTC = 05:00 Perth)
-calls this function with `{"mode":"prefill"}`, so each upcoming day's roster is
-auto-built from the same weekly game the week before. It reads the function URL
-from the `letspoker_cash_function_url` vault secret and reuses the existing
-`letspoker_push_function_token` for auth — mirroring the `letspoker-*` crons.
+Daily pg_cron **`letspoker-cash-prefill`** (05:00 Perth) keeps rosters built.
+Add open/seat/push crons (or use `tick`) once you're ready to fire live.
+
+## To go live
+
+1. Ensure the day's cash event exists and a table is open (UI, or `open` with a
+   `tables_spec`).
+2. `seat` with `dryRun:false` (add `buyin:true` to give chips). Reused tournament
+   names are billed as one user/day across tournament + cash.
