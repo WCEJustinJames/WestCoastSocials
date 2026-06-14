@@ -35,6 +35,11 @@ The returned `id` of an item is reused as a reference by later items
 | `Registered` | `{confirmed:true, paymentMethod:"", enforceMaxReentries:true}` (playerId set, parentLogId null) | check a player in; **returned `id` = registration id** |
 | `Seated` | `{tableId, seatIndex, allowSwap:true}` (parentLogId = registration id) | seat the player (seatIndex is 0-based) |
 | `AddCashBuyin` | `{addCashBuyin:{currency:"AUD", chipsAdded:100, source:"Table", notes:"…", paymentMethod:"CASH"}}` (parentLogId = registration id) | give chips / buy-in |
+| `ModifyTable` | `{identifier:"LEEDERVILLE $2/5 NLH"}` | **rename a table in place** (the table name *is* its `identifier`; players stay seated). Also used by the system for `{averageStack:…}`. |
+| `AddGuest` | `{name:"Www", tableId, seatIndex}` | seat a named guest placeholder (the dummy-fill method) |
+| `Unseated` | `null` | remove a player from their seat |
+| `Command` | `{command:{finish:true}}` | mark the cash day Finished (`{start:true}` to start) |
+| `SentNotification` | `{type:"public", template:{…}}` | record of a cash push (title `"Cash table <name>"`, message `"Game: NLH - 2/5 AUD\nPlayers: 5/9\n…"`) |
 
 ## Seat a reused tournament name (the automation)
 

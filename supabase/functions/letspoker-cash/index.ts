@@ -429,6 +429,25 @@ async function runTick(cookie: string, sgid: string, clubId: string, dryRun: boo
   return json({ ok: true, mode: "tick", date, dryRun, plans: plans.length, out });
 }
 
+/* ------------------------------- finish ------------------------------ */
+// Mark a cash day Finished (Command{finish}). Default date = yesterday Perth
+// (the day that just ended). Idempotent: skips if not started / already finished.
+async function runFinish(cookie: string, sgid: string, clubId: string, opts: { date?: string; dryRun: boolean }): Promise<Response> {
+  const date = opts.date ?? perthDate(-1);
+  const eventId = await resolveCashEventId(cookie, sgid, clubId, date);
+  if (!eventId) return json({ ok: true, date, skipped: true, reason: "no cash event for date" });
+  const cmds = (await getCashLog(cookie, sgid, clubId, eventId)).filter((e) => e.eventType === "Command");
+  const started = cmds.some((c) => c.eventData?.command?.start === true);
+  const finished = cmds.some((c) => c.eventData?.command?.finish === true);
+  if (!started) return json({ ok: true, date, eventId, skipped: true, reason: "day not started" });
+  if (finished) return json({ ok: true, date, eventId, skipped: true, reason: "already finished" });
+  if (opts.dryRun) return json({ ok: true, date, eventId, dryRun: true, wouldFinish: true });
+  const c = await createLogItem(cookie, sgid, clubId, eventId, { eventType: "Command", eventData: { command: { finish: true } } });
+  await logCash({ source: "finish", op: "finish", ref: eventId, http_status: c.status, ok: c.ok, detail: `finish ${date} -> ${c.ok ? c.id : c.error}` });
+  if (!c.ok) await alertJustin("LetsPoker cash finish failed", `date=${date} ${c.error}`);
+  return json({ ok: c.ok, date, eventId, finished: c.ok }, c.ok ? 200 : 502);
+}
+
 /* -------------------------------- log -------------------------------- */
 async function runLog(cookie: string, sgid: string, clubId: string, opts: { date?: string }): Promise<Response> {
   const date = opts.date ?? perthDate(0);
@@ -465,6 +484,7 @@ Deno.serve(async (req) => {
     case "seat": return await runSeat(cookie, sgid, clubId, { planId: body.planId, date: body.date, dryRun, buyin: body.buyin === true, buyinPct: body.buyinPct, notes: body.notes });
     case "push": return await runPush(cookie, sgid, clubId, { planId: body.planId, date: body.date, templateParts: body.templateParts, slot: body.slot, dryRun });
     case "tick": return await runTick(cookie, sgid, clubId, dryRun);
+    case "finish": return await runFinish(cookie, sgid, clubId, { date: body.date, dryRun: body.dryRun === true });
     default: return json({ ok: false, error: `unknown mode: ${mode}` }, 400);
   }
 });
