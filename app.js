@@ -175,7 +175,18 @@ const defaultState = () => {
       ] },
   ];
 
-  return { posts, games, assets, accounts, contacts, conversations };
+  const templates = [
+    { id: uid(), title: 'Matchday availability',
+      body: 'Hi {first}, checking your availability for our match vs {opponent} on {date}. Are you good to play?' },
+    { id: uid(), title: 'Trial invite',
+      body: "Hi {first}, we'd love to have you trial with West Coast. Can you make our next open session?" },
+    { id: uid(), title: 'Training update',
+      body: 'Hi {first}, quick one — this week\'s training details are confirmed. See you there!' },
+    { id: uid(), title: 'Thanks / welcome',
+      body: 'Thanks {first}! Great to have you with West Coast. 🙌' },
+  ];
+
+  return { posts, games, assets, accounts, contacts, conversations, templates };
 };
 
 function uid() {
@@ -192,11 +203,12 @@ function load() {
     for (const p of PLATFORMS) {
       if (!accountIds.has(p.id)) parsed.accounts.push({ ...p, enabled: true });
     }
-    // Backfill the unified inbox for states saved before it existed.
-    if (!Array.isArray(parsed.contacts) || !Array.isArray(parsed.conversations)) {
+    // Backfill the unified inbox + outreach for states saved before they existed.
+    if (!Array.isArray(parsed.contacts) || !Array.isArray(parsed.conversations) || !Array.isArray(parsed.templates)) {
       const seed = defaultState();
       if (!Array.isArray(parsed.contacts)) parsed.contacts = seed.contacts;
       if (!Array.isArray(parsed.conversations)) parsed.conversations = seed.conversations;
+      if (!Array.isArray(parsed.templates)) parsed.templates = seed.templates;
     }
     return parsed;
   } catch {
@@ -254,6 +266,57 @@ function msgStatusLabel(s) {
     : 'Sent';
 }
 
+// Outreach: templates + bulk sends.
+const CHANNEL_PREFERENCE = ['messenger', 'instagram', 'twitter'];
+let editingTemplateId = null;
+
+function nextGame() {
+  const now = Date.now();
+  return [...state.games]
+    .filter((g) => new Date(g.date).getTime() >= now)
+    .sort((a, b) => new Date(a.date) - new Date(b.date))[0] || null;
+}
+function resolveTemplate(body, contact) {
+  const g = nextGame();
+  const map = {
+    '{first}': contact ? contact.name.split(' ')[0] : '',
+    '{name}': contact ? contact.name : '',
+    '{opponent}': g ? g.opponent : '',
+    '{date}': g ? formatDateTime(g.date) : '',
+    '{venue}': g && g.venue ? g.venue : '',
+  };
+  return String(body || '').replace(/\{first\}|\{name\}|\{opponent\}|\{date\}|\{venue\}/g, (m) => map[m]);
+}
+function preferredChannel(contact) {
+  if (!contact || !contact.channels) return null;
+  return CHANNEL_PREFERENCE.find((ch) => contact.channels[ch]) || null;
+}
+function findOrCreateConversation(contactId, channel) {
+  let conv = state.conversations.find((c) => c.contactId === contactId && c.channel === channel);
+  if (!conv) {
+    conv = { id: uid(), contactId, channel, status: 'open', unread: false, messages: [] };
+    state.conversations.push(conv);
+  }
+  return conv;
+}
+function allTags() {
+  const s = new Set();
+  state.contacts.forEach((c) => (c.tags || []).forEach((t) => s.add(t)));
+  return [...s].sort();
+}
+function contactsForAudience(tag) {
+  if (tag === '__all__') return state.contacts.slice();
+  return state.contacts.filter((c) => (c.tags || []).includes(tag));
+}
+
+// Shared simulated delivery timeline: sent -> delivered -> read, persisting each
+// step and updating the bubble in place if its thread is on screen.
+function advanceDelivery(msg) {
+  msg.status = 'sent'; save(); updateMsgStatusInDom(msg);
+  setTimeout(() => { msg.status = 'delivered'; save(); updateMsgStatusInDom(msg); }, 700);
+  setTimeout(() => { msg.status = 'read'; save(); updateMsgStatusInDom(msg); }, 1800);
+}
+
 function formatDateTime(iso) {
   const d = new Date(iso);
   return d.toLocaleString(undefined, {
@@ -291,6 +354,7 @@ function setView(view) {
   const titles = {
     overview: ['Overview', 'Everything scheduled across your pages, in one place.'],
     inbox: ['Unified inbox', 'Every player and member conversation, across all channels, in one place.'],
+    outreach: ['Outreach', 'Send templated messages to a player, or broadcast to a whole segment.'],
     schedule: ['Schedule queue', 'Filter, edit, and publish posts across every page.'],
     calendar: ['Calendar', 'Month view of scheduled posts and upcoming games.'],
     games: ['Games', 'Track fixtures and link posts to them automatically.'],
@@ -302,6 +366,7 @@ function setView(view) {
   $('#viewSubtitle').textContent = sub;
   if (view === 'calendar') renderCalendar();
   if (view === 'inbox') renderInbox();
+  if (view === 'outreach') renderOutreach();
   if (view === 'schedule') renderPostsTable();
   if (view === 'games') renderGames();
   if (view === 'assets') renderAssets();
@@ -780,11 +845,14 @@ function renderThread() {
       </div>`;
   }).join('');
 
+  const tplOptions = `<option value="">＋ Template…</option>` +
+    state.templates.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join('');
   const composer = gated
     ? `<div class="composer-gate">Facebook Messenger isn't connected.
          <button class="btn-link" data-act="go-connect">Connect it</button> to reply on this channel.</div>`
     : `<form class="composer" id="composerForm">
          <textarea name="text" rows="1" placeholder="Message ${escapeHtml(contact ? contact.name : '')} on ${escapeHtml(chan ? chan.label : conv.channel)}…" required></textarea>
+         <select id="composerTemplate" class="composer-tpl" title="Insert a template">${tplOptions}</select>
          <button class="btn btn-primary" type="submit">Send</button>
        </form>`;
 
@@ -829,6 +897,12 @@ function renderThread() {
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
     });
+    const tpl = $('#composerTemplate');
+    if (tpl) tpl.addEventListener('change', () => {
+      const t = state.templates.find((x) => x.id === tpl.value);
+      if (t) { ta.value = resolveTemplate(t.body, contact); ta.focus(); }
+      tpl.value = '';
+    });
   }
 }
 
@@ -847,11 +921,6 @@ function statusBtn(conv, value, label) {
   return `<button class="btn${active}" data-status-set="${value}">${label}</button>`;
 }
 
-function isInboxActive(conv) {
-  return inboxState.activeId === conv.id
-    && !$('.view[data-view="inbox"]').classList.contains('hidden');
-}
-
 // Append an outbound message and push it through the right channel. Messenger
 // routes through messenger.js; other channels are simulated for the prototype.
 function sendMessage(conv, text) {
@@ -866,23 +935,15 @@ function sendMessage(conv, text) {
   const composer = $('#composerForm');
   if (composer) composer.querySelector('textarea').focus();
 
-  const refresh = () => { save(); if (isInboxActive(conv)) updateMsgStatusInDom(msg); };
-  const onSent = () => {
-    msg.status = 'sent';
-    refresh();
-    setTimeout(() => { msg.status = 'delivered'; refresh(); }, 700);
-    setTimeout(() => { msg.status = 'read'; refresh(); }, 1800);
-  };
-  const onFail = (err) => {
-    msg.status = 'failed';
-    refresh();
-    console.warn('Send failed:', (err && err.message) || err);
-  };
-
   if (conv.channel === 'messenger' && window.Messenger) {
-    Messenger.send({ recipientId, text }).then(onSent).catch(onFail);
+    Messenger.send({ recipientId, text })
+      .then(() => advanceDelivery(msg))
+      .catch((err) => {
+        msg.status = 'failed'; save(); updateMsgStatusInDom(msg);
+        console.warn('Send failed:', (err && err.message) || err);
+      });
   } else {
-    setTimeout(onSent, 500); // stubbed channel
+    setTimeout(() => advanceDelivery(msg), 500); // stubbed channel
   }
 }
 
@@ -973,6 +1034,152 @@ function renderMessengerCard() {
       renderInbox();
     });
   }
+}
+
+/* ------------------------------ Outreach ----------------------------- */
+
+let broadcastState = { tag: '__all__' };
+
+function renderOutreach() {
+  const tagSel = $('#broadcastTag');
+  if (!tagSel) return;
+
+  // Audience: Everyone + each tag, with live counts.
+  const opts = [['__all__', `Everyone (${state.contacts.length})`]]
+    .concat(allTags().map((t) => [t, `#${t} (${contactsForAudience(t).length})`]));
+  tagSel.innerHTML = opts.map(([v, label]) => `<option value="${v}">${escapeHtml(label)}</option>`).join('');
+  tagSel.value = opts.some(([v]) => v === broadcastState.tag) ? broadcastState.tag : '__all__';
+  broadcastState.tag = tagSel.value;
+
+  const tplSel = $('#broadcastTemplate');
+  tplSel.innerHTML = `<option value="">— none —</option>` +
+    state.templates.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join('');
+
+  renderTemplatesList();
+  updateBroadcastPreview();
+}
+
+function updateBroadcastPreview() {
+  if (!$('#broadcastTag')) return;
+  const tag = $('#broadcastTag').value;
+  broadcastState.tag = tag;
+  const body = $('#broadcastBody').value;
+  const connected = window.Messenger ? Messenger.isConnected() : false;
+
+  const recipients = contactsForAudience(tag).map((c) => ({ contact: c, channel: preferredChannel(c) }));
+  const reachable = recipients.filter((r) => r.channel);
+  $('#broadcastCount').textContent = reachable.length;
+
+  const gatedCount = reachable.filter((r) => r.channel === 'messenger' && !connected).length;
+  const noChannel = recipients.length - reachable.length;
+  const hint = [];
+  if (gatedCount) hint.push(`${gatedCount} need Messenger connected`);
+  if (noChannel) hint.push(`${noChannel} have no channel`);
+  $('#broadcastHint').textContent = hint.length ? hint.join(' · ') : 'Each contact gets it on their best channel';
+
+  const first = reachable[0];
+  const sample = first && body.trim()
+    ? `<div class="broadcast-sample"><span class="muted" style="font-size:11px;">Preview for ${escapeHtml(first.contact.name)}</span><div>${escapeHtml(resolveTemplate(body, first.contact))}</div></div>`
+    : '';
+  const chips = reachable.map((r) => {
+    const dim = r.channel === 'messenger' && !connected ? ' style="opacity:.5;"' : '';
+    return `<span class="recipient-chip"${dim}>${escapeHtml(r.contact.name)} ${channelBadge(r.channel)}</span>`;
+  }).join('');
+  $('#broadcastPreview').innerHTML = sample +
+    (chips ? `<div class="recipient-chips">${chips}</div>` : `<div class="muted">No reachable contacts in this segment.</div>`);
+}
+
+function doBroadcast() {
+  const tag = $('#broadcastTag').value;
+  const body = $('#broadcastBody').value.trim();
+  const result = $('#broadcastResult');
+  if (!body) { result.innerHTML = `<div class="broadcast-note warn">Write a message first.</div>`; return; }
+
+  const recipients = contactsForAudience(tag)
+    .map((c) => ({ contact: c, channel: preferredChannel(c) }))
+    .filter((r) => r.channel);
+  if (!recipients.length) { result.innerHTML = `<div class="broadcast-note warn">No reachable contacts in this segment.</div>`; return; }
+
+  const connected = window.Messenger ? Messenger.isConnected() : false;
+  let sent = 0, gated = 0;
+  recipients.forEach(({ contact, channel }) => {
+    const text = resolveTemplate(body, contact);
+    const conv = findOrCreateConversation(contact.id, channel);
+    const msg = { id: uid(), dir: 'out', text, at: new Date().toISOString(), status: 'sending' };
+    conv.messages.push(msg);
+    conv.unread = false;
+    conv.status = 'open';
+    if (channel === 'messenger' && !connected) { msg.status = 'failed'; gated++; return; }
+    sent++;
+    if (channel === 'messenger' && window.Messenger) {
+      Messenger.send({ recipientId: contact.channels.messenger, text })
+        .then(() => advanceDelivery(msg))
+        .catch(() => { msg.status = 'failed'; save(); updateMsgStatusInDom(msg); });
+    } else {
+      setTimeout(() => advanceDelivery(msg), 500);
+    }
+  });
+  save();
+  renderInbox();
+  updateInboxBadge();
+  updateBroadcastPreview();
+
+  const bits = [`Sent to ${sent} contact${sent === 1 ? '' : 's'}`];
+  if (gated) bits.push(`${gated} skipped — <button class="btn-link" data-act="bc-connect">connect Messenger</button>`);
+  result.innerHTML = `<div class="broadcast-note ok">${bits.join(' · ')}</div>`;
+  const conn = result.querySelector('[data-act="bc-connect"]');
+  if (conn) conn.addEventListener('click', () => setView('accounts'));
+}
+
+function renderTemplatesList() {
+  const list = $('#templatesList');
+  if (!state.templates.length) {
+    list.innerHTML = `<div class="muted">No templates yet. Add one above.</div>`;
+    return;
+  }
+  list.innerHTML = state.templates.map((t) => `
+    <div class="template-item" data-tpl-id="${t.id}">
+      <div class="template-main">
+        <div class="template-title">${escapeHtml(t.title)}</div>
+        <div class="template-body muted">${escapeHtml(t.body)}</div>
+      </div>
+      <div class="template-actions">
+        <button class="btn-link" data-action="edit">Edit</button>
+        <button class="btn-link" data-action="delete" style="color:var(--danger);">Delete</button>
+      </div>
+    </div>`).join('');
+
+  list.querySelectorAll('.template-item').forEach((el) => {
+    const id = el.dataset.tplId;
+    el.querySelector('[data-action="edit"]').addEventListener('click', () => startEditTemplate(id));
+    el.querySelector('[data-action="delete"]').addEventListener('click', () => {
+      if (!confirm('Delete this template?')) return;
+      state.templates = state.templates.filter((t) => t.id !== id);
+      if (editingTemplateId === id) resetTemplateForm();
+      save();
+      renderOutreach();
+    });
+  });
+}
+
+function startEditTemplate(id) {
+  const t = state.templates.find((x) => x.id === id);
+  if (!t) return;
+  editingTemplateId = id;
+  const f = $('#templateForm');
+  f.elements.id.value = t.id;
+  f.elements.title.value = t.title;
+  f.elements.body.value = t.body;
+  $('#templateCancel').hidden = false;
+  f.elements.title.focus();
+}
+
+function resetTemplateForm() {
+  editingTemplateId = null;
+  const f = $('#templateForm');
+  f.reset();
+  f.elements.id.value = '';
+  $('#templateCancel').hidden = true;
 }
 
 /* ------------------------------- Modal ------------------------------- */
@@ -1138,6 +1345,36 @@ function bindEvents() {
     save(); f.reset(); renderAssets();
   });
 
+  // Outreach: broadcast controls (static elements, bound once)
+  $('#broadcastTag').addEventListener('change', updateBroadcastPreview);
+  $('#broadcastBody').addEventListener('input', updateBroadcastPreview);
+  $('#broadcastTemplate').addEventListener('change', (e) => {
+    const t = state.templates.find((x) => x.id === e.target.value);
+    // Insert the raw template — {variables} resolve per recipient at send time.
+    if (t) $('#broadcastBody').value = t.body;
+    e.target.value = '';
+    updateBroadcastPreview();
+  });
+  $('#broadcastSend').addEventListener('click', doBroadcast);
+
+  $('#templateForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const title = f.elements.title.value.trim();
+    const body = f.elements.body.value.trim();
+    if (!title || !body) return;
+    if (editingTemplateId) {
+      const t = state.templates.find((x) => x.id === editingTemplateId);
+      if (t) { t.title = title; t.body = body; }
+    } else {
+      state.templates.push({ id: uid(), title, body });
+    }
+    resetTemplateForm();
+    save();
+    renderOutreach();
+  });
+  $('#templateCancel').addEventListener('click', resetTemplateForm);
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closePostModal();
     if (e.key === 'n' && !e.metaKey && !e.ctrlKey && document.activeElement.tagName !== 'INPUT'
@@ -1162,6 +1399,7 @@ function renderAll() {
   renderSidebarAccounts();
   renderOverview();
   renderInbox();
+  renderOutreach();
   renderPostsTable();
   renderCalendar();
   renderGames();

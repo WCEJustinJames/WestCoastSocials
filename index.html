@@ -19,6 +19,7 @@
     <nav class="nav">
       <button class="nav-item active" data-view="overview">Overview</button>
       <button class="nav-item" data-view="inbox">Inbox <span class="nav-badge hidden" id="inboxNavBadge"></span></button>
+      <button class="nav-item" data-view="outreach">Outreach</button>
       <button class="nav-item" data-view="schedule">Schedule</button>
       <button class="nav-item" data-view="calendar">Calendar</button>
       <button class="nav-item" data-view="games">Games</button>
@@ -111,6 +112,54 @@
           <div id="conversationList" class="conversation-list"></div>
         </div>
         <div class="inbox-thread" id="inboxThread"></div>
+      </div>
+    </section>
+
+    <!-- OUTREACH -->
+    <section class="view hidden" data-view="outreach">
+      <div class="card">
+        <div class="card-header">
+          <h2>Send a broadcast</h2>
+          <span class="muted">Message a whole segment at once — each contact gets it on their best channel</span>
+        </div>
+        <div class="broadcast">
+          <div class="broadcast-controls">
+            <label>Audience
+              <select id="broadcastTag"></select>
+            </label>
+            <label>Insert template
+              <select id="broadcastTemplate"><option value="">— none —</option></select>
+            </label>
+          </div>
+          <label class="broadcast-msg">Message
+            <textarea id="broadcastBody" rows="4" placeholder="Write your message… variables: {first} {opponent} {date} {venue}"></textarea>
+          </label>
+          <div class="broadcast-foot">
+            <span class="muted" id="broadcastHint"></span>
+            <div class="spacer"></div>
+            <button class="btn btn-primary" id="broadcastSend">Send to <span id="broadcastCount">0</span></button>
+          </div>
+          <div id="broadcastResult"></div>
+          <div class="broadcast-preview" id="broadcastPreview"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Templates</h2>
+          <span class="muted">Reusable messages with {first} {opponent} {date} {venue}</span>
+        </div>
+        <form id="templateForm" class="template-form">
+          <input type="hidden" name="id" />
+          <input name="title" placeholder="Template title" required />
+          <textarea name="body" rows="2" placeholder="Message body — e.g. Hi {first}, are you available vs {opponent} on {date}?" required></textarea>
+          <div class="template-form-actions">
+            <button type="button" class="btn" id="templateCancel" hidden>Cancel edit</button>
+            <div class="spacer"></div>
+            <button type="submit" class="btn btn-primary">Save template</button>
+          </div>
+        </form>
+        <div id="templatesList" class="templates-list"></div>
       </div>
     </section>
 

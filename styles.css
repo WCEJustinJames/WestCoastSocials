@@ -520,6 +520,44 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .channel-id { display: flex; align-items: center; gap: 10px; }
 .channel-page { font-weight: 600; font-size: 14px; }
 
+/* Outreach: broadcast composer */
+.broadcast { display: flex; flex-direction: column; gap: 12px; }
+.broadcast-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.broadcast label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.broadcast-msg textarea { resize: vertical; }
+.broadcast-foot { display: flex; align-items: center; gap: 10px; }
+.broadcast-foot .muted { font-size: 12px; }
+.broadcast-note { font-size: 13px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border); }
+.broadcast-note.ok { background: rgba(85,214,160,.12); color: var(--success); }
+.broadcast-note.warn { background: rgba(255,184,107,.12); color: var(--warn); }
+.broadcast-sample {
+  padding: 10px 12px; border-radius: 10px; font-size: 13px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.recipient-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.recipient-chip {
+  font-size: 12px; padding: 4px 8px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  display: inline-flex; align-items: center; gap: 6px;
+}
+
+/* Outreach: templates */
+.template-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.template-form input, .template-form textarea { width: 100%; }
+.template-form textarea { resize: vertical; }
+.template-form-actions { display: flex; align-items: center; gap: 8px; }
+.templates-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.template-item {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px; display: flex; flex-direction: column; gap: 8px; justify-content: space-between;
+}
+.template-title { font-weight: 600; font-size: 13px; }
+.template-body { font-size: 12px; line-height: 1.4; }
+.template-actions { display: flex; gap: 6px; }
+
+.composer-tpl { max-width: 150px; }
+
 /* Responsive */
 @media (max-width: 960px) {
   body { grid-template-columns: 1fr; }
@@ -532,4 +570,5 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   .inbox-list { border-right: 0; border-bottom: 1px solid var(--border); max-height: 320px; }
   .thread-body { min-height: 320px; }
   .channel-form .row { grid-template-columns: 1fr; }
+  .broadcast-controls { grid-template-columns: 1fr; }
 }
