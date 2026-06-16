@@ -68,6 +68,7 @@ interface Edit {
   contact_window: string
   contact_frequency_days: string
   rapport: number
+  preferred_channel: string
 }
 const toEdit = (r: Row): Edit => ({
   player_name: r.player_name ?? '',
@@ -81,6 +82,7 @@ const toEdit = (r: Row): Edit => ({
   contact_window: r.contact_window ?? '',
   contact_frequency_days: r.contact_frequency_days != null ? String(r.contact_frequency_days) : '',
   rapport: r.rapport ?? 0,
+  preferred_channel: r.preferred_channel ?? '',
 })
 
 export function Players() {
@@ -98,6 +100,29 @@ export function Players() {
   const [showHidden, setShowHidden] = useState(false)
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
+  // Which players the user has reviewed (saved). Persisted in the browser so the
+  // marker survives reloads. Reviewed rows are highlighted and sink down the list
+  // so the ones still needing a look stay at the top.
+  const [reviewed, setReviewed] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('wce_reviewed') || '[]') as string[]) }
+    catch { return new Set<string>() }
+  })
+  function markReviewed(id: string) {
+    setReviewed((prev) => {
+      const next = new Set(prev)
+      next.add(id)
+      try { localStorage.setItem('wce_reviewed', JSON.stringify([...next])) } catch { /* ignore */ }
+      return next
+    })
+  }
+  function unmarkReviewed(id: string) {
+    setReviewed((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      try { localStorage.setItem('wce_reviewed', JSON.stringify([...next])) } catch { /* ignore */ }
+      return next
+    })
+  }
 
   async function load() {
     // Page through every player — a single select() is capped at 1000 rows by
@@ -142,17 +167,36 @@ export function Players() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return rows.filter((r) => {
+    const out = rows.filter((r) => {
       if (!showHidden && r.hidden) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
       }
-      if (q && !(r.player_name ?? '').toLowerCase().includes(q) && !(r.phone ?? '').includes(q))
-        return false
+      if (q) {
+        // Search across the fields a person would type, not just name/phone — so
+        // e.g. "fb_unreviewed", a region, or "messenger" all filter the list.
+        const hay = [
+          r.player_name, r.phone, r.region, r.activity, r.outreach_status, r.notes,
+          r.beeper_chat_id ? 'messenger thread' : '', r.phone ? 'sms mobile' : '',
+        ].filter(Boolean).join(' ').toLowerCase()
+        if (!hay.includes(q)) return false
+      }
       return true
     })
-  }, [rows, query, regionFilter, showHidden])
+    // Surface the rows still needing attention: unreviewed first, then most
+    // recently added/updated, then alphabetical. Reviewed rows sink to the bottom.
+    out.sort((a, b) => {
+      const ar = reviewed.has(a.id) ? 1 : 0
+      const br = reviewed.has(b.id) ? 1 : 0
+      if (ar !== br) return ar - br
+      const at = a.synced_at ?? ''
+      const bt = b.synced_at ?? ''
+      if (at !== bt) return at < bt ? 1 : -1
+      return (a.player_name ?? '').localeCompare(b.player_name ?? '')
+    })
+    return out
+  }, [rows, query, regionFilter, showHidden, reviewed])
 
   const selectedRows = useMemo(() => rows.filter((r) => sel.has(r.id)), [rows, sel])
 
@@ -201,11 +245,13 @@ export function Players() {
         contact_window: e.contact_window || null,
         contact_frequency_days: e.contact_frequency_days ? Number(e.contact_frequency_days) : null,
         rapport: e.rapport || null,
+        preferred_channel: e.preferred_channel || null,
       })
       .eq('id', id)
     setBusy(false)
     if (error) return setStatus(`Error: ${error.message}`)
     setStatus('Saved.')
+    markReviewed(id)
     setRows((prev) =>
       prev.map((r) =>
         r.id === id
@@ -435,10 +481,17 @@ export function Players() {
           if (!e) return null
           const stakeArr = e.stakes.split(',').map((s) => s.trim()).filter(Boolean)
           const venueArr = e.venues.split(',').map((s) => s.trim()).filter(Boolean)
+          const isReviewed = reviewed.has(r.id)
+          const hasSms = !!e.phone.trim()
+          const hasThread = !!r.beeper_chat_id
           return (
             <li
               key={r.id}
-              className={`rounded-lg border bg-white p-2 ${r.hidden ? 'border-slate-200 opacity-60' : 'border-slate-200'}`}
+              className={`rounded-lg border p-2 ${r.hidden ? 'opacity-60 ' : ''}${
+                isReviewed
+                  ? 'border-emerald-300 border-l-4 border-l-emerald-500 bg-emerald-50/60 shadow-sm'
+                  : 'border-slate-200 bg-white'
+              }`}
             >
               <div className="flex flex-wrap items-center gap-2">
                 <input
@@ -456,11 +509,41 @@ export function Players() {
                 <input
                   value={e.phone}
                   onChange={(ev) => setE(r.id, { phone: ev.target.value })}
-                  placeholder="Phone"
+                  placeholder={hasThread && !hasSms ? 'no mobile' : 'Phone'}
                   className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
                 />
-                {r.beeper_chat_id && (
-                  <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">thread</span>
+                {/* Channel(s) this player is reachable on. When they have both SMS
+                    and Messenger, the chips become a preference toggle. */}
+                {hasSms && hasThread ? (
+                  <span className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-400">reach via</span>
+                    <button
+                      type="button"
+                      title="Prefer SMS for this player"
+                      onClick={() => setE(r.id, { preferred_channel: e.preferred_channel === 'sms' ? '' : 'sms' })}
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] ${e.preferred_channel === 'sms' ? 'bg-sky-600 text-white' : 'bg-sky-100 text-sky-700'}`}
+                    >SMS</button>
+                    <button
+                      type="button"
+                      title="Prefer Messenger for this player"
+                      onClick={() => setE(r.id, { preferred_channel: e.preferred_channel === 'thread' ? '' : 'thread' })}
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] ${e.preferred_channel === 'thread' ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700'}`}
+                    >Messenger</button>
+                  </span>
+                ) : hasThread ? (
+                  <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700">Messenger</span>
+                ) : hasSms ? (
+                  <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">SMS</span>
+                ) : (
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">no contact</span>
+                )}
+                {isReviewed && (
+                  <button
+                    type="button"
+                    title="Reviewed — click to clear"
+                    onClick={() => unmarkReviewed(r.id)}
+                    className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white"
+                  >✓ reviewed</button>
                 )}
                 <label className="flex items-center gap-1 text-xs text-rose-700">
                   <input
