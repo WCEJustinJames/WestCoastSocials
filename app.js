@@ -13,6 +13,14 @@ const PLATFORMS = [
   { id: 'threads',   label: 'Threads',   handle: '@westcoastsocials' },
 ];
 
+// Channels available in the unified inbox. Messenger is the integrated channel
+// (wired through messenger.js); the others are stubbed for the prototype.
+const INBOX_CHANNELS = [
+  { id: 'messenger', label: 'Messenger',   integrated: true },
+  { id: 'instagram', label: 'Instagram' },
+  { id: 'twitter',   label: 'X / Twitter' },
+];
+
 /* ------------------------------- State ------------------------------- */
 
 const defaultState = () => {
@@ -101,7 +109,84 @@ const defaultState = () => {
 
   const accounts = PLATFORMS.map((p) => ({ ...p, enabled: true }));
 
-  return { posts, games, assets, accounts };
+  // ---- Unified inbox seed: people we do outreach with, + their conversations ----
+  const ago = (mins) => iso(new Date(now.getTime() - mins * 60000));
+
+  const contacts = [
+    { id: uid(), name: 'Maya Rodriguez', role: 'Player · Forward', hue: 330,
+      channels: { messenger: '54100000001', instagram: '@maya.rod' }, tags: ['squad', 'first-team'] },
+    { id: uid(), name: 'Jordan Lee', role: 'Player · Midfield', hue: 210,
+      channels: { messenger: '54100000002' }, tags: ['squad', 'first-team'] },
+    { id: uid(), name: 'Priya Nair', role: 'Recruit · Trialist', hue: 280,
+      channels: { messenger: '54100000003', instagram: '@priya.plays' }, tags: ['recruit'] },
+    { id: uid(), name: 'Dani Whitfield', role: 'Member · Parent', hue: 20,
+      channels: { messenger: '54100000004' }, tags: ['youth', 'member'] },
+    { id: uid(), name: 'Tom Becker', role: 'Season member', hue: 150,
+      channels: { instagram: '@tombecker' }, tags: ['member'] },
+    { id: uid(), name: 'Alex Okafor', role: 'Player · Keeper', hue: 95,
+      channels: { messenger: '54100000006', twitter: '@okafor_gk' }, tags: ['squad', 'first-team'] },
+    { id: uid(), name: 'Sofia Marchetti', role: 'Partner · Sponsor', hue: 255,
+      channels: { messenger: '54100000007' }, tags: ['sponsor'] },
+    { id: uid(), name: 'Ben Carter', role: 'Volunteer', hue: 185,
+      channels: { twitter: '@bencarter' }, tags: ['volunteer'] },
+  ];
+  const C = {};
+  contacts.forEach((c) => { C[c.name.split(' ')[0].toLowerCase()] = c.id; });
+
+  const conversations = [
+    { id: uid(), contactId: C.maya, channel: 'messenger', status: 'open', unread: true,
+      messages: [
+        { id: uid(), dir: 'in', text: 'Hey coach! Am I in the squad for Saturday vs Seattle Storm FC?', at: ago(38) },
+      ] },
+    { id: uid(), contactId: C.jordan, channel: 'messenger', status: 'open', unread: false,
+      messages: [
+        { id: uid(), dir: 'out', text: "Hi Jordan — checking availability for Saturday's home match. Good to start?", at: ago(180), status: 'read' },
+        { id: uid(), dir: 'in',  text: "Yep I'm in 👍 what time's the warmup?", at: ago(168) },
+        { id: uid(), dir: 'out', text: 'Meet at Pier 62 for 1pm, kickoff at 3.', at: ago(160), status: 'read' },
+        { id: uid(), dir: 'in',  text: 'Perfect, see you there.', at: ago(152) },
+      ] },
+    { id: uid(), contactId: C.priya, channel: 'messenger', status: 'open', unread: true,
+      messages: [
+        { id: uid(), dir: 'out', text: 'Hi Priya, thanks for your interest in trialling with West Coast! Can you make our open session next Tuesday?', at: ago(1500), status: 'read' },
+        { id: uid(), dir: 'in',  text: "Hi! Yes I'd love to. Where do I need to be and what should I bring?", at: ago(44) },
+      ] },
+    { id: uid(), contactId: C.dani, channel: 'messenger', status: 'snoozed', unread: false,
+      messages: [
+        { id: uid(), dir: 'in',  text: 'Hi, is U14 training still on this Thursday given the weather?', at: ago(620) },
+        { id: uid(), dir: 'out', text: "Hi Dani — we'll confirm by Wednesday evening, keeping an eye on the forecast. I'll message you right here.", at: ago(600), status: 'read' },
+      ] },
+    { id: uid(), contactId: C.tom, channel: 'instagram', status: 'open', unread: true,
+      messages: [
+        { id: uid(), dir: 'in', text: 'Are there still tickets for the Pier match this weekend?', at: ago(95) },
+      ] },
+    { id: uid(), contactId: C.alex, channel: 'twitter', status: 'open', unread: false,
+      messages: [
+        { id: uid(), dir: 'out', text: 'Travel for the Portland away leg: coach leaves 8:30am Sat. You on it?', at: ago(300), status: 'read' },
+        { id: uid(), dir: 'in',  text: 'On it. Gloves packed 🧤', at: ago(288) },
+      ] },
+    { id: uid(), contactId: C.sofia, channel: 'messenger', status: 'closed', unread: false,
+      messages: [
+        { id: uid(), dir: 'in',  text: 'Sharing the updated sponsor logo for the matchday graphics.', at: ago(4300) },
+        { id: uid(), dir: 'out', text: "Got it, thank you! We'll feature it on the lineup card. Appreciate the partnership 🙌", at: ago(4280), status: 'read' },
+      ] },
+    { id: uid(), contactId: C.ben, channel: 'twitter', status: 'open', unread: true,
+      messages: [
+        { id: uid(), dir: 'in', text: 'Keen to help on matchday — anything you need volunteers for?', at: ago(210) },
+      ] },
+  ];
+
+  const templates = [
+    { id: uid(), title: 'Matchday availability',
+      body: 'Hi {first}, checking your availability for our match vs {opponent} on {date}. Are you good to play?' },
+    { id: uid(), title: 'Trial invite',
+      body: "Hi {first}, we'd love to have you trial with West Coast. Can you make our next open session?" },
+    { id: uid(), title: 'Training update',
+      body: 'Hi {first}, quick one — this week\'s training details are confirmed. See you there!' },
+    { id: uid(), title: 'Thanks / welcome',
+      body: 'Thanks {first}! Great to have you with West Coast. 🙌' },
+  ];
+
+  return { posts, games, assets, accounts, contacts, conversations, templates };
 };
 
 function uid() {
@@ -117,6 +202,13 @@ function load() {
     const accountIds = new Set((parsed.accounts || []).map((a) => a.id));
     for (const p of PLATFORMS) {
       if (!accountIds.has(p.id)) parsed.accounts.push({ ...p, enabled: true });
+    }
+    // Backfill the unified inbox + outreach for states saved before they existed.
+    if (!Array.isArray(parsed.contacts) || !Array.isArray(parsed.conversations) || !Array.isArray(parsed.templates)) {
+      const seed = defaultState();
+      if (!Array.isArray(parsed.contacts)) parsed.contacts = seed.contacts;
+      if (!Array.isArray(parsed.conversations)) parsed.conversations = seed.conversations;
+      if (!Array.isArray(parsed.templates)) parsed.templates = seed.templates;
     }
     return parsed;
   } catch {
@@ -138,6 +230,92 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const platformById = (id) => PLATFORMS.find((p) => p.id === id);
 const gameById = (id) => state.games.find((g) => g.id === id);
 const assetById = (id) => state.assets.find((a) => a.id === id);
+const contactById = (id) => state.contacts.find((c) => c.id === id);
+const channelById = (id) => INBOX_CHANNELS.find((c) => c.id === id);
+
+// Inbox view state (selection + filters). Default to the Open queue.
+let inboxState = { activeId: null, channel: 'all', status: 'open' };
+
+const lastMessage = (conv) => conv.messages[conv.messages.length - 1];
+const convTime = (conv) => { const m = lastMessage(conv); return m ? m.at : new Date(0).toISOString(); };
+const unreadCount = () => state.conversations.filter((c) => c.unread && c.status !== 'closed').length;
+
+function initials(name) {
+  return String(name || '?').trim().split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase();
+}
+function relTime(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.round(diff / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return m + 'm';
+  const h = Math.round(m / 60);
+  if (h < 24) return h + 'h';
+  const d = Math.round(h / 24);
+  if (d < 7) return d + 'd';
+  return formatDate(iso);
+}
+function channelBadge(id) {
+  const c = channelById(id);
+  return c ? `<span class="c-badge c-${id}">${c.label}</span>` : '';
+}
+function msgStatusLabel(s) {
+  return s === 'read' ? 'Read'
+    : s === 'delivered' ? 'Delivered'
+    : s === 'failed' ? 'Failed'
+    : s === 'sending' ? 'Sending…'
+    : 'Sent';
+}
+
+// Outreach: templates + bulk sends.
+const CHANNEL_PREFERENCE = ['messenger', 'instagram', 'twitter'];
+let editingTemplateId = null;
+
+function nextGame() {
+  const now = Date.now();
+  return [...state.games]
+    .filter((g) => new Date(g.date).getTime() >= now)
+    .sort((a, b) => new Date(a.date) - new Date(b.date))[0] || null;
+}
+function resolveTemplate(body, contact) {
+  const g = nextGame();
+  const map = {
+    '{first}': contact ? contact.name.split(' ')[0] : '',
+    '{name}': contact ? contact.name : '',
+    '{opponent}': g ? g.opponent : '',
+    '{date}': g ? formatDateTime(g.date) : '',
+    '{venue}': g && g.venue ? g.venue : '',
+  };
+  return String(body || '').replace(/\{first\}|\{name\}|\{opponent\}|\{date\}|\{venue\}/g, (m) => map[m]);
+}
+function preferredChannel(contact) {
+  if (!contact || !contact.channels) return null;
+  return CHANNEL_PREFERENCE.find((ch) => contact.channels[ch]) || null;
+}
+function findOrCreateConversation(contactId, channel) {
+  let conv = state.conversations.find((c) => c.contactId === contactId && c.channel === channel);
+  if (!conv) {
+    conv = { id: uid(), contactId, channel, status: 'open', unread: false, messages: [] };
+    state.conversations.push(conv);
+  }
+  return conv;
+}
+function allTags() {
+  const s = new Set();
+  state.contacts.forEach((c) => (c.tags || []).forEach((t) => s.add(t)));
+  return [...s].sort();
+}
+function contactsForAudience(tag) {
+  if (tag === '__all__') return state.contacts.slice();
+  return state.contacts.filter((c) => (c.tags || []).includes(tag));
+}
+
+// Shared simulated delivery timeline: sent -> delivered -> read, persisting each
+// step and updating the bubble in place if its thread is on screen.
+function advanceDelivery(msg) {
+  msg.status = 'sent'; save(); updateMsgStatusInDom(msg);
+  setTimeout(() => { msg.status = 'delivered'; save(); updateMsgStatusInDom(msg); }, 700);
+  setTimeout(() => { msg.status = 'read'; save(); updateMsgStatusInDom(msg); }, 1800);
+}
 
 function formatDateTime(iso) {
   const d = new Date(iso);
@@ -175,6 +353,8 @@ function setView(view) {
   $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   const titles = {
     overview: ['Overview', 'Everything scheduled across your pages, in one place.'],
+    inbox: ['Unified inbox', 'Every player and member conversation, across all channels, in one place.'],
+    outreach: ['Outreach', 'Send templated messages to a player, or broadcast to a whole segment.'],
     schedule: ['Schedule queue', 'Filter, edit, and publish posts across every page.'],
     calendar: ['Calendar', 'Month view of scheduled posts and upcoming games.'],
     games: ['Games', 'Track fixtures and link posts to them automatically.'],
@@ -185,10 +365,12 @@ function setView(view) {
   $('#viewTitle').textContent = title;
   $('#viewSubtitle').textContent = sub;
   if (view === 'calendar') renderCalendar();
+  if (view === 'inbox') renderInbox();
+  if (view === 'outreach') renderOutreach();
   if (view === 'schedule') renderPostsTable();
   if (view === 'games') renderGames();
   if (view === 'assets') renderAssets();
-  if (view === 'accounts') renderAccounts();
+  if (view === 'accounts') { renderAccounts(); renderMessengerCard(); }
   if (view === 'overview') renderOverview();
 }
 
@@ -219,6 +401,7 @@ function renderOverview() {
   $('#statPublished').textContent = publishedThisMonth;
   $('#statGames').textContent = upcomingGames.length;
   $('#statAccounts').textContent = activeAccounts;
+  $('#statUnread').textContent = unreadCount();
 
   // Timeline
   const timeline = $('#upcomingTimeline');
@@ -538,6 +721,467 @@ function renderSidebarAccounts() {
     .join('');
 }
 
+/* ------------------------------- Inbox ------------------------------- */
+
+function renderInbox() {
+  renderInboxFilters();
+  renderConversationList();
+  renderThread();
+  updateInboxBadge();
+}
+
+function updateInboxBadge() {
+  const badge = $('#inboxNavBadge');
+  if (!badge) return;
+  const n = unreadCount();
+  badge.textContent = n || '';
+  badge.classList.toggle('hidden', !n);
+}
+
+function renderInboxFilters() {
+  const chanWrap = $('#inboxChannelFilter');
+  const channels = [{ id: 'all', label: 'All channels' }, ...INBOX_CHANNELS];
+  chanWrap.innerHTML = channels.map((c) => {
+    const active = inboxState.channel === c.id ? ' active' : '';
+    const dot = c.id === 'all' ? '' : `<span class="c-dot c-dot-${c.id}"></span>`;
+    return `<button class="seg-btn${active}" data-channel="${c.id}">${dot}${escapeHtml(c.label)}</button>`;
+  }).join('');
+  chanWrap.querySelectorAll('[data-channel]').forEach((b) => {
+    b.addEventListener('click', () => { inboxState.channel = b.dataset.channel; renderInbox(); });
+  });
+
+  const statusWrap = $('#inboxStatusFilter');
+  const statuses = [['open', 'Open'], ['snoozed', 'Snoozed'], ['closed', 'Closed'], ['all', 'All']];
+  statusWrap.innerHTML = statuses.map(([id, label]) => {
+    const active = inboxState.status === id ? ' active' : '';
+    return `<button class="seg-btn${active}" data-status="${id}">${label}</button>`;
+  }).join('');
+  statusWrap.querySelectorAll('[data-status]').forEach((b) => {
+    b.addEventListener('click', () => { inboxState.status = b.dataset.status; renderInbox(); });
+  });
+}
+
+function filteredConversations() {
+  const q = ($('#globalSearch').value || '').toLowerCase().trim();
+  return state.conversations
+    .filter((c) => inboxState.channel === 'all' || c.channel === inboxState.channel)
+    .filter((c) => inboxState.status === 'all' || c.status === inboxState.status)
+    .filter((c) => {
+      if (!q) return true;
+      const contact = contactById(c.contactId);
+      if (contact && contact.name.toLowerCase().includes(q)) return true;
+      return c.messages.some((m) => m.text.toLowerCase().includes(q));
+    })
+    .sort((a, b) => new Date(convTime(b)) - new Date(convTime(a)));
+}
+
+function renderConversationList() {
+  const list = $('#conversationList');
+  const convs = filteredConversations();
+  if (!convs.length) {
+    inboxState.activeId = null;
+    list.innerHTML = `<div class="muted" style="padding:18px;">No conversations match these filters.</div>`;
+    return;
+  }
+  // Keep the selection valid for the current filter set.
+  if (!convs.some((c) => c.id === inboxState.activeId)) inboxState.activeId = convs[0].id;
+
+  list.innerHTML = convs.map((c) => {
+    const contact = contactById(c.contactId);
+    const m = lastMessage(c);
+    const preview = m ? (m.dir === 'out' ? 'You: ' : '') + m.text : '';
+    const active = c.id === inboxState.activeId ? ' active' : '';
+    const unread = c.unread ? ' unread' : '';
+    return `
+      <button class="conv-row${active}${unread}" data-conv-id="${c.id}">
+        <span class="avatar" style="background:hsl(${contact ? contact.hue : 220} 50% 45%);">${initials(contact && contact.name)}</span>
+        <span class="conv-main">
+          <span class="conv-top">
+            <span class="conv-name">${escapeHtml(contact ? contact.name : 'Unknown')}</span>
+            <span class="conv-time">${relTime(convTime(c))}</span>
+          </span>
+          <span class="conv-sub">
+            ${channelBadge(c.channel)}
+            <span class="conv-preview">${escapeHtml(preview)}</span>
+          </span>
+        </span>
+        ${c.unread ? '<span class="unread-dot"></span>' : ''}
+      </button>`;
+  }).join('');
+
+  list.querySelectorAll('.conv-row').forEach((el) => {
+    el.addEventListener('click', () => openConversation(el.dataset.convId));
+  });
+}
+
+function openConversation(id) {
+  inboxState.activeId = id;
+  const conv = state.conversations.find((c) => c.id === id);
+  if (conv && conv.unread) { conv.unread = false; save(); }
+  renderInbox();
+}
+
+function renderThread() {
+  const pane = $('#inboxThread');
+  const conv = state.conversations.find((c) => c.id === inboxState.activeId);
+  if (!conv) {
+    pane.innerHTML = `<div class="thread-empty muted">Select a conversation to start the outreach.</div>`;
+    return;
+  }
+  const contact = contactById(conv.contactId);
+  const chan = channelById(conv.channel);
+  const recipientId = contact && contact.channels ? contact.channels[conv.channel] : null;
+  const isMessenger = conv.channel === 'messenger';
+  const connected = window.Messenger ? Messenger.isConnected() : false;
+  const gated = isMessenger && !connected;
+
+  const bubbles = conv.messages.map((m) => {
+    const ticks = m.dir === 'out'
+      ? `<span class="msg-status s-${m.status || 'sent'}">${msgStatusLabel(m.status)}</span>` : '';
+    return `
+      <div class="bubble ${m.dir === 'out' ? 'out' : 'in'}" data-msg-id="${m.id}">
+        <div class="bubble-text">${escapeHtml(m.text)}</div>
+        <div class="bubble-meta">${relTime(m.at)} ${ticks}</div>
+      </div>`;
+  }).join('');
+
+  const tplOptions = `<option value="">＋ Template…</option>` +
+    state.templates.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join('');
+  const composer = gated
+    ? `<div class="composer-gate">Facebook Messenger isn't connected.
+         <button class="btn-link" data-act="go-connect">Connect it</button> to reply on this channel.</div>`
+    : `<form class="composer" id="composerForm">
+         <textarea name="text" rows="1" placeholder="Message ${escapeHtml(contact ? contact.name : '')} on ${escapeHtml(chan ? chan.label : conv.channel)}…" required></textarea>
+         <select id="composerTemplate" class="composer-tpl" title="Insert a template">${tplOptions}</select>
+         <button class="btn btn-primary" type="submit">Send</button>
+       </form>`;
+
+  pane.innerHTML = `
+    <div class="thread-head">
+      <span class="avatar" style="background:hsl(${contact ? contact.hue : 220} 50% 45%);">${initials(contact && contact.name)}</span>
+      <div class="thread-who">
+        <div class="thread-name">${escapeHtml(contact ? contact.name : 'Unknown')}</div>
+        <div class="thread-sub">
+          ${channelBadge(conv.channel)}
+          <span class="muted">${escapeHtml(contact ? contact.role : '')}${recipientId ? ' · ' + escapeHtml(String(recipientId)) : ''}</span>
+        </div>
+      </div>
+      <div class="thread-actions">
+        ${statusBtn(conv, 'open', 'Open')}
+        ${statusBtn(conv, 'snoozed', 'Snooze')}
+        ${statusBtn(conv, 'closed', 'Close')}
+        <button class="btn" data-act="unread" title="Mark as unread">Mark unread</button>
+      </div>
+    </div>
+    <div class="thread-body" id="threadBody">${bubbles}</div>
+    ${composer}
+  `;
+
+  pane.querySelectorAll('[data-status-set]').forEach((b) => {
+    b.addEventListener('click', () => { conv.status = b.dataset.statusSet; save(); renderInbox(); });
+  });
+  const unreadBtn = pane.querySelector('[data-act="unread"]');
+  if (unreadBtn) unreadBtn.addEventListener('click', () => { conv.unread = true; save(); renderInbox(); });
+  const goConnect = pane.querySelector('[data-act="go-connect"]');
+  if (goConnect) goConnect.addEventListener('click', () => setView('accounts'));
+
+  const body = $('#threadBody');
+  if (body) body.scrollTop = body.scrollHeight;
+
+  const form = $('#composerForm');
+  if (form) {
+    const ta = form.querySelector('textarea');
+    const submit = () => { const text = ta.value.trim(); if (text) sendMessage(conv, text); };
+    form.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
+    // Enter sends, Shift+Enter inserts a newline (chat convention).
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+    const tpl = $('#composerTemplate');
+    if (tpl) tpl.addEventListener('change', () => {
+      const t = state.templates.find((x) => x.id === tpl.value);
+      if (t) { ta.value = resolveTemplate(t.body, contact); ta.focus(); }
+      tpl.value = '';
+    });
+  }
+}
+
+// Update just one message's delivery status in place, so status ticks don't
+// rebuild the thread (which would wipe a half-typed reply or steal focus).
+function updateMsgStatusInDom(msg) {
+  const el = document.querySelector(`.bubble[data-msg-id="${msg.id}"] .msg-status`);
+  if (el) {
+    el.textContent = msgStatusLabel(msg.status);
+    el.className = `msg-status s-${msg.status || 'sent'}`;
+  }
+}
+
+function statusBtn(conv, value, label) {
+  const active = conv.status === value ? ' btn-active' : '';
+  return `<button class="btn${active}" data-status-set="${value}">${label}</button>`;
+}
+
+// Append an outbound message and push it through the right channel. Messenger
+// routes through messenger.js; other channels are simulated for the prototype.
+function sendMessage(conv, text) {
+  const contact = contactById(conv.contactId);
+  const recipientId = contact && contact.channels ? contact.channels[conv.channel] : null;
+  const msg = { id: uid(), dir: 'out', text, at: new Date().toISOString(), status: 'sending' };
+  conv.messages.push(msg);
+  conv.unread = false;
+  if (conv.status === 'closed') conv.status = 'open';
+  save();
+  renderInbox();
+  const composer = $('#composerForm');
+  if (composer) composer.querySelector('textarea').focus();
+
+  if (conv.channel === 'messenger' && window.Messenger) {
+    Messenger.send({ recipientId, text })
+      .then(() => advanceDelivery(msg))
+      .catch((err) => {
+        msg.status = 'failed'; save(); updateMsgStatusInDom(msg);
+        console.warn('Send failed:', (err && err.message) || err);
+      });
+  } else {
+    setTimeout(() => advanceDelivery(msg), 500); // stubbed channel
+  }
+}
+
+/* ------------------------- Messaging channels ------------------------ */
+
+function renderMessengerCard() {
+  const wrap = $('#messengerCard');
+  if (!wrap || !window.Messenger) return;
+  const cfg = Messenger.getConfig();
+
+  if (cfg.connected) {
+    wrap.innerHTML = `
+      <div class="channel-connected">
+        <div class="channel-id">
+          <span class="c-badge c-messenger">Messenger</span>
+          <div>
+            <div class="channel-page">${escapeHtml(cfg.pageName || 'Facebook Page')}</div>
+            <div class="muted" style="font-size:12px;">
+              Page ID ${escapeHtml(cfg.pageId)} · ${cfg.live ? 'LIVE (Graph API)' : 'Simulated'}
+              ${cfg.connectedAt ? ' · connected ' + escapeHtml(formatDateTime(cfg.connectedAt)) : ''}
+            </div>
+          </div>
+        </div>
+        <div class="spacer"></div>
+        <span class="status-chip status-published">Connected</span>
+        <button class="btn" id="messengerDisconnect">Disconnect</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0;">
+        Replies to Messenger conversations use the Graph Send API request shape. Simulated mode keeps
+        everything in this browser; switch to live by supplying a real Page access token.
+      </p>`;
+    $('#messengerDisconnect').addEventListener('click', () => {
+      if (!confirm("Disconnect Facebook Messenger? Conversations stay, but you won't be able to reply on this channel.")) return;
+      Messenger.disconnect();
+      renderMessengerCard();
+      renderInbox();
+    });
+  } else {
+    wrap.innerHTML = `
+      <form id="messengerConnectForm" class="channel-form">
+        <div class="row">
+          <label>Facebook Page name
+            <input name="pageName" placeholder="West Coast FC" />
+          </label>
+          <label>Page ID
+            <input name="pageId" placeholder="1029384756" required />
+          </label>
+        </div>
+        <label>Page access token
+          <input name="accessToken" type="password" placeholder="EAAB… (stored in this browser only)" required />
+        </label>
+        <div class="row">
+          <label>Webhook verify token
+            <input name="verifyToken" placeholder="optional — for your server webhook" />
+          </label>
+          <label class="check" style="align-self:end;">
+            <input type="checkbox" name="live" /> Send live via Graph API
+          </label>
+        </div>
+        <div class="channel-form-actions">
+          <button type="button" class="btn" id="messengerDemo">Use demo connection</button>
+          <div class="spacer"></div>
+          <button type="submit" class="btn btn-primary">Connect Messenger</button>
+        </div>
+      </form>`;
+    $('#messengerConnectForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = e.target;
+      Messenger.connect({
+        pageName: f.pageName.value.trim(),
+        pageId: f.pageId.value.trim(),
+        accessToken: f.accessToken.value.trim(),
+        verifyToken: f.verifyToken.value.trim(),
+        live: f.live.checked,
+      });
+      renderMessengerCard();
+      renderInbox();
+    });
+    $('#messengerDemo').addEventListener('click', () => {
+      Messenger.connect({
+        pageName: 'West Coast FC',
+        pageId: '102938475610',
+        accessToken: 'DEMO_TOKEN_local_only',
+        verifyToken: 'wcs_verify',
+        live: false,
+      });
+      renderMessengerCard();
+      renderInbox();
+    });
+  }
+}
+
+/* ------------------------------ Outreach ----------------------------- */
+
+let broadcastState = { tag: '__all__' };
+
+function renderOutreach() {
+  const tagSel = $('#broadcastTag');
+  if (!tagSel) return;
+
+  // Audience: Everyone + each tag, with live counts.
+  const opts = [['__all__', `Everyone (${state.contacts.length})`]]
+    .concat(allTags().map((t) => [t, `#${t} (${contactsForAudience(t).length})`]));
+  tagSel.innerHTML = opts.map(([v, label]) => `<option value="${v}">${escapeHtml(label)}</option>`).join('');
+  tagSel.value = opts.some(([v]) => v === broadcastState.tag) ? broadcastState.tag : '__all__';
+  broadcastState.tag = tagSel.value;
+
+  const tplSel = $('#broadcastTemplate');
+  tplSel.innerHTML = `<option value="">— none —</option>` +
+    state.templates.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join('');
+
+  renderTemplatesList();
+  updateBroadcastPreview();
+}
+
+function updateBroadcastPreview() {
+  if (!$('#broadcastTag')) return;
+  const tag = $('#broadcastTag').value;
+  broadcastState.tag = tag;
+  const body = $('#broadcastBody').value;
+  const connected = window.Messenger ? Messenger.isConnected() : false;
+
+  const recipients = contactsForAudience(tag).map((c) => ({ contact: c, channel: preferredChannel(c) }));
+  const reachable = recipients.filter((r) => r.channel);
+  $('#broadcastCount').textContent = reachable.length;
+
+  const gatedCount = reachable.filter((r) => r.channel === 'messenger' && !connected).length;
+  const noChannel = recipients.length - reachable.length;
+  const hint = [];
+  if (gatedCount) hint.push(`${gatedCount} need Messenger connected`);
+  if (noChannel) hint.push(`${noChannel} have no channel`);
+  $('#broadcastHint').textContent = hint.length ? hint.join(' · ') : 'Each contact gets it on their best channel';
+
+  const first = reachable[0];
+  const sample = first && body.trim()
+    ? `<div class="broadcast-sample"><span class="muted" style="font-size:11px;">Preview for ${escapeHtml(first.contact.name)}</span><div>${escapeHtml(resolveTemplate(body, first.contact))}</div></div>`
+    : '';
+  const chips = reachable.map((r) => {
+    const dim = r.channel === 'messenger' && !connected ? ' style="opacity:.5;"' : '';
+    return `<span class="recipient-chip"${dim}>${escapeHtml(r.contact.name)} ${channelBadge(r.channel)}</span>`;
+  }).join('');
+  $('#broadcastPreview').innerHTML = sample +
+    (chips ? `<div class="recipient-chips">${chips}</div>` : `<div class="muted">No reachable contacts in this segment.</div>`);
+}
+
+function doBroadcast() {
+  const tag = $('#broadcastTag').value;
+  const body = $('#broadcastBody').value.trim();
+  const result = $('#broadcastResult');
+  if (!body) { result.innerHTML = `<div class="broadcast-note warn">Write a message first.</div>`; return; }
+
+  const recipients = contactsForAudience(tag)
+    .map((c) => ({ contact: c, channel: preferredChannel(c) }))
+    .filter((r) => r.channel);
+  if (!recipients.length) { result.innerHTML = `<div class="broadcast-note warn">No reachable contacts in this segment.</div>`; return; }
+
+  const connected = window.Messenger ? Messenger.isConnected() : false;
+  let sent = 0, gated = 0;
+  recipients.forEach(({ contact, channel }) => {
+    const text = resolveTemplate(body, contact);
+    const conv = findOrCreateConversation(contact.id, channel);
+    const msg = { id: uid(), dir: 'out', text, at: new Date().toISOString(), status: 'sending' };
+    conv.messages.push(msg);
+    conv.unread = false;
+    conv.status = 'open';
+    if (channel === 'messenger' && !connected) { msg.status = 'failed'; gated++; return; }
+    sent++;
+    if (channel === 'messenger' && window.Messenger) {
+      Messenger.send({ recipientId: contact.channels.messenger, text })
+        .then(() => advanceDelivery(msg))
+        .catch(() => { msg.status = 'failed'; save(); updateMsgStatusInDom(msg); });
+    } else {
+      setTimeout(() => advanceDelivery(msg), 500);
+    }
+  });
+  save();
+  renderInbox();
+  updateInboxBadge();
+  updateBroadcastPreview();
+
+  const bits = [`Sent to ${sent} contact${sent === 1 ? '' : 's'}`];
+  if (gated) bits.push(`${gated} skipped — <button class="btn-link" data-act="bc-connect">connect Messenger</button>`);
+  result.innerHTML = `<div class="broadcast-note ok">${bits.join(' · ')}</div>`;
+  const conn = result.querySelector('[data-act="bc-connect"]');
+  if (conn) conn.addEventListener('click', () => setView('accounts'));
+}
+
+function renderTemplatesList() {
+  const list = $('#templatesList');
+  if (!state.templates.length) {
+    list.innerHTML = `<div class="muted">No templates yet. Add one above.</div>`;
+    return;
+  }
+  list.innerHTML = state.templates.map((t) => `
+    <div class="template-item" data-tpl-id="${t.id}">
+      <div class="template-main">
+        <div class="template-title">${escapeHtml(t.title)}</div>
+        <div class="template-body muted">${escapeHtml(t.body)}</div>
+      </div>
+      <div class="template-actions">
+        <button class="btn-link" data-action="edit">Edit</button>
+        <button class="btn-link" data-action="delete" style="color:var(--danger);">Delete</button>
+      </div>
+    </div>`).join('');
+
+  list.querySelectorAll('.template-item').forEach((el) => {
+    const id = el.dataset.tplId;
+    el.querySelector('[data-action="edit"]').addEventListener('click', () => startEditTemplate(id));
+    el.querySelector('[data-action="delete"]').addEventListener('click', () => {
+      if (!confirm('Delete this template?')) return;
+      state.templates = state.templates.filter((t) => t.id !== id);
+      if (editingTemplateId === id) resetTemplateForm();
+      save();
+      renderOutreach();
+    });
+  });
+}
+
+function startEditTemplate(id) {
+  const t = state.templates.find((x) => x.id === id);
+  if (!t) return;
+  editingTemplateId = id;
+  const f = $('#templateForm');
+  f.elements.id.value = t.id;
+  f.elements.title.value = t.title;
+  f.elements.body.value = t.body;
+  $('#templateCancel').hidden = false;
+  f.elements.title.focus();
+}
+
+function resetTemplateForm() {
+  editingTemplateId = null;
+  const f = $('#templateForm');
+  f.reset();
+  f.elements.id.value = '';
+  $('#templateCancel').hidden = true;
+}
+
 /* ------------------------------- Modal ------------------------------- */
 
 function openPostModal(id, seed = {}) {
@@ -655,6 +1299,7 @@ function bindEvents() {
   });
   $('#globalSearch').addEventListener('input', () => {
     if (!$('.view[data-view="schedule"]').classList.contains('hidden')) renderPostsTable();
+    if (!$('.view[data-view="inbox"]').classList.contains('hidden')) renderInbox();
   });
 
   $('#calPrev').addEventListener('click', () => {
@@ -700,6 +1345,36 @@ function bindEvents() {
     save(); f.reset(); renderAssets();
   });
 
+  // Outreach: broadcast controls (static elements, bound once)
+  $('#broadcastTag').addEventListener('change', updateBroadcastPreview);
+  $('#broadcastBody').addEventListener('input', updateBroadcastPreview);
+  $('#broadcastTemplate').addEventListener('change', (e) => {
+    const t = state.templates.find((x) => x.id === e.target.value);
+    // Insert the raw template — {variables} resolve per recipient at send time.
+    if (t) $('#broadcastBody').value = t.body;
+    e.target.value = '';
+    updateBroadcastPreview();
+  });
+  $('#broadcastSend').addEventListener('click', doBroadcast);
+
+  $('#templateForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const title = f.elements.title.value.trim();
+    const body = f.elements.body.value.trim();
+    if (!title || !body) return;
+    if (editingTemplateId) {
+      const t = state.templates.find((x) => x.id === editingTemplateId);
+      if (t) { t.title = title; t.body = body; }
+    } else {
+      state.templates.push({ id: uid(), title, body });
+    }
+    resetTemplateForm();
+    save();
+    renderOutreach();
+  });
+  $('#templateCancel').addEventListener('click', resetTemplateForm);
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closePostModal();
     if (e.key === 'n' && !e.metaKey && !e.ctrlKey && document.activeElement.tagName !== 'INPUT'
@@ -723,11 +1398,14 @@ function escapeAttr(s) { return escapeHtml(s).replaceAll('`', '&#96;'); }
 function renderAll() {
   renderSidebarAccounts();
   renderOverview();
+  renderInbox();
+  renderOutreach();
   renderPostsTable();
   renderCalendar();
   renderGames();
   renderAssets();
   renderAccounts();
+  renderMessengerCard();
 }
 
 bindEvents();
