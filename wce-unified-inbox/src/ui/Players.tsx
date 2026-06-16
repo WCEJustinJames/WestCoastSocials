@@ -16,7 +16,7 @@ const filledCount = (r: Row): number =>
 
 // Canonical dropdown vocabularies. Edit these lists to taste — existing
 // non-standard values on a player are preserved and shown as the selection.
-const REGIONS = ['North', 'South', 'Central', 'Both']
+const REGIONS = ['North', 'South', 'Central', 'All']
 const VENUES = [
   'MCT', 'Woodvale', 'Bentley', 'Kenwick', 'Kingsley',
   'Leederville', 'Adriatic', 'Stirling', 'Planet Royale',
