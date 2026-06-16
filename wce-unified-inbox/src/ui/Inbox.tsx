@@ -166,6 +166,23 @@ export function Inbox() {
     if (val && activeId === id) setActiveId(null)
   }
 
+  // Clear the unread flag on a thread (and its messages). New inbound will
+  // re-flag it on the next sync, so this only dismisses what's been seen.
+  async function markRead(id: string) {
+    await supabase.from('inbox_conversations').update({ unread_count: 0 }).eq('id', id)
+    await supabase.from('inbox_messages').update({ is_unread: false })
+      .eq('conversation_id', id).eq('is_unread', true)
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, unread_count: 0 } : c)))
+  }
+
+  // Dismiss a thread whose enquiry has gone stale: mark it read and archive it
+  // out of the inbox (recoverable via "show dismissed"). Distinct from a hard
+  // block in intent, same underlying hidden flag.
+  async function dismiss(id: string) {
+    await markRead(id)
+    await setBlocked(id, true)
+  }
+
   const active = conversations.find((c) => c.id === activeId) ?? null
 
   async function sendReply() {
@@ -256,7 +273,7 @@ export function Inbox() {
               onChange={(e) => setShowBlocked(e.target.checked)}
               className="accent-emerald-600"
             />
-            Show blocked
+            Show dismissed
           </label>
         </div>
 
@@ -273,7 +290,7 @@ export function Inbox() {
               } ${c.hidden ? 'opacity-60' : ''}`}
             >
               <button
-                onClick={() => setActiveId(c.id)}
+                onClick={() => { setActiveId(c.id); if (c.unread_count > 0) void markRead(c.id) }}
                 className="block flex-1 px-4 py-3 text-left"
               >
                 <div className="flex items-center justify-between gap-2">
@@ -286,13 +303,30 @@ export function Inbox() {
                   <span className="text-xs text-emerald-600">{c.unread_count} unread</span>
                 )}
               </button>
-              <button
-                onClick={() => void setBlocked(c.id, !c.hidden)}
-                title={c.hidden ? 'Unblock' : 'Block / hide sender'}
-                className="px-2 py-3 text-[10px] text-slate-300 hover:text-rose-600"
-              >
-                {c.hidden ? 'unblock' : 'block'}
-              </button>
+              <div className="flex flex-col items-end gap-0.5 py-2 pr-1">
+                {c.hidden ? (
+                  <button
+                    onClick={() => void setBlocked(c.id, false)}
+                    title="Restore to inbox"
+                    className="px-1 text-[10px] text-slate-300 hover:text-emerald-600"
+                  >restore</button>
+                ) : (
+                  <>
+                    {c.unread_count > 0 && (
+                      <button
+                        onClick={() => void markRead(c.id)}
+                        title="Mark as read"
+                        className="px-1 text-[10px] text-slate-300 hover:text-emerald-600"
+                      >read</button>
+                    )}
+                    <button
+                      onClick={() => void dismiss(c.id)}
+                      title="Dismiss — archive this thread out of the inbox"
+                      className="px-1 text-[10px] text-slate-300 hover:text-rose-600"
+                    >dismiss</button>
+                  </>
+                )}
+              </div>
             </div>
           ))}
         </div>
