@@ -42,7 +42,12 @@ export function mergeRows(
     player_name: firstNonEmpty(ordered.map((r) => r.player_name)),
     first_name: firstNonEmpty(ordered.map((r) => r.first_name)),
     last_name: firstNonEmpty(ordered.map((r) => r.last_name)),
-    phone: firstNonEmpty(ordered.map((r) => r.phone)),
+    // Phone MUST come from the contacts upload (gcsv:) when the person has one
+    // there — that's the number saved in Justin's phone. Only fall back to other
+    // sources (receipts, TD sheets, Airtable) when there's no contacts number.
+    phone:
+      firstNonEmpty(ordered.filter((r) => r.airtable_id.startsWith('gcsv:')).map((r) => r.phone)) ??
+      firstNonEmpty(ordered.map((r) => r.phone)),
     email: firstNonEmpty(ordered.map((r) => r.email)),
     beeper_chat_id: firstNonEmpty(ordered.map((r) => r.beeper_chat_id)),
     region: firstNonEmpty(ordered.map((r) => r.region)),
