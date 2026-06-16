@@ -411,6 +411,7 @@ export type Database = {
           last_name: string | null
           notes: string | null
           outreach_status: string | null
+          preferred_channel: string | null
           contact_day: string | null
           contact_window: string | null
           contact_frequency_days: number | null
@@ -438,6 +439,7 @@ export type Database = {
           last_name?: string | null
           notes?: string | null
           outreach_status?: string | null
+          preferred_channel?: string | null
           contact_day?: string | null
           contact_window?: string | null
           contact_frequency_days?: number | null
@@ -465,6 +467,7 @@ export type Database = {
           last_name?: string | null
           notes?: string | null
           outreach_status?: string | null
+          preferred_channel?: string | null
           contact_day?: string | null
           contact_window?: string | null
           contact_frequency_days?: number | null
