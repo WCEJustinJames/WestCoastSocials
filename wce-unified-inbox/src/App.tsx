@@ -3,8 +3,9 @@ import { Inbox } from './ui/Inbox'
 import { Batches } from './ui/Batches'
 import { Receipts } from './ui/Receipts'
 import { Players } from './ui/Players'
+import { MergeReview } from './ui/MergeReview'
 
-type View = 'inbox' | 'batches' | 'receipts' | 'players'
+type View = 'inbox' | 'batches' | 'receipts' | 'players' | 'merge'
 
 export default function App() {
   const [view, setView] = useState<View>('inbox')
@@ -24,6 +25,9 @@ export default function App() {
         <TabButton active={view === 'players'} onClick={() => setView('players')}>
           Players
         </TabButton>
+        <TabButton active={view === 'merge'} onClick={() => setView('merge')}>
+          Merge &amp; Review
+        </TabButton>
       </nav>
       <div className="min-h-0 flex-1">
         {view === 'inbox' ? (
@@ -32,8 +36,10 @@ export default function App() {
           <Batches />
         ) : view === 'receipts' ? (
           <Receipts />
-        ) : (
+        ) : view === 'players' ? (
           <Players />
+        ) : (
+          <MergeReview />
         )}
       </div>
     </div>
