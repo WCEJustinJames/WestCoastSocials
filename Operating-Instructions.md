@@ -12,7 +12,7 @@ list runs, then babysit it.
 - Project: `C:\Users\justi\WestCoastSocials\wce-unified-inbox` (anchor file: `run-wce.bat`)
 - Git branch: `claude/laughing-ritchie-Xmvvk` (run-wce.bat auto-pulls it)
 - Backend = `npm run sync` (`tsx src/sync/run.ts`), kept alive by `run-wce.bat`
-- UI = `npm run dev` → `localhost:5173`
+- UI = double-click `run-ui.bat` (pulls latest, then `npm run dev` → `localhost:5173`)
 - **Beeper Desktop must be running** (local API) for any send/receive
 - Data lives in Supabase (UI reads; the sync writes)
 
@@ -21,7 +21,11 @@ list runs, then babysit it.
    `run-wce.bat`. Leave it open. **Success** = log shows `[drafts] AI drafting on`,
    `[outreach] Airtable CRM sync on`, `[reply] auto-reply on`, and within ~20s
    `[reply] group "CASH GAMES West Coast Poker" -> ...` plus `[mirror] ...` lines.
-2. (Optional) **UI**: in the folder, address-bar → `powershell` → `npm run dev` → open `localhost:5173`.
+2. (Optional) **UI**: double-click `run-ui.bat` (it pulls the latest code first, so
+   new checkboxes/tabs/filters always show), then open `localhost:5173`. If the UI was
+   already open, hard-refresh after it restarts. Note: `run-wce.bat` only pulls when the
+   sync restarts, so use `run-ui.bat` (or pull manually) to get UI updates without
+   bouncing the sync.
 3. (Optional) **Permanence**: `powershell -ExecutionPolicy Bypass -File .\install-autostart.ps1` (admin).
 4. Tell Justin when the green lines show.
 
