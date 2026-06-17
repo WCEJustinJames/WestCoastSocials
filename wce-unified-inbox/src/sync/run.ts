@@ -22,7 +22,7 @@ import { postSeatList } from './roster'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'seat-list'
+const SYNC_VERSION = 'replies-allhours'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -111,9 +111,11 @@ async function runOnce(): Promise<void> {
   // hours). Everything that sends runs before the mirror.
 
   // Hard quiet hours: between QUIET_START and QUIET_END (default 21:00-09:00)
-  // every send rail is held — approved drafts, batches, auto-replies, digests,
-  // group posts. Nothing is exempt, per Justin. The inbound mirror and AI
-  // drafting below still run, so the queue flushes the moment quiet hours end.
+  // proactive OUTREACH is held — approved drafts and batches. EXEMPT, per Justin:
+  // the auto-reply path and the live seat-list, so a player who replies is always
+  // answered (even a "no", even at night) and the roster stays current through a
+  // late game. The inbound mirror and AI drafting below also run, so anything held
+  // flushes the moment quiet hours end.
   const quiet = inQuietHours()
   if (quiet !== wasQuiet) {
     console.log(
@@ -175,7 +177,12 @@ async function runOnce(): Promise<void> {
   }
 
   // Auto-reply: thank/acknowledge inbound replies and text Justin who confirmed.
-  if (!quiet && anthropic && env.autoReply) {
+  // NOT gated by quiet hours, per Justin: if a player takes the time to get back
+  // to us we answer them whatever the hour. This path is purely reactive (only
+  // responds to people who just messaged, never proactively outreaches), so it's
+  // safe to run any time. The 4:30pm cutoff never applied here either — it only
+  // gates outreach batches above.
+  if (anthropic && env.autoReply) {
     // Resolve the cash-games group once (so confirmations can be posted there).
     if (env.notifyGroupName && !notifyGroupChatId) {
       try {

@@ -49,10 +49,11 @@ export const env = {
     const [h, m] = (process.env.OUTREACH_CUTOFF ?? '16:30').split(':').map(Number)
     return (h || 0) * 60 + (m || 0)
   })(),
-  // Hard quiet hours (local time): NO outbound of ANY kind between QUIET_START
-  // and QUIET_END — no batches, no approved drafts, no auto-replies, no digests,
-  // no group posts. Unlike the outreach window, nothing is exempt. Everything
-  // queued simply holds and flushes once the quiet window ends.
+  // Hard quiet hours (local time): proactive OUTREACH is held between QUIET_START
+  // and QUIET_END — no outreach batches, no approved drafts. EXEMPT, per Justin:
+  // replies to players (the auto-reply path) and the live seat-list, which stay
+  // open all hours so anyone who replies is answered. Held items flush once the
+  // quiet window ends.
   quietStartMins: (() => {
     const [h, m] = (process.env.QUIET_START ?? '21:00').split(':').map(Number)
     return (h || 0) * 60 + (m || 0)
