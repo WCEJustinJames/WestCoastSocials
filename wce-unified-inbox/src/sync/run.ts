@@ -21,7 +21,7 @@ import { processReplies } from './notify'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'quiet-hours-voice'
+const SYNC_VERSION = 'pass-watchdog'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -218,17 +218,38 @@ async function runOnce(): Promise<void> {
   }
 }
 
+// Hard ceiling on a single pass. A wedged Beeper/Supabase call (e.g. a dropped
+// HTTP/2 session, or a huge first-run mirror backlog) must never stall the loop:
+// if a pass exceeds this, we log and schedule the next one anyway. Approved
+// sends run first and are claimed atomically, so a slow pass overlapping the
+// next can't double-send. Comfortably above a healthy pass (~20 sends x 1.5s
+// plus the mirror).
+const PASS_TIMEOUT_MS = 120_000
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let t: NodeJS.Timeout
+  const timeout = new Promise<never>((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} exceeded ${ms}ms`)), ms)
+  })
+  return Promise.race([p, timeout]).finally(() => clearTimeout(t)) as Promise<T>
+}
+
 async function main(): Promise<void> {
-  const once = process.argv.includes('--once')
-  // Don't let a transient first-pass error (e.g. a dropped Supabase HTTP/2
-  // session) kill the whole process — log it and keep looping; the next pass
-  // retries. Approved sends are never lost, they just go on a later pass.
-  await runOnce().catch((err) => console.error('[mirror] error:', err instanceof Error ? err.message : err))
-  if (once) return
+  if (process.argv.includes('--once')) {
+    await runOnce().catch((e) => console.error('[pass] error:', e instanceof Error ? e.message : e))
+    return
+  }
   console.log(`[mirror] polling every ${env.syncIntervalMs}ms — Ctrl+C to stop`)
-  setInterval(() => {
-    runOnce().catch((err) => console.error('[mirror] error:', err instanceof Error ? err.message : err))
-  }, env.syncIntervalMs)
+  // Self-scheduling loop. The NEXT pass is always scheduled in `finally`, even
+  // if this one throws or times out — so the loop can never get stuck the way a
+  // blocking first-pass await (which never reaches the interval setup) or a
+  // frozen pass could. This is the fix for "sent 20 then froze forever".
+  const tick = (): void => {
+    withTimeout(runOnce(), PASS_TIMEOUT_MS, 'pass')
+      .catch((e) => console.error('[pass] error/timeout:', e instanceof Error ? e.message : e))
+      .finally(() => setTimeout(tick, env.syncIntervalMs))
+  }
+  tick()
 }
 
 main().catch((err) => {
