@@ -21,7 +21,7 @@ import { processReplies } from './notify'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'pass-watchdog'
+const SYNC_VERSION = 'group-resolve'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -49,6 +49,8 @@ const adapter = new BeeperAdapter(beeperClient)
 
 // Resolved lazily (group chat id for posting confirmations), cached once found.
 let notifyGroupChatId: string | null = null
+// One resolve attempt per process for the standalone (non-AI) group lookup.
+let groupResolveTried = false
 
 // LetsPoker App Chats — opt-in, only mirrors once LETSPOKER_TOKEN is set.
 const letspoker = new LetsPokerAdapter(
@@ -119,6 +121,30 @@ async function runOnce(): Promise<void> {
         : '[quiet] quiet hours over, outbound sends resume',
     )
     wasQuiet = quiet
+  }
+
+  // Resolve + store the Cash Games group chat id once per process, independent
+  // of the AI auto-reply layer, so seat-list rosters can be posted to it from
+  // the cloud (a batch item with channel='thread' targeting this chat). This is
+  // a lookup + DB write, not a player send, so quiet hours don't apply.
+  if (env.notifyGroupName && !notifyGroupChatId && !groupResolveTried) {
+    groupResolveTried = true
+    try {
+      notifyGroupChatId = await beeperClient.resolveGroupChatId(env.notifyGroupName)
+      if (notifyGroupChatId) {
+        console.log(`[group] "${env.notifyGroupName}" -> ${notifyGroupChatId}`)
+        await (supabaseAdmin as unknown as {
+          from: (t: string) => { upsert: (v: unknown) => Promise<{ error?: { message?: string } | null }> }
+        })
+          .from('inbox_group_post')
+          .upsert({ id: 1, chat_id: notifyGroupChatId })
+          .then((r) => { if (r?.error) console.error('[group] store failed:', r.error.message ?? r.error) })
+      } else {
+        console.warn(`[group] "${env.notifyGroupName}" not found — bump it in Beeper so it shows in recent group chats, then restart`)
+      }
+    } catch (e) {
+      console.error('[group] resolve error:', e instanceof Error ? e.message : e)
+    }
   }
 
   // Phase A: send any drafts the human approved in the UI.
