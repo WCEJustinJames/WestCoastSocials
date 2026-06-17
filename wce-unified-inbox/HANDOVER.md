@@ -2,7 +2,7 @@
 
 **How to use this:** start a FRESH chat and say *"Read wce-unified-inbox/HANDOVER.md and continue."* This doc is the source of truth; previous chats got too long to be fast.
 
-_Last updated: 2026-06-17 (Wed) evening Perth._
+_Last updated: 2026-06-17 (Wed) night Perth — root-caused the `reply_intent` outage (dead Anthropic key, down since 11 Jun) and added fail-loud AI alerting._
 
 ---
 
@@ -69,8 +69,10 @@ Insert an approved batch the PC will drain:
 - **Needs Justin's personal reply**: **Jun Liu** (wants arrival time — a yes if answered), **Harry Singh** (asking if Tuesday games are self-dealt now — this is the table-change-rules topic).
 - **Lead**: Ciaran Paxman wants **Woodvale tomorrow**.
 
-## ⚠️ OPEN ISSUE to investigate first
-- **`reply_intent` is coming back NULL across recent inbound** — the auto-classifier's tags aren't sticking, so the group seat-list isn't auto-updating reliably (had to read raw replies to build the confirmed list). Likely the mirror re-inserting message rows (resetting `auto_handled`/`reply_intent`), or the classifier silently erroring. The `replies-allhours` restart may have helped — **verify next session**: check `inbox_messages.reply_intent` is being set on new inbound, and that the seat-list group post updates. If not, inspect `processReplies` + `mirrorInbound` dedup.
+## ⚠️ ROOT-CAUSED 2026-06-17 — Anthropic AI layer was DOWN (operator action still needed)
+- **The `reply_intent`-NULL problem was a symptom, not the bug.** Every Anthropic call has been failing since the night of **11 Jun** (last good classify 11 Jun 21:55 Perth; last AI draft 11 Jun 21:58). Auto-reply (`processReplies`) and AI drafting (`generateDrafts`) share one dependency — the **Anthropic API key + model** — so they died together. `processReplies` bails in its `catch` *before* stamping anything, and 1:1 SMS replies have no system-noise rows to stamp, so nothing got `reply_intent`/`auto_handled` and ~1800 inbound piled up. The mirror is **not** the cause: `mirror.ts` upserts with `ignoreDuplicates`, so it never resets existing rows. The `replies-allhours` restart did NOT help (0/170 classified after it).
+- **FIX (operator, on WESTCOAST1):** renew `ANTHROPIC_API_KEY` (make sure it's funded) in `wce-unified-inbox\.env`; confirm `ANTHROPIC_MODEL` is unset or `claude-opus-4-8` (a retired model 404s the same way); then restart `run-wce.bat`. Confirm cause first with `npm run sync:once` — watch for `[reply]/[drafts] classify error:` with a 401/credit message. Once fixed, auto-reply self-heals from the last 16h (LOOKBACK) and the seat-list rebuilds itself.
+- **Now guarded (SYNC_VERSION `ai-failloud`):** the sync texts Justin (`+61459686980`) the moment the AI calls hard-fail (bad key / no credits / unknown model = HTTP 400/401/402/403/404 → alert on the first failing pass; transient 429/5xx → only after ~1 min sustained), re-nudges every 6h while down, and texts once on recovery — so it can't go silently dark for days again. Code: `src/sync/alert.ts`, wired in `run.ts` (`trackAiHealth`). The alert rides the Beeper SMS path (no Anthropic dependency) and is exempt from quiet hours. Confirm it's live via heartbeat `note='ai-failloud'` after the restart.
 
 ## PARKED / INCOMPLETE
 1. **Gary Sims + Harry Singh**: both need the **new table-change rule** message — awaiting the actual rule text from Justin. (Tuesday games self-dealt? confirm and send.)

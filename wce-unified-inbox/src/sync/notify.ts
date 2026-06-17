@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
 import { VOICE } from './voice'
+import { classifyAiError, type AiOutcome } from './alert'
 
 type DB = SupabaseClient<Database>
 
@@ -10,6 +11,8 @@ export interface ReplyResult {
   replied: number
   confirmed: number
   escalated: number
+  /** How the Anthropic classify call went this pass (undefined = none made). */
+  ai?: AiOutcome
 }
 
 // Pace auto-replies like batch sends (Beeper suspends accounts that fire fast).
@@ -187,9 +190,10 @@ export async function processReplies(
       .trim()
     verdicts = JSON.parse(out)
   } catch (e) {
-    // Don't mark handled — retry these next pass.
+    // Don't mark handled — retry these next pass. Surface the failure so the
+    // health alerter can text Justin if the AI key/model has gone bad.
     console.error('[reply] classify error:', e instanceof Error ? e.message : e)
-    return { replied: 0, confirmed: 0, escalated: 0 }
+    return { replied: 0, confirmed: 0, escalated: 0, ai: { ok: false, ...classifyAiError(e) } }
   }
 
   let replied = 0
@@ -246,7 +250,8 @@ export async function processReplies(
     await syncGroupRoster(db, adapter, notifyGroupChatId)
   }
 
-  return { replied, confirmed: confirmedEntries.length, escalated: needYou.length }
+  // Reaching here means the classify call succeeded — the AI key/model are fine.
+  return { replied, confirmed: confirmedEntries.length, escalated: needYou.length, ai: { ok: true } }
 }
 
 /**
