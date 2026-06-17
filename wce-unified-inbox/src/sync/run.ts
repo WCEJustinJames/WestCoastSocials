@@ -19,10 +19,11 @@ import { generateDrafts } from './drafting'
 import { syncOutreach } from './outreach'
 import { processReplies } from './notify'
 import { postSeatList } from './roster'
+import { newAiHealth, trackAiHealth, worstOutcome, type AiOutcome } from './alert'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'replies-allhours'
+const SYNC_VERSION = 'ai-failloud'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -87,8 +88,16 @@ let lastOutreachSync = 0
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
 
+// In-memory AI-health tracker for the fail-loud alerter. Resets on restart,
+// which is fine: a process that comes back still broken should re-alert once.
+const aiHealth = newAiHealth()
+
 async function runOnce(): Promise<void> {
   const since = new Date(Date.now() - env.syncLookbackDays * 86_400_000)
+
+  // Outcomes of this pass's Anthropic calls, fed to the fail-loud alerter below.
+  let replyAi: AiOutcome | undefined
+  let draftAi: AiOutcome | undefined
 
   // Heartbeat first, so liveness reflects the loop turning even when the mirror
   // (below) is slow. Best-effort, but log failures — a silently dead heartbeat
@@ -204,6 +213,7 @@ async function runOnce(): Promise<void> {
         env.notifyPhone,
         notifyGroupChatId,
       )
+      replyAi = rep.ai
       if (rep.replied || rep.confirmed || rep.escalated) {
         console.log(
           `[reply] replied=${rep.replied} confirmed=${rep.confirmed} escalated=${rep.escalated}`,
@@ -238,9 +248,20 @@ async function runOnce(): Promise<void> {
       env.anthropicModel,
       env.draftMaxPerPass,
     )
+    draftAi = d.ai
     if (d.generated) {
       console.log(`[drafts] generated=${d.generated} skipped=${d.skipped}`)
     }
+  }
+
+  // Fail-loud: if the AI calls (auto-reply classify + drafting) start hard-
+  // failing — almost always a dead/expired Anthropic key — text Justin once so
+  // it surfaces in minutes instead of going silently quiet for days. Exempt from
+  // quiet hours: it's an operator alert to his own phone, not a player send.
+  try {
+    await trackAiHealth(aiHealth, worstOutcome(replyAi, draftAi), adapter, env.notifyPhone)
+  } catch (e) {
+    console.error('[alert] tracker error:', e instanceof Error ? e.message : e)
   }
 
   // Inbound mirror LAST. Each Beeper request is now bounded by a timeout, so a

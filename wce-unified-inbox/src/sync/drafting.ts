@@ -2,12 +2,15 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import { VOICE } from './voice'
+import { classifyAiError, type AiOutcome } from './alert'
 
 type DB = SupabaseClient<Database>
 
 export interface DraftingResult {
   generated: number
   skipped: number
+  /** How the Anthropic draft calls went this pass (undefined = none made). */
+  ai?: AiOutcome
 }
 
 /**
@@ -48,6 +51,7 @@ export async function generateDrafts(
 
   let generated = 0
   let skipped = 0
+  let aiOutcome: AiOutcome | undefined
 
   for (const conv of convs) {
     if (generated >= maxPerPass) break
@@ -85,6 +89,7 @@ export async function generateDrafts(
       })
       .join('\n')
 
+    let text = ''
     try {
       const resp = await anthropic.messages.create({
         model,
@@ -97,15 +102,25 @@ export async function generateDrafts(
           },
         ],
       })
-      const text = resp.content
+      text = resp.content
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
         .map((b) => b.text)
         .join('')
         .trim()
-      if (!text) {
-        skipped++
-        continue
-      }
+      aiOutcome = { ok: true }
+    } catch (e) {
+      // A bad key/model fails the same way for every conversation — record it
+      // for the health alerter and stop hammering the API this pass.
+      aiOutcome = { ok: false, ...classifyAiError(e) }
+      console.error(`[drafts] classify error for conversation ${conv.id}:`, e instanceof Error ? e.message : e)
+      skipped++
+      break
+    }
+    if (!text) {
+      skipped++
+      continue
+    }
+    try {
       const { error: insErr } = await db.from('inbox_drafts').insert({
         conversation_id: conv.id,
         content: text,
@@ -115,15 +130,12 @@ export async function generateDrafts(
       if (insErr) throw insErr
       generated++
     } catch (e) {
-      console.error(
-        `[drafts] error drafting for conversation ${conv.id}:`,
-        e instanceof Error ? e.message : e,
-      )
+      console.error(`[drafts] insert error for conversation ${conv.id}:`, e instanceof Error ? e.message : e)
       skipped++
     }
   }
 
-  return { generated, skipped }
+  return { generated, skipped, ai: aiOutcome }
 }
 
 /** Beeper stores text as rich-text (HTML); flatten it to readable plain text. */
