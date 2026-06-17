@@ -412,6 +412,8 @@ export type Database = {
           notes: string | null
           outreach_status: string | null
           preferred_channel: string | null
+          staff: boolean
+          tournament: boolean
           contact_day: string | null
           contact_window: string | null
           contact_frequency_days: number | null
@@ -440,6 +442,8 @@ export type Database = {
           notes?: string | null
           outreach_status?: string | null
           preferred_channel?: string | null
+          staff?: boolean
+          tournament?: boolean
           contact_day?: string | null
           contact_window?: string | null
           contact_frequency_days?: number | null
@@ -468,6 +472,8 @@ export type Database = {
           notes?: string | null
           outreach_status?: string | null
           preferred_channel?: string | null
+          staff?: boolean
+          tournament?: boolean
           contact_day?: string | null
           contact_window?: string | null
           contact_frequency_days?: number | null

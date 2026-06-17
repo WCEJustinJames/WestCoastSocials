@@ -74,6 +74,8 @@ export interface Edit {
   contact_frequency_days: string
   rapport: number
   preferred_channel: string
+  staff: boolean
+  tournament: boolean
 }
 const toEdit = (r: PlayerRow): Edit => ({
   player_name: r.player_name ?? '',
@@ -88,6 +90,8 @@ const toEdit = (r: PlayerRow): Edit => ({
   contact_frequency_days: r.contact_frequency_days != null ? String(r.contact_frequency_days) : '',
   rapport: r.rapport ?? 0,
   preferred_channel: r.preferred_channel ?? '',
+  staff: r.staff ?? false,
+  tournament: r.tournament ?? false,
 })
 
 /**
@@ -256,6 +260,8 @@ export function usePlayers() {
         contact_frequency_days: e.contact_frequency_days ? Number(e.contact_frequency_days) : null,
         rapport: e.rapport || null,
         preferred_channel: e.preferred_channel || null,
+        staff: e.staff,
+        tournament: e.tournament,
       })
       .eq('id', id)
     setBusy(false)

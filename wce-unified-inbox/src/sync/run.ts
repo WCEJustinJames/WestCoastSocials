@@ -18,10 +18,11 @@ import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
 import { syncOutreach } from './outreach'
 import { processReplies } from './notify'
+import { postSeatList } from './roster'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'group-resolve'
+const SYNC_VERSION = 'seat-list'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -144,6 +145,20 @@ async function runOnce(): Promise<void> {
       }
     } catch (e) {
       console.error('[group] resolve error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Keep the live confirmed seat list posted in the cash-games group. Per Justin
+  // this is the deliberate EXCEPTION to both the 4:30pm outreach cutoff AND quiet
+  // hours: a game runs into the night, so the seat list must stay current the
+  // whole time. It can't spam — it only delete+reposts when the roster actually
+  // changes. Runs only when the AI auto-reply is OFF (otherwise that path owns
+  // the roster).
+  if (!anthropic && notifyGroupChatId) {
+    try {
+      await postSeatList(supabaseAdmin, adapter, notifyGroupChatId)
+    } catch (e) {
+      console.error('[roster] error:', e instanceof Error ? e.message : e)
     }
   }
 

@@ -95,6 +95,22 @@ export function PlayerCard({
           />
           ban
         </label>
+        <label className="flex items-center gap-1 text-xs text-violet-700" title="Staff — exclude from player outreach">
+          <input
+            type="checkbox"
+            checked={e.staff}
+            onChange={(ev) => setE(r.id, { staff: ev.target.checked })}
+          />
+          staff
+        </label>
+        <label className="flex items-center gap-1 text-xs text-amber-700" title="Tournament player — skip cash sends, include in tourney/event promos">
+          <input
+            type="checkbox"
+            checked={e.tournament}
+            onChange={(ev) => setE(r.id, { tournament: ev.target.checked })}
+          />
+          tourney
+        </label>
         <button
           onClick={() => void onSave(r.id)}
           disabled={busy}
