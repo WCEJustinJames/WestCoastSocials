@@ -13,7 +13,8 @@ export function Players() {
         </button>
       </div>
       <p className="mb-4 text-sm text-slate-500">
-        {p.rows.length} players · {p.regions.length} region values ·{' '}
+        {p.rows.length} players · {p.weeklyCount} on weekly list ·{' '}
+        {p.regions.length} region values ·{' '}
         {p.dupGroups.length} phone-duplicate group(s) — clean up in Merge &amp; Review.
       </p>
       {p.status && <p className="mb-3 text-sm text-emerald-700">{p.status}</p>}
@@ -36,6 +37,10 @@ export function Players() {
         <datalist id="players-region-list">
           {p.regions.map((r) => (<option key={r} value={r} />))}
         </datalist>
+        <label className="flex items-center gap-1 text-xs text-emerald-700" title="Show only players on the recurring weekly cash send">
+          <input type="checkbox" checked={p.weeklyOnly} onChange={(e) => p.setWeeklyOnly(e.target.checked)} />
+          weekly list
+        </label>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           <input type="checkbox" checked={p.showHidden} onChange={(e) => p.setShowHidden(e.target.checked)} />
           show hidden

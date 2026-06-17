@@ -111,6 +111,14 @@ export function PlayerCard({
           />
           tourney
         </label>
+        <label className="flex items-center gap-1 text-xs text-emerald-700" title="On the weekly cash message list (on by default; uncheck to leave them off)">
+          <input
+            type="checkbox"
+            checked={e.weekly}
+            onChange={(ev) => setE(r.id, { weekly: ev.target.checked })}
+          />
+          weekly
+        </label>
         <button
           onClick={() => void onSave(r.id)}
           disabled={busy}
