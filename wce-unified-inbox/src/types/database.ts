@@ -414,6 +414,7 @@ export type Database = {
           preferred_channel: string | null
           staff: boolean
           tournament: boolean
+          weekly: boolean
           contact_day: string | null
           contact_window: string | null
           contact_frequency_days: number | null
@@ -444,6 +445,7 @@ export type Database = {
           preferred_channel?: string | null
           staff?: boolean
           tournament?: boolean
+          weekly?: boolean
           contact_day?: string | null
           contact_window?: string | null
           contact_frequency_days?: number | null
@@ -474,6 +476,7 @@ export type Database = {
           preferred_channel?: string | null
           staff?: boolean
           tournament?: boolean
+          weekly?: boolean
           contact_day?: string | null
           contact_window?: string | null
           contact_frequency_days?: number | null
