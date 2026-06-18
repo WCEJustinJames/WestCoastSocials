@@ -3,6 +3,7 @@ import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
 import { env } from '../lib/env'
 import { guardSend } from './guards'
+import { textHash, alreadySent, recordSent } from './ledger'
 
 type DB = SupabaseClient<Database>
 
@@ -184,6 +185,19 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
         continue
       }
 
+      // Cross-pass idempotency for proactive invites: never fire the identical
+      // message to the same recipient twice (catches double-sends that survive a
+      // restart, where the in-pass dedupe set was reset).
+      const hash = textHash(item.rendered_text)
+      if (dedupeKey && batch.is_outreach === true && (await alreadySent(db, dedupeKey, hash))) {
+        await db
+          .from('inbox_batch_items')
+          .update({ status: 'skipped', guard_flag: true, guard_reason: 'already_sent' })
+          .eq('id', item.id)
+        console.log(`[batch] skipped already-sent (item ${item.id})`)
+        continue
+      }
+
       try {
         const r = chatId
           ? await adapter.sendMessage!(chatId, item.rendered_text, { attachment })
@@ -212,6 +226,17 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
               .update({ beeper_chat_id: r.chatId })
               .eq('id', data.outreach_id)
               .is('beeper_chat_id', null)
+          }
+          // Audit ledger: record every send for the "what did we send whom" trail
+          // (and the idempotency check above).
+          if (dedupeKey) {
+            await recordSent(db, {
+              outreachId: data?.outreach_id,
+              recipient: dedupeKey,
+              hash,
+              batchItemId: item.id,
+              text: item.rendered_text,
+            })
           }
           sent++
         } else {
