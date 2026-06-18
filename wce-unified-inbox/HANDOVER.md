@@ -2,7 +2,7 @@
 
 **How to use this:** start a FRESH chat and say *"Read wce-unified-inbox/HANDOVER.md and continue."* This doc is the source of truth; previous chats got too long to be fast.
 
-_Last updated: 2026-06-17 (Wed) night Perth — root-caused the `reply_intent` outage (dead Anthropic key, down since 11 Jun) and added fail-loud AI alerting._
+_Last updated: 2026-06-18 (Thu) AM Perth — confirmed the outage is a MISSING `ANTHROPIC_API_KEY` on the PC (down since 11 Jun); shipped fail-loud AI alerting (`ai-failloud2`) that now also catches the no-key case._
 
 ---
 
@@ -69,10 +69,11 @@ Insert an approved batch the PC will drain:
 - **Needs Justin's personal reply**: **Jun Liu** (wants arrival time — a yes if answered), **Harry Singh** (asking if Tuesday games are self-dealt now — this is the table-change-rules topic).
 - **Lead**: Ciaran Paxman wants **Woodvale tomorrow**.
 
-## ⚠️ ROOT-CAUSED 2026-06-17 — Anthropic AI layer was DOWN (operator action still needed)
+## ⚠️ ROOT-CAUSED 2026-06-17/18 — Anthropic AI layer is DOWN (operator action still needed)
 - **The `reply_intent`-NULL problem was a symptom, not the bug.** Every Anthropic call has been failing since the night of **11 Jun** (last good classify 11 Jun 21:55 Perth; last AI draft 11 Jun 21:58). Auto-reply (`processReplies`) and AI drafting (`generateDrafts`) share one dependency — the **Anthropic API key + model** — so they died together. `processReplies` bails in its `catch` *before* stamping anything, and 1:1 SMS replies have no system-noise rows to stamp, so nothing got `reply_intent`/`auto_handled` and ~1800 inbound piled up. The mirror is **not** the cause: `mirror.ts` upserts with `ignoreDuplicates`, so it never resets existing rows. The `replies-allhours` restart did NOT help (0/170 classified after it).
-- **FIX (operator, on WESTCOAST1):** renew `ANTHROPIC_API_KEY` (make sure it's funded) in `wce-unified-inbox\.env`; confirm `ANTHROPIC_MODEL` is unset or `claude-opus-4-8` (a retired model 404s the same way); then restart `run-wce.bat`. Confirm cause first with `npm run sync:once` — watch for `[reply]/[drafts] classify error:` with a 401/credit message. Once fixed, auto-reply self-heals from the last 16h (LOOKBACK) and the seat-list rebuilds itself.
-- **Now guarded (SYNC_VERSION `ai-failloud`):** the sync texts Justin (`+61459686980`) the moment the AI calls hard-fail (bad key / no credits / unknown model = HTTP 400/401/402/403/404 → alert on the first failing pass; transient 429/5xx → only after ~1 min sustained), re-nudges every 6h while down, and texts once on recovery — so it can't go silently dark for days again. Code: `src/sync/alert.ts`, wired in `run.ts` (`trackAiHealth`). The alert rides the Beeper SMS path (no Anthropic dependency) and is exempt from quiet hours. Confirm it's live via heartbeat `note='ai-failloud'` after the restart.
+- **CONFIRMED 2026-06-18 09:39 restart:** the PC pulled the new code (heartbeat `note` flipped to `ai-failloud`) but the startup log had **no `[drafts] AI drafting on` / `[reply] auto-reply on` lines** — so `anthropic` is **null**, i.e. **`ANTHROPIC_API_KEY` is not set** in the PC `.env` right now. The layer is *skipped*, not erroring. The key was present until 11 Jun, so the line likely got dropped or an empty Windows system env var is shadowing it (same trap the Supabase-key startup log guards against).
+- **FIX (operator, on WESTCOAST1):** set `ANTHROPIC_API_KEY` to a valid funded key in `wce-unified-inbox\.env` (and make sure no empty system env var shadows it); confirm `ANTHROPIC_MODEL` is unset or `claude-opus-4-8` (a retired model 404s the same way); then restart `run-wce.bat`. You'll know it took when startup prints `[drafts] AI drafting on ...` and new inbound starts getting `reply_intent`. Auto-reply then self-heals from the last 16h (LOOKBACK) and the seat-list rebuilds itself.
+- **Now guarded (SYNC_VERSION `ai-failloud2`):** the sync texts Justin (`+61459686980`) whenever the AI layer goes dark — both when calls **hard-fail** (bad key / no credits / unknown model = HTTP 400/401/402/403/404 → first failing pass; transient 429/5xx → only after ~1 min sustained) **and when the key is missing entirely** (no calls made, but AI is expected on). Re-nudges every 6h while down, texts once on recovery. Run with `AUTO_REPLY=off` to intentionally disable AI and silence the alert. Code: `src/sync/alert.ts` + `run.ts` (`trackAiHealth`); rides the Beeper SMS path (no Anthropic dependency), exempt from quiet hours. Confirm live via heartbeat `note='ai-failloud2'`.
 
 ## PARKED / INCOMPLETE
 1. **Gary Sims + Harry Singh**: both need the **new table-change rule** message — awaiting the actual rule text from Justin. (Tuesday games self-dealt? confirm and send.)

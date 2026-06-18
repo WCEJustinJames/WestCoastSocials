@@ -23,7 +23,7 @@ import { newAiHealth, trackAiHealth, worstOutcome, type AiOutcome } from './aler
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'ai-failloud'
+const SYNC_VERSION = 'ai-failloud2'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -74,6 +74,8 @@ if (env.letspokerToken) {
 const anthropic = env.anthropicKey ? new Anthropic({ apiKey: env.anthropicKey }) : null
 if (anthropic) {
   console.log(`[drafts] AI drafting on (model ${env.anthropicModel}, max ${env.draftMaxPerPass}/pass)`)
+} else if (env.autoReply) {
+  console.warn('[ai] ANTHROPIC_API_KEY not set — auto-reply + drafting are OFF (alerter will text Justin)')
 }
 if (env.airtableKey) {
   console.log(`[outreach] Airtable CRM sync on (every ${env.outreachSyncMinutes}m)`)
@@ -254,12 +256,19 @@ async function runOnce(): Promise<void> {
     }
   }
 
-  // Fail-loud: if the AI calls (auto-reply classify + drafting) start hard-
-  // failing — almost always a dead/expired Anthropic key — text Justin once so
-  // it surfaces in minutes instead of going silently quiet for days. Exempt from
-  // quiet hours: it's an operator alert to his own phone, not a player send.
+  // Fail-loud: text Justin once when the AI layer goes dark — almost always a
+  // bad/expired Anthropic key — so it surfaces in minutes instead of staying
+  // silently quiet for days. Exempt from quiet hours: it's an operator alert to
+  // his own phone, not a player send. A MISSING key makes no calls at all (so
+  // there's nothing to "fail"), but the layer is just as dark — so when AI is
+  // expected on (autoReply) yet unconfigured, treat that as a hard failure too.
+  const aiSignal: AiOutcome | undefined = anthropic
+    ? worstOutcome(replyAi, draftAi)
+    : env.autoReply
+      ? { ok: false, hard: true, message: 'ANTHROPIC_API_KEY is not set, auto-reply + drafting are disabled' }
+      : undefined
   try {
-    await trackAiHealth(aiHealth, worstOutcome(replyAi, draftAi), adapter, env.notifyPhone)
+    await trackAiHealth(aiHealth, aiSignal, adapter, env.notifyPhone)
   } catch (e) {
     console.error('[alert] tracker error:', e instanceof Error ? e.message : e)
   }
