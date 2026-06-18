@@ -24,7 +24,7 @@ import { getSettings } from './settings'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g1-killswitch'
+const SYNC_VERSION = 'g2-sendguards'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 

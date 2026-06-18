@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
 import { env } from '../lib/env'
+import { guardSend } from './guards'
 
 type DB = SupabaseClient<Database>
 
@@ -79,6 +80,9 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
 
   let sent = 0
   let failed = 0
+  // Recipients reached this pass — collapse duplicate items so one person never
+  // gets the same blast twice (the Andy double-send), keyed by chat-id or phone.
+  const sentKeys = new Set<string>()
 
   for (const batch of batches) {
     if (sent + failed >= MAX_PER_PASS) break
@@ -123,6 +127,24 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
         outreach_id?: string
       } | null
 
+      // Send-time guardrails (defense in depth): block half-rendered text always,
+      // do_not_message / hidden always, and staff + the per-contact frequency cap
+      // for proactive outreach. The batch was approved earlier; flags and
+      // last_contacted may have changed since.
+      const verdict = await guardSend(db, {
+        renderedText: item.rendered_text,
+        isOutreach: batch.is_outreach === true,
+        outreachId: data?.outreach_id,
+      })
+      if (!verdict.ok) {
+        await db
+          .from('inbox_batch_items')
+          .update({ status: 'skipped', guard_flag: true, guard_reason: verdict.reason })
+          .eq('id', item.id)
+        console.log(`[batch] skipped item ${item.id}: ${verdict.reason}`)
+        continue
+      }
+
       // Channel choice: 'sms' forces the phone path; 'thread' (or unset/auto)
       // prefers an existing chat, falling back to the phone.
       let chatId: string | null = null
@@ -151,6 +173,17 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
         continue
       }
 
+      // In-pass dedupe: never reach the same recipient twice in one pass.
+      const dedupeKey = chatId ?? phone
+      if (dedupeKey && sentKeys.has(dedupeKey)) {
+        await db
+          .from('inbox_batch_items')
+          .update({ status: 'skipped', guard_flag: true, guard_reason: 'dup_in_pass' })
+          .eq('id', item.id)
+        console.log(`[batch] skipped duplicate recipient (item ${item.id})`)
+        continue
+      }
+
       try {
         const r = chatId
           ? await adapter.sendMessage!(chatId, item.rendered_text, { attachment })
@@ -169,6 +202,7 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
               .update({ last_contacted: new Date().toISOString().slice(0, 10) })
               .eq('id', data.outreach_id)
           }
+          if (dedupeKey) sentKeys.add(dedupeKey)
           sent++
         } else {
           await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
