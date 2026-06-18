@@ -94,9 +94,8 @@ export async function trackAiHealth(
   const where = outcome.status ? ` (HTTP ${outcome.status})` : ''
   const msg =
     `WCP inbox AI DOWN${where}: ${outcome.message}. ` +
-    `Auto-reply + drafting are off until fixed. ` +
-    `Most likely the Anthropic API key (expired or out of credits) in wce-unified-inbox\\.env on this PC. ` +
-    `Renew it, check ANTHROPIC_MODEL, then restart run-wce.bat.`
+    `Auto-reply + drafting are off. ` +
+    `Check ANTHROPIC_API_KEY (set + funded) and ANTHROPIC_MODEL in wce-unified-inbox\\.env on this PC, then restart run-wce.bat.`
   if (await safeText(adapter, notifyAccount, notifyPhone, msg)) {
     health.alerted = true
     health.lastAlertAt = now
