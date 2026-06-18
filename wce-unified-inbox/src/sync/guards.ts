@@ -28,6 +28,7 @@ type OutreachGuardRow = {
   staff: boolean | null
   last_contacted: string | null
   contact_frequency_days: number | null
+  beeper_chat_id: string | null
 }
 
 /**
@@ -61,7 +62,7 @@ export async function guardSend(
   }
   const { data: row } = await q
     .from('inbox_outreach')
-    .select('do_not_message, hidden, staff, last_contacted, contact_frequency_days')
+    .select('do_not_message, hidden, staff, last_contacted, contact_frequency_days, beeper_chat_id')
     .eq('id', args.outreachId)
     .maybeSingle()
   if (!row) return { ok: true }
@@ -76,6 +77,31 @@ export async function guardSend(
     if (Number.isFinite(lastMs)) {
       const ageDays = (Date.now() - lastMs) / 86_400_000
       if (ageDays < freq) return { ok: false, reason: `cooldown_${freq}d` }
+    }
+  }
+
+  // Non-replier guard: never send proactive outreach to someone who hasn't
+  // replied to our last message (their thread's most recent message is ours).
+  // Resolves the thread via the stored chat id — Messenger always, SMS once the
+  // send-linkage has recorded it; unlinked SMS falls back to the cooldown above.
+  if (args.isOutreach && row.beeper_chat_id) {
+    const { data: conv } = await db
+      .from('inbox_conversations')
+      .select('id')
+      .eq('external_chat_id', row.beeper_chat_id)
+      .limit(1)
+      .maybeSingle()
+    if (conv?.id) {
+      const { data: last } = await db
+        .from('inbox_messages')
+        .select('direction')
+        .eq('conversation_id', conv.id)
+        .order('timestamp', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (last && (last.direction as unknown as string) === 'outbound') {
+        return { ok: false, reason: 'awaiting_reply' }
+      }
     }
   }
   return { ok: true }
