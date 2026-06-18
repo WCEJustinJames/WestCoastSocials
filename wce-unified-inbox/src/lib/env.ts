@@ -37,6 +37,11 @@ export const env = {
   // coordination group). Matched by title (case-insensitive contains). Empty
   // disables group posting.
   notifyGroupName: process.env.NOTIFY_GROUP_NAME ?? 'CASH GAMES West Coast Poker',
+  // The keyword (no-AI) seat-list fallback guesses the roster from reply TEXT and
+  // can't tell a poker "yes" from a tradie's "sounds good" — it once posted non-
+  // players and a dealer into the group. OFF by default; only the AI-classifier
+  // roster posts unless this is explicitly turned on.
+  rosterKeywordFallback: (process.env.ROSTER_KEYWORD_FALLBACK ?? 'off').toLowerCase() === 'on',
   // Daily window (local time, HH:MM) for proactive OUTREACH (invite blasts):
   // it only fires between OUTREACH_START and OUTREACH_CUTOFF. Reply/confirmation
   // batches and the auto-reply are unaffected, so we can still confirm seats and

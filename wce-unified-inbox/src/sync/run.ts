@@ -24,7 +24,7 @@ import { getSettings } from './settings'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g2-sendguards'
+const SYNC_VERSION = 'g9-roster'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -181,7 +181,7 @@ async function runOnce(): Promise<void> {
   // whole time. It can't spam — it only delete+reposts when the roster actually
   // changes. Runs only when the AI auto-reply is OFF (otherwise that path owns
   // the roster).
-  if (!sendsPaused && !anthropic && notifyGroupChatId) {
+  if (!sendsPaused && !anthropic && notifyGroupChatId && env.rosterKeywordFallback) {
     try {
       await postSeatList(supabaseAdmin, adapter, notifyGroupChatId)
     } catch (e) {

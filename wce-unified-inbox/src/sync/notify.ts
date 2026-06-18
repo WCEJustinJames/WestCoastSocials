@@ -4,6 +4,7 @@ import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
 import { VOICE } from './voice'
 import { classifyAiError, type AiOutcome } from './alert'
+import { flaggedConversationIds } from './roster'
 
 type DB = SupabaseClient<Database>
 
@@ -269,6 +270,9 @@ async function syncGroupRoster(db: DB, adapter: ChannelAdapter, groupChatId: str
     .gt('timestamp', since)
     .order('timestamp', { ascending: false })
 
+  // Drop anyone whose CRM row is staff / do_not_message / hidden before they hit
+  // the public list (a dealer replying "yes" shouldn't appear).
+  const excluded = await flaggedConversationIds(db, (yes ?? []).map((r) => r.conversation_id))
   // One entry per player (latest reply wins), preserving first-confirmed order.
   const seen = new Set<string>()
   const entries: string[] = []
@@ -276,6 +280,7 @@ async function syncGroupRoster(db: DB, adapter: ChannelAdapter, groupChatId: str
     const key = r.conversation_id ?? r.sender_name ?? ''
     if (seen.has(key)) continue
     seen.add(key)
+    if (r.conversation_id && excluded.has(r.conversation_id)) continue
     const nm = cleanName(r.sender_name ?? 'Player')
     const note = (r.reply_note ?? '').trim()
     entries.push(note ? `${nm} (${note})` : nm)

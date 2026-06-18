@@ -38,6 +38,44 @@ const STAKE = /(\$?\d\/\d+(?:\/\d+)?)/
  * changes, the previous post is deleted and a fresh one put up, so only the
  * latest list is ever visible. Caller skips this during quiet hours.
  */
+/**
+ * Given conversation ids, return the subset that map to a CRM contact flagged
+ * staff / do_not_message / hidden, so the seat list can drop them. Best-effort:
+ * matches a conversation to inbox_outreach by beeper_chat_id == external_chat_id
+ * (Messenger contacts); SMS-only contacts without a stored chat id won't match,
+ * but the AI classifier already filters non-confirmations upstream.
+ */
+export async function flaggedConversationIds(
+  db: DB,
+  conversationIds: (string | null | undefined)[],
+): Promise<Set<string>> {
+  const excluded = new Set<string>()
+  const ids = [...new Set(conversationIds.filter((x): x is string => !!x))]
+  if (ids.length === 0) return excluded
+
+  const { data: convs } = await db
+    .from('inbox_conversations')
+    .select('id, external_chat_id')
+    .in('id', ids)
+  const chatToConv = new Map<string, string>()
+  for (const c of convs ?? []) {
+    if (c.external_chat_id) chatToConv.set(c.external_chat_id, c.id)
+  }
+  const chatIds = [...chatToConv.keys()]
+  if (chatIds.length === 0) return excluded
+
+  const { data: flagged } = await db
+    .from('inbox_outreach')
+    .select('beeper_chat_id')
+    .in('beeper_chat_id', chatIds)
+    .or('do_not_message.eq.true,hidden.eq.true,staff.eq.true')
+  for (const f of flagged ?? []) {
+    const conv = f.beeper_chat_id ? chatToConv.get(f.beeper_chat_id) : undefined
+    if (conv) excluded.add(conv)
+  }
+  return excluded
+}
+
 export async function postSeatList(db: DB, adapter: ChannelAdapter, groupChatId: string): Promise<void> {
   const since = new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString()
   const { data: rows } = await db
@@ -61,8 +99,12 @@ export async function postSeatList(db: DB, adapter: ChannelAdapter, groupChatId:
     latest.set(m.conversation_id ?? name, { name, text: txt })
   }
 
+  // Drop anyone whose CRM row is staff / do_not_message / hidden (a dealer or a
+  // non-player must never land on the public seat list).
+  const excluded = await flaggedConversationIds(db, [...latest.keys()])
   const entries: string[] = []
-  for (const { name, text } of latest.values()) {
+  for (const [key, { name, text }] of latest) {
+    if (excluded.has(key)) continue
     if (DECLINE.test(text)) continue
     if (!CONFIRM.test(text)) continue
     const stake = text.match(STAKE)?.[1]
