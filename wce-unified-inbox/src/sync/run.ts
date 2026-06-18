@@ -21,10 +21,11 @@ import { processReplies } from './notify'
 import { postSeatList } from './roster'
 import { newAiHealth, trackAiHealth, worstOutcome, type AiOutcome } from './alert'
 import { getSettings } from './settings'
+import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g9-roster'
+const SYNC_VERSION = 'g6-optout'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -199,6 +200,20 @@ async function runOnce(): Promise<void> {
   const batch = (quiet || sendsPaused) ? { sent: 0, failed: 0 } : await processBatches(supabaseAdmin, adapter)
   if (batch.sent || batch.failed) {
     console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
+  }
+
+  // Auto opt-out: honour stop / unsubscribe / cold-contact replies (keyword-based,
+  // no AI needed). Flags the CRM row do_not_message and escalates to Justin, and
+  // marks the message handled so the auto-reply never acknowledges an opt-out. Runs
+  // before the auto-reply, regardless of quiet hours / kill-switch — it's protective
+  // plus an operator alert, not a player send.
+  try {
+    const oo = await processOptOuts(supabaseAdmin, adapter, env.notifyPhone)
+    if (oo.flagged || oo.escalated) {
+      console.log(`[optout] flagged=${oo.flagged} escalated=${oo.escalated}`)
+    }
+  } catch (e) {
+    console.error('[optout] error:', e instanceof Error ? e.message : e)
   }
 
   // Auto-reply: thank/acknowledge inbound replies and text Justin who confirmed.

@@ -52,6 +52,8 @@ export interface SendResult {
   ok: boolean
   pendingMessageId?: string
   error?: string
+  /** The chat the message went to (lets callers link an SMS contact to its thread). */
+  chatId?: string
 }
 
 /** An image (or other file) to attach to an outgoing message. */
