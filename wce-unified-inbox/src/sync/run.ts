@@ -20,10 +20,11 @@ import { syncOutreach } from './outreach'
 import { processReplies } from './notify'
 import { postSeatList } from './roster'
 import { newAiHealth, trackAiHealth, worstOutcome, type AiOutcome } from './alert'
+import { getSettings } from './settings'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'ai-failloud2'
+const SYNC_VERSION = 'g1-killswitch'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -90,6 +91,9 @@ let lastOutreachSync = 0
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
 
+// Log kill-switch transitions once, not every pass.
+let wasPaused = false
+
 // In-memory AI-health tracker for the fail-loud alerter. Resets on restart,
 // which is fine: a process that comes back still broken should re-alert once.
 const aiHealth = newAiHealth()
@@ -137,6 +141,16 @@ async function runOnce(): Promise<void> {
     wasQuiet = quiet
   }
 
+  // Global send KILL-SWITCH (inbox_settings.sends_paused). Checked every pass so
+  // sends can be halted instantly from the UI / SQL / cloud without restarting the
+  // PC. Gates ALL outbound below, including the quiet-hours-exempt auto-reply and
+  // seat-list. Fails open (see getSettings) so a DB blip can't wedge sends.
+  const { sendsPaused } = await getSettings(supabaseAdmin)
+  if (sendsPaused !== wasPaused) {
+    console.log(sendsPaused ? '[paused] sends_paused ON, holding ALL outbound' : '[paused] sends_paused OFF, outbound resumes')
+    wasPaused = sendsPaused
+  }
+
   // Resolve + store the Cash Games group chat id once per process, independent
   // of the AI auto-reply layer, so seat-list rosters can be posted to it from
   // the cloud (a batch item with channel='thread' targeting this chat). This is
@@ -167,7 +181,7 @@ async function runOnce(): Promise<void> {
   // whole time. It can't spam — it only delete+reposts when the roster actually
   // changes. Runs only when the AI auto-reply is OFF (otherwise that path owns
   // the roster).
-  if (!anthropic && notifyGroupChatId) {
+  if (!sendsPaused && !anthropic && notifyGroupChatId) {
     try {
       await postSeatList(supabaseAdmin, adapter, notifyGroupChatId)
     } catch (e) {
@@ -176,13 +190,13 @@ async function runOnce(): Promise<void> {
   }
 
   // Phase A: send any drafts the human approved in the UI.
-  const out = quiet ? { sent: 0, failed: 0 } : await processOutbox(supabaseAdmin, adapter)
+  const out = (quiet || sendsPaused) ? { sent: 0, failed: 0 } : await processOutbox(supabaseAdmin, adapter)
   if (out.sent || out.failed) {
     console.log(`[outbox] sent=${out.sent} failed=${out.failed}`)
   }
 
   // Batched variations: send items from any batch the human approved (throttled).
-  const batch = quiet ? { sent: 0, failed: 0 } : await processBatches(supabaseAdmin, adapter)
+  const batch = (quiet || sendsPaused) ? { sent: 0, failed: 0 } : await processBatches(supabaseAdmin, adapter)
   if (batch.sent || batch.failed) {
     console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
   }
@@ -193,7 +207,7 @@ async function runOnce(): Promise<void> {
   // responds to people who just messaged, never proactively outreaches), so it's
   // safe to run any time. The 4:30pm cutoff never applied here either — it only
   // gates outreach batches above.
-  if (anthropic && env.autoReply) {
+  if (!sendsPaused && anthropic && env.autoReply) {
     // Resolve the cash-games group once (so confirmations can be posted there).
     if (env.notifyGroupName && !notifyGroupChatId) {
       try {
