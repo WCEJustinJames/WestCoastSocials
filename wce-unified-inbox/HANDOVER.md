@@ -2,7 +2,7 @@
 
 **How to use this:** start a FRESH chat and say *"Read wce-unified-inbox/HANDOVER.md and continue."* This doc is the source of truth; previous chats got too long to be fast.
 
-_Last updated: 2026-06-18 (Thu) AM Perth — confirmed the outage is a MISSING `ANTHROPIC_API_KEY` on the PC (down since 11 Jun); shipped fail-loud AI alerting (`ai-failloud2`) that now also catches the no-key case._
+_Last updated: 2026-06-18 (Thu) Perth — confirmed the outage is a MISSING `ANTHROPIC_API_KEY` on the PC (down since 11 Jun) + shipped a full SEND-SAFETY GUARDRAIL suite (kill-switch, cooldown, non-replier, opt-out, dedupe/idempotency, trustworthy seat-list, send ledger). Running code: `g8-vet`._
 
 ---
 
@@ -74,6 +74,44 @@ Insert an approved batch the PC will drain:
 - **CONFIRMED 2026-06-18 09:39 restart:** the PC pulled the new code (heartbeat `note` flipped to `ai-failloud`) but the startup log had **no `[drafts] AI drafting on` / `[reply] auto-reply on` lines** — so `anthropic` is **null**, i.e. **`ANTHROPIC_API_KEY` is not set** in the PC `.env` right now. The layer is *skipped*, not erroring. The key was present until 11 Jun, so the line likely got dropped or an empty Windows system env var is shadowing it (same trap the Supabase-key startup log guards against).
 - **FIX (operator, on WESTCOAST1):** set `ANTHROPIC_API_KEY` to a valid funded key in `wce-unified-inbox\.env` (and make sure no empty system env var shadows it); confirm `ANTHROPIC_MODEL` is unset or `claude-opus-4-8` (a retired model 404s the same way); then restart `run-wce.bat`. You'll know it took when startup prints `[drafts] AI drafting on ...` and new inbound starts getting `reply_intent`. Auto-reply then self-heals from the last 16h (LOOKBACK) and the seat-list rebuilds itself.
 - **Now guarded (SYNC_VERSION `ai-failloud2`):** the sync texts Justin (`+61459686980`) whenever the AI layer goes dark — both when calls **hard-fail** (bad key / no credits / unknown model = HTTP 400/401/402/403/404 → first failing pass; transient 429/5xx → only after ~1 min sustained) **and when the key is missing entirely** (no calls made, but AI is expected on). Re-nudges every 6h while down, texts once on recovery. Run with `AUTO_REPLY=off` to intentionally disable AI and silence the alert. Code: `src/sync/alert.ts` + `run.ts` (`trackAiHealth`); rides the Beeper SMS path (no Anthropic dependency), exempt from quiet hours. Confirm live via heartbeat `note='ai-failloud2'`.
+
+## GUARDRAILS (added 2026-06-18) — send-safety suite, all in the sync
+Added after a session where the engine re-pestered non-repliers (Andy got 3
+unanswered invites + a dup), blasted a non-player, and posted a garbage seat
+list. All LIVE on the sync branch, active on next restart. Addresses PARKED #4
+and #5a.
+
+- **KILL-SWITCH** — `inbox_settings.sends_paused` (single-row table, migration
+  0012). True = sync halts ALL outbound (batches, outbox, auto-reply, seat-list)
+  every pass, no restart. Stop everything instantly: `update inbox_settings set
+  sends_paused=true where id=1;` (UI toggle / cloud Claude can trip it too). False
+  to resume.
+- **Send-rail guards** (`src/sync/guards.ts`, before every batch send): block
+  half-rendered/empty text; `do_not_message`/`hidden` (all sends) + `staff`
+  (outreach); **cooldown** (skip outreach if `last_contacted` within
+  `contact_frequency_days`, default 4 — was stamped, never checked); **non-replier**
+  (skip outreach if OUR message is most recent in their thread); **in-pass dedupe**
+  + **idempotency** (`inbox_sent_log`, migration 0013 — never the identical invite
+  to the same recipient twice in 6 days). Skips → `status=skipped` +
+  `guard_flag`/`guard_reason`.
+- **Auto opt-out** (`src/sync/optout.ts`, every pass, no AI): hard opt-out
+  (stop/unsubscribe/"don't text me") → auto-set `do_not_message` + escalate; cold
+  signal (wrong number/who is this) → escalate only. Marks msg handled.
+- **Trustworthy seat-list** (`roster.ts`/`notify.ts`): no-AI keyword fallback OFF by
+  default (`ROSTER_KEYWORD_FALLBACK=on` to re-enable); both builders drop
+  staff/`do_not_message`/`hidden`. AI down ⇒ no roster, not a wrong one.
+- **SMS linkage**: a send records the resolved chat id onto
+  `inbox_outreach.beeper_chat_id` (when empty), so SMS contacts link to their
+  thread like Messenger — powers opt-out flagging + non-replier for SMS over time.
+- **Send ledger** (`inbox_sent_log`): every send logged (recipient, text-hash,
+  batch item, time) — the audit trail + idempotency source.
+- **Vet first-timers** (OPT-IN `VET_FIRST_TIMERS=on`): holds a never-contacted
+  contact's first outreach (`skipped/first_time_review`) for one-tap approval. Off
+  by default (respects "new contacts auto-join").
+
+New env flags: `ROSTER_KEYWORD_FALLBACK` (off), `VET_FIRST_TIMERS` (off), and set
+`SYNC_LOOKBACK_DAYS=2` to fix the 30-day mirror re-scan causing the pass timeouts.
+New code: `guards.ts`, `optout.ts`, `ledger.ts`, `settings.ts`, `alert.ts`.
 
 ## PARKED / INCOMPLETE
 1. **Gary Sims + Harry Singh**: both need the **new table-change rule** message — awaiting the actual rule text from Justin. (Tuesday games self-dealt? confirm and send.)
