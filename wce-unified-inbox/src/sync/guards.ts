@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
+import { env } from '../lib/env'
 
 type DB = SupabaseClient<Database>
 
@@ -70,6 +71,13 @@ export async function guardSend(
   if (row.do_not_message) return { ok: false, reason: 'do_not_message' }
   if (row.hidden) return { ok: false, reason: 'hidden' }
   if (args.isOutreach && row.staff) return { ok: false, reason: 'staff' }
+
+  // Vet first-timers (opt-in, VET_FIRST_TIMERS=on): a contact we've never messaged
+  // (no last_contacted) is held for one-tap review before their FIRST proactive
+  // outreach, so a freshly imported phonebook number isn't cold-blasted unvetted.
+  if (args.isOutreach && env.vetFirstTimers && !row.last_contacted) {
+    return { ok: false, reason: 'first_time_review' }
+  }
 
   if (args.isOutreach && row.last_contacted) {
     const freq = row.contact_frequency_days ?? DEFAULT_FREQ_DAYS

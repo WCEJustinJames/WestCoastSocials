@@ -42,6 +42,10 @@ export const env = {
   // players and a dealer into the group. OFF by default; only the AI-classifier
   // roster posts unless this is explicitly turned on.
   rosterKeywordFallback: (process.env.ROSTER_KEYWORD_FALLBACK ?? 'off').toLowerCase() === 'on',
+  // Hold a never-contacted contact's FIRST proactive outreach for one-tap review
+  // (vet freshly imported numbers before a cold blast). Opt-in — Justin's rule is
+  // "new contacts auto-join", so default off; VET_FIRST_TIMERS=on to enable.
+  vetFirstTimers: (process.env.VET_FIRST_TIMERS ?? 'off').toLowerCase() === 'on',
   // Daily window (local time, HH:MM) for proactive OUTREACH (invite blasts):
   // it only fires between OUTREACH_START and OUTREACH_CUTOFF. Reply/confirmation
   // batches and the auto-reply are unaffected, so we can still confirm seats and
