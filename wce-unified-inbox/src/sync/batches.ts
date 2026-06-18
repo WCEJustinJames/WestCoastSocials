@@ -203,6 +203,16 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
               .eq('id', data.outreach_id)
           }
           if (dedupeKey) sentKeys.add(dedupeKey)
+          // Linkage: remember which chat an SMS contact lives in (the create-chat
+          // step just resolved it) so future inbound from them can be matched to
+          // this CRM row — the basis for opt-out flagging and the non-replier guard.
+          if (data?.outreach_id && r.chatId) {
+            await db
+              .from('inbox_outreach')
+              .update({ beeper_chat_id: r.chatId })
+              .eq('id', data.outreach_id)
+              .is('beeper_chat_id', null)
+          }
           sent++
         } else {
           await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)

@@ -108,7 +108,7 @@ export class BeeperAdapter implements ChannelAdapter {
       replyToMessageID: opts.replyToMessageId,
       attachment,
     })
-    return { ok: !r.error, pendingMessageId: r.pendingMessageID, error: r.error }
+    return { ok: !r.error, pendingMessageId: r.pendingMessageID, error: r.error, chatId: externalChatId }
   }
 
   async deleteMessage(externalChatId: string, externalMessageId: string): Promise<void> {
