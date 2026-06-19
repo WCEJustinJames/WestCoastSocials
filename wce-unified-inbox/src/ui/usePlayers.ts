@@ -119,6 +119,8 @@ export function usePlayers() {
   // "Weekly list" view: only the players who are actually on the recurring
   // weekly cash send — weekly flag on, and none of the exclusion flags set.
   const [weeklyOnly, setWeeklyOnly] = useState(false)
+  // "Tournament" view: only players flagged tournament (play tourneys / events).
+  const [tournamentOnly, setTournamentOnly] = useState(false)
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the
@@ -199,6 +201,7 @@ export function usePlayers() {
           (!!r.phone?.trim() || !!r.beeper_chat_id?.trim())
         if (!onList) return false
       }
+      if (tournamentOnly && !(r.tournament ?? false)) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -226,7 +229,7 @@ export function usePlayers() {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, weeklyOnly, reviewed])
+  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, reviewed])
 
   // How many players are actually on the weekly send right now.
   const weeklyCount = useMemo(
@@ -363,6 +366,7 @@ export function usePlayers() {
     status, busy, renames, setRenames, sel, toggleSel, setSel, selectedRows,
     keeperId, setKeeperId, showHidden, setShowHidden, groupKeeper, setGroupKeeper,
     weeklyOnly, setWeeklyOnly, weeklyCount,
+    tournamentOnly, setTournamentOnly,
     reviewed, unmarkReviewed,
     load, regionCounts, regions, dupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,
