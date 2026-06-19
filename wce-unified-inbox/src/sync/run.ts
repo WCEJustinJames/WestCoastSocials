@@ -25,7 +25,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g8-vet'
+const SYNC_VERSION = 'g9-replies'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -94,6 +94,7 @@ let wasQuiet = false
 
 // Log kill-switch transitions once, not every pass.
 let wasPaused = false
+let wasRepliesPaused = false
 
 // In-memory AI-health tracker for the fail-loud alerter. Resets on restart,
 // which is fine: a process that comes back still broken should re-alert once.
@@ -146,10 +147,17 @@ async function runOnce(): Promise<void> {
   // sends can be halted instantly from the UI / SQL / cloud without restarting the
   // PC. Gates ALL outbound below, including the quiet-hours-exempt auto-reply and
   // seat-list. Fails open (see getSettings) so a DB blip can't wedge sends.
-  const { sendsPaused } = await getSettings(supabaseAdmin)
+  const { sendsPaused, repliesPaused } = await getSettings(supabaseAdmin)
   if (sendsPaused !== wasPaused) {
     console.log(sendsPaused ? '[paused] sends_paused ON, holding ALL outbound' : '[paused] sends_paused OFF, outbound resumes')
     wasPaused = sendsPaused
+  }
+  // Independent replies switch: pauses ONLY the AI auto-reply rail below, while
+  // proactive outreach keeps running. The master sends_paused still gates replies
+  // too, so the auto-reply is held when EITHER flag is on.
+  if (repliesPaused !== wasRepliesPaused) {
+    console.log(repliesPaused ? '[paused] replies_paused ON, auto-replies held' : '[paused] replies_paused OFF, auto-replies resume')
+    wasRepliesPaused = repliesPaused
   }
 
   // Resolve + store the Cash Games group chat id once per process, independent
@@ -222,7 +230,7 @@ async function runOnce(): Promise<void> {
   // responds to people who just messaged, never proactively outreaches), so it's
   // safe to run any time. The 4:30pm cutoff never applied here either — it only
   // gates outreach batches above.
-  if (!sendsPaused && anthropic && env.autoReply) {
+  if (!sendsPaused && !repliesPaused && anthropic && env.autoReply) {
     // Resolve the cash-games group once (so confirmations can be posted there).
     if (env.notifyGroupName && !notifyGroupChatId) {
       try {
