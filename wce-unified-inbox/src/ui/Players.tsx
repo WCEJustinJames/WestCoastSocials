@@ -45,6 +45,10 @@ export function Players() {
           <input type="checkbox" checked={p.tournamentOnly} onChange={(e) => p.setTournamentOnly(e.target.checked)} />
           tournament
         </label>
+        <label className="flex items-center gap-1 text-xs text-teal-700" title="Show only cash-game players">
+          <input type="checkbox" checked={p.cashOnly} onChange={(e) => p.setCashOnly(e.target.checked)} />
+          cash
+        </label>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           <input type="checkbox" checked={p.showHidden} onChange={(e) => p.setShowHidden(e.target.checked)} />
           show hidden

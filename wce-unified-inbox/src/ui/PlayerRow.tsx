@@ -111,6 +111,14 @@ export function PlayerCard({
           />
           tourney
         </label>
+        <label className="flex items-center gap-1 text-xs text-teal-700" title="Cash-game player — include in cash promos">
+          <input
+            type="checkbox"
+            checked={e.cash}
+            onChange={(ev) => setE(r.id, { cash: ev.target.checked })}
+          />
+          cash
+        </label>
         <label className="flex items-center gap-1 text-xs text-emerald-700" title="On the weekly cash message list (on by default; uncheck to leave them off)">
           <input
             type="checkbox"

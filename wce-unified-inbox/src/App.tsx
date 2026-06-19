@@ -4,10 +4,11 @@ import { Batches } from './ui/Batches'
 import { Receipts } from './ui/Receipts'
 import { Players } from './ui/Players'
 import { MergeReview } from './ui/MergeReview'
-import { StopButton } from './ui/StopButton'
+import { Drafts } from './ui/Drafts'
+import { StopButton, RepliesToggle } from './ui/StopButton'
 import { SignOut } from './ui/AuthGate'
 
-type View = 'inbox' | 'batches' | 'receipts' | 'players' | 'merge'
+type View = 'inbox' | 'batches' | 'drafts' | 'receipts' | 'players' | 'merge'
 
 export default function App() {
   const [view, setView] = useState<View>('inbox')
@@ -21,6 +22,9 @@ export default function App() {
         <TabButton active={view === 'batches'} onClick={() => setView('batches')}>
           Batches
         </TabButton>
+        <TabButton active={view === 'drafts'} onClick={() => setView('drafts')}>
+          Drafts
+        </TabButton>
         <TabButton active={view === 'receipts'} onClick={() => setView('receipts')}>
           Receipts
         </TabButton>
@@ -31,6 +35,7 @@ export default function App() {
           Merge &amp; Review
         </TabButton>
         <div className="ml-auto flex items-center gap-2">
+          <RepliesToggle />
           <StopButton />
           <SignOut />
         </div>
@@ -40,6 +45,8 @@ export default function App() {
           <Inbox />
         ) : view === 'batches' ? (
           <Batches />
+        ) : view === 'drafts' ? (
+          <Drafts />
         ) : view === 'receipts' ? (
           <Receipts />
         ) : view === 'players' ? (
