@@ -1,5 +1,15 @@
 import { REGIONS, VENUES, STAKES, type Edit, type PlayerRow as Row } from './usePlayers'
 
+/** "messaged 3d ago" / "never messaged" from a last_contacted date. */
+function sinceLabel(iso: string | null): string {
+  if (!iso) return 'never messaged'
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+  if (days <= 0) return 'messaged today'
+  if (days === 1) return 'messaged 1d ago'
+  if (days < 30) return `messaged ${days}d ago`
+  return `messaged ${Math.floor(days / 30)}mo ago`
+}
+
 interface PlayerCardProps {
   r: Row
   e: Edit
@@ -232,6 +242,14 @@ export function PlayerCard({
             ★
           </button>
         ))}
+        <span
+          className={`ml-auto rounded-full px-2 py-0.5 text-[10px] ${
+            r.last_contacted ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-700'
+          }`}
+          title={r.last_contacted ? `last messaged ${r.last_contacted}` : 'no message sent yet'}
+        >
+          {sinceLabel(r.last_contacted)}
+        </span>
       </div>
     </li>
   )

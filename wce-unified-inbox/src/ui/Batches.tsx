@@ -58,7 +58,9 @@ export function Batches() {
   const [cWindow, setCWindow] = useState('all')
   const [scheduleAt, setScheduleAt] = useState('')
 
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [picked, setPicked] = useState<Map<string, Recipient>>(new Map())
+  // Recipients to auto-pick once a reused list's rows load for the active source.
+  const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set())
   const [name, setName] = useState('')
   const [template, setTemplate] = useState('')
   const [attachImg, setAttachImg] = useState<PickedImage | null>(null)
@@ -239,9 +241,27 @@ export function Batches() {
       })
   }, [source, conversations, outreach, network, region, stake, activity, recipientQuery, channel, cDay, cWindow])
 
+  // When a reused list loads, pick its recipients once they appear for the now-
+  // active source — so the picks survive the source switch (multi-source lists).
+  useEffect(() => {
+    if (pendingKeys.size === 0) return
+    const add = recipients.filter((r) => pendingKeys.has(r.key))
+    if (add.length === 0) return
+    setPicked((prev) => {
+      const m = new Map(prev)
+      for (const r of add) m.set(r.key, r)
+      return m
+    })
+    setPendingKeys((prev) => {
+      const next = new Set(prev)
+      for (const r of add) next.delete(r.key)
+      return next
+    })
+  }, [recipients, pendingKeys])
+
   function switchSource(s: Source) {
+    // Keep current picks — selecting across Inbox + CRM is the whole point.
     setSource(s)
-    setSelected(new Set())
   }
 
   function loadPastBatches() {
@@ -269,26 +289,30 @@ export function Batches() {
       }
     }
     setSource(isCrm ? 'crm' : 'inbox')
-    setSelected(keys)
+    setPendingKeys(keys)
     setStatus(`Loaded ${keys.size} recipients from that list — edit the template and Build preview.`)
     setTimeout(() => setStatus(null), 6000)
   }
-  function toggle(key: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
-      return next
+  function toggle(r: Recipient) {
+    setPicked((prev) => {
+      const m = new Map(prev)
+      m.has(r.key) ? m.delete(r.key) : m.set(r.key, r)
+      return m
     })
   }
   function selectAllSendable() {
-    setSelected(new Set(recipients.filter((r) => r.sendable).map((r) => r.key)))
+    setPicked((prev) => {
+      const m = new Map(prev)
+      for (const r of recipients.filter((x) => x.sendable)) m.set(r.key, r)
+      return m
+    })
   }
   function clearSelection() {
-    setSelected(new Set())
+    setPicked(new Map())
   }
 
   async function buildPreview() {
-    const chosen = recipients.filter((r) => selected.has(r.key))
+    const chosen = Array.from(picked.values())
     if (!name.trim() || (!template.trim() && !attachImg) || chosen.length === 0) {
       setStatus('Add a name, a message or image, and at least one recipient.')
       return
@@ -428,7 +452,7 @@ export function Batches() {
     setPhoneEdits({})
     setFindText('')
     setReplaceText('')
-    setSelected(new Set())
+    setPicked(new Map())
     setName('')
     setTemplate('')
     setAttachImg(null)
@@ -695,7 +719,7 @@ export function Batches() {
       </div>
 
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <label className="text-sm font-medium">{selected.size} selected</label>
+        <label className="text-sm font-medium">{picked.size} selected{picked.size > 0 ? ' · across all sources' : ''}</label>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {source === 'inbox' ? (
             <select value={network} onChange={(e) => setNetwork(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
@@ -786,7 +810,7 @@ export function Batches() {
             }`}
           >
             <label className="flex flex-1 cursor-pointer items-center gap-2">
-              <input type="checkbox" checked={selected.has(r.key)} onChange={() => toggle(r.key)} />
+              <input type="checkbox" checked={picked.has(r.key)} onChange={() => toggle(r)} />
               <span className="flex-1">{r.name}</span>
               <span className="text-xs text-slate-400">{r.sub}</span>
               {r.badge && (
