@@ -5,6 +5,7 @@ import { Receipts } from './ui/Receipts'
 import { Players } from './ui/Players'
 import { MergeReview } from './ui/MergeReview'
 import { StopButton } from './ui/StopButton'
+import { SignOut } from './ui/AuthGate'
 
 type View = 'inbox' | 'batches' | 'receipts' | 'players' | 'merge'
 
@@ -29,8 +30,9 @@ export default function App() {
         <TabButton active={view === 'merge'} onClick={() => setView('merge')}>
           Merge &amp; Review
         </TabButton>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
           <StopButton />
+          <SignOut />
         </div>
       </nav>
       <div className="min-h-0 flex-1">
