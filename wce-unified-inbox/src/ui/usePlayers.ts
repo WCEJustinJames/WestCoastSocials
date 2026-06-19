@@ -78,6 +78,7 @@ export interface Edit {
   preferred_channel: string
   staff: boolean
   tournament: boolean
+  cash: boolean
   weekly: boolean
 }
 const toEdit = (r: PlayerRow): Edit => ({
@@ -95,6 +96,7 @@ const toEdit = (r: PlayerRow): Edit => ({
   preferred_channel: r.preferred_channel ?? '',
   staff: r.staff ?? false,
   tournament: r.tournament ?? false,
+  cash: r.cash ?? false,
   weekly: r.weekly ?? true,
 })
 
@@ -121,6 +123,8 @@ export function usePlayers() {
   const [weeklyOnly, setWeeklyOnly] = useState(false)
   // "Tournament" view: only players flagged tournament (play tourneys / events).
   const [tournamentOnly, setTournamentOnly] = useState(false)
+  // "Cash" view: only players flagged cash (cash-game segment).
+  const [cashOnly, setCashOnly] = useState(false)
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the
@@ -202,6 +206,7 @@ export function usePlayers() {
         if (!onList) return false
       }
       if (tournamentOnly && !(r.tournament ?? false)) return false
+      if (cashOnly && !(r.cash ?? false)) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -229,7 +234,7 @@ export function usePlayers() {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, reviewed])
+  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, cashOnly, reviewed])
 
   // How many players are actually on the weekly send right now.
   const weeklyCount = useMemo(
@@ -293,6 +298,7 @@ export function usePlayers() {
         preferred_channel: e.preferred_channel || null,
         staff: e.staff,
         tournament: e.tournament,
+        cash: e.cash,
         weekly: e.weekly,
       })
       .eq('id', id)
@@ -312,6 +318,10 @@ export function usePlayers() {
               venues: e.venues.split(',').map((s) => s.trim()).filter(Boolean),
               activity: e.activity.trim() || null,
               do_not_message: e.do_not_message,
+              staff: e.staff,
+              tournament: e.tournament,
+              weekly: e.weekly,
+              cash: e.cash,
             }
           : r,
       ),
@@ -367,6 +377,7 @@ export function usePlayers() {
     keeperId, setKeeperId, showHidden, setShowHidden, groupKeeper, setGroupKeeper,
     weeklyOnly, setWeeklyOnly, weeklyCount,
     tournamentOnly, setTournamentOnly,
+    cashOnly, setCashOnly,
     reviewed, unmarkReviewed,
     load, regionCounts, regions, dupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,

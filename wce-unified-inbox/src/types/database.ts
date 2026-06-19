@@ -415,6 +415,7 @@ export type Database = {
           staff: boolean
           tournament: boolean
           weekly: boolean
+          cash: boolean
           contact_day: string | null
           contact_window: string | null
           contact_frequency_days: number | null
@@ -446,6 +447,7 @@ export type Database = {
           staff?: boolean
           tournament?: boolean
           weekly?: boolean
+          cash?: boolean
           contact_day?: string | null
           contact_window?: string | null
           contact_frequency_days?: number | null
@@ -477,6 +479,7 @@ export type Database = {
           staff?: boolean
           tournament?: boolean
           weekly?: boolean
+          cash?: boolean
           contact_day?: string | null
           contact_window?: string | null
           contact_frequency_days?: number | null
