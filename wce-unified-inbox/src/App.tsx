@@ -5,10 +5,12 @@ import { Receipts } from './ui/Receipts'
 import { Players } from './ui/Players'
 import { MergeReview } from './ui/MergeReview'
 import { Drafts } from './ui/Drafts'
-import { StopButton, RepliesToggle } from './ui/StopButton'
+import { Confirmed } from './ui/Confirmed'
+import { Recent } from './ui/Recent'
+import { StopButton, RepliesToggle, RosterToggle } from './ui/StopButton'
 import { SignOut } from './ui/AuthGate'
 
-type View = 'inbox' | 'batches' | 'drafts' | 'receipts' | 'players' | 'merge'
+type View = 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts' | 'players' | 'merge'
 
 export default function App() {
   const [view, setView] = useState<View>('inbox')
@@ -25,6 +27,12 @@ export default function App() {
         <TabButton active={view === 'drafts'} onClick={() => setView('drafts')}>
           Drafts
         </TabButton>
+        <TabButton active={view === 'confirmed'} onClick={() => setView('confirmed')}>
+          Confirmed
+        </TabButton>
+        <TabButton active={view === 'recent'} onClick={() => setView('recent')}>
+          Recent
+        </TabButton>
         <TabButton active={view === 'receipts'} onClick={() => setView('receipts')}>
           Receipts
         </TabButton>
@@ -36,6 +44,7 @@ export default function App() {
         </TabButton>
         <div className="ml-auto flex items-center gap-2">
           <RepliesToggle />
+          <RosterToggle />
           <StopButton />
           <SignOut />
         </div>
@@ -47,6 +56,10 @@ export default function App() {
           <Batches />
         ) : view === 'drafts' ? (
           <Drafts />
+        ) : view === 'confirmed' ? (
+          <Confirmed />
+        ) : view === 'recent' ? (
+          <Recent />
         ) : view === 'receipts' ? (
           <Receipts />
         ) : view === 'players' ? (
