@@ -49,6 +49,10 @@ export function Players() {
           <input type="checkbox" checked={p.cashOnly} onChange={(e) => p.setCashOnly(e.target.checked)} />
           cash
         </label>
+        <label className="flex items-center gap-1 text-xs text-amber-700" title="Players with no phone or thread — collect their details in person">
+          <input type="checkbox" checked={p.noContactOnly} onChange={(e) => p.setNoContactOnly(e.target.checked)} />
+          no contact
+        </label>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           <input type="checkbox" checked={p.showHidden} onChange={(e) => p.setShowHidden(e.target.checked)} />
           show hidden

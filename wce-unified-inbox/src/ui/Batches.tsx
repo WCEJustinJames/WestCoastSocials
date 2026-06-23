@@ -82,6 +82,12 @@ export function Batches() {
   const [phoneEdits, setPhoneEdits] = useState<Record<string, string>>({})
   const [findText, setFindText] = useState('')
   const [replaceText, setReplaceText] = useState('')
+  // double-click / right-click inline edit of a CRM recipient's name + number
+  const [editKey, setEditKey] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editPhone, setEditPhone] = useState('')
+  // auto-hide unreachable (no phone/thread) recipients from the picker
+  const [showUnavailable, setShowUnavailable] = useState(false)
 
   useEffect(() => {
     let q = supabase
@@ -268,6 +274,29 @@ export function Batches() {
   function switchSource(s: Source) {
     // Keep current picks — selecting across Inbox + CRM is the whole point.
     setSource(s)
+  }
+
+  // Inline edit (double-click / right-click) of a CRM recipient's name + number,
+  // so a wrong or missing detail can be fixed without leaving the batch builder.
+  function startEdit(r: Recipient) {
+    if (source !== 'crm') return
+    const o = outreach.find((x) => x.id === r.key)
+    setEditKey(r.key)
+    setEditName(o?.player_name ?? r.name)
+    setEditPhone(o?.phone ?? '')
+  }
+  async function saveEdit() {
+    if (!editKey) return
+    const name = editName.trim()
+    const phone = editPhone.trim()
+    await supabase
+      .from('inbox_outreach')
+      .update({ player_name: name || null, phone: phone || null })
+      .eq('id', editKey)
+    setOutreach((prev) =>
+      prev.map((o) => (o.id === editKey ? { ...o, player_name: name || null, phone: phone || null } : o)),
+    )
+    setEditKey(null)
   }
 
   function loadPastBatches() {
@@ -796,6 +825,14 @@ export function Batches() {
             />
             show hidden
           </label>
+          <label className="flex items-center gap-1 text-slate-500">
+            <input
+              type="checkbox"
+              checked={showUnavailable}
+              onChange={(e) => setShowUnavailable(e.target.checked)}
+            />
+            show unavailable
+          </label>
         </div>
       </div>
 
@@ -832,42 +869,88 @@ export function Batches() {
         </div>
       )}
       <p className="mb-1 text-xs text-slate-400">
-        {recipients.length} match · {recipients.filter((r) => r.sendable).length} sendable now
+        {recipients.filter((r) => r.sendable).length} sendable ·{' '}
+        {recipients.filter((r) => !r.sendable).length} unavailable {showUnavailable ? 'shown' : 'hidden'}
         {source === 'crm' && outreach.length === 0 && ' · (CRM empty — run the sync with AIRTABLE_API_KEY set)'}
       </p>
 
       <div className="mb-4 max-h-72 overflow-y-auto rounded-md border border-slate-200">
-        {recipients.map((r) => (
+        {recipients.filter((r) => showUnavailable || r.sendable).map((r) => (
           <div
             key={r.key}
+            onDoubleClick={() => startEdit(r)}
+            onContextMenu={(e) => {
+              if (source === 'crm') {
+                e.preventDefault()
+                startEdit(r)
+              }
+            }}
             className={`group flex items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-sm last:border-0 hover:bg-slate-50 ${
               r.sendable ? '' : 'opacity-60'
             }`}
           >
-            <label className="flex flex-1 cursor-pointer items-center gap-2">
-              <input type="checkbox" checked={picked.has(r.key)} onChange={() => toggle(r)} />
-              <span className="flex-1">{r.name}</span>
-              <span className="text-xs text-slate-400">{r.sub}</span>
-              {r.badge && (
-                <span
-                  className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                    !r.sendable ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'
-                  }`}
+            {editKey === r.key ? (
+              <div className="flex flex-1 items-center gap-1">
+                <input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="name"
+                  autoFocus
+                  className="flex-1 rounded border border-slate-300 px-2 py-0.5 text-sm outline-none focus:border-emerald-500"
+                />
+                <input
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  placeholder="phone"
+                  className="w-32 rounded border border-slate-300 px-2 py-0.5 text-sm outline-none focus:border-emerald-500"
+                />
+                <button
+                  onClick={() => void saveEdit()}
+                  className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700"
                 >
-                  {r.badge}
-                </span>
-              )}
-            </label>
-            <button
-              onClick={() => void toggleHide(r.key, r.hidden)}
-              title={r.hidden ? 'Unhide' : 'Hide from this list'}
-              className="text-xs text-slate-300 hover:text-rose-600"
-            >
-              {r.hidden ? 'unhide' : 'hide'}
-            </button>
+                  Save
+                </button>
+                <button onClick={() => setEditKey(null)} className="px-1 text-xs text-slate-400 hover:underline">
+                  cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <label className="flex flex-1 cursor-pointer items-center gap-2">
+                  <input type="checkbox" checked={picked.has(r.key)} onChange={() => toggle(r)} />
+                  <span className="flex-1">{r.name}</span>
+                  <span className="text-xs text-slate-400">{r.sub}</span>
+                  {r.badge && (
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                        !r.sendable ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'
+                      }`}
+                    >
+                      {r.badge}
+                    </span>
+                  )}
+                </label>
+                {source === 'crm' && (
+                  <button
+                    onClick={() => startEdit(r)}
+                    title="Edit name / number (or double-click the row)"
+                    className="text-xs text-slate-300 hover:text-emerald-600"
+                  >
+                    edit
+                  </button>
+                )}
+                <button
+                  onClick={() => void toggleHide(r.key, r.hidden)}
+                  title={r.hidden ? 'Unhide' : 'Hide from this list'}
+                  className="text-xs text-slate-300 hover:text-rose-600"
+                >
+                  {r.hidden ? 'unhide' : 'hide'}
+                </button>
+              </>
+            )}
           </div>
         ))}
-        {recipients.length === 0 && (
+        {recipients.filter((r) => showUnavailable || r.sendable).length === 0 && (
           <p className="p-3 text-sm text-slate-400">No recipients match.</p>
         )}
       </div>
