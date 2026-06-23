@@ -25,7 +25,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g10-roster'
+const SYNC_VERSION = 'g11-replies-always'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -229,8 +229,11 @@ async function runOnce(): Promise<void> {
   // to us we answer them whatever the hour. This path is purely reactive (only
   // responds to people who just messaged, never proactively outreaches), so it's
   // safe to run any time. The 4:30pm cutoff never applied here either — it only
-  // gates outreach batches above.
-  if (!sendsPaused && !repliesPaused && anthropic && env.autoReply) {
+  // gates outreach batches above. Per Justin it is ALSO exempt from the master
+  // STOP (sends_paused): hitting STOP halts proactive outreach, but auto-replies
+  // keep answering players who message in. Only the dedicated replies switch
+  // (replies_paused) pauses this rail.
+  if (!repliesPaused && anthropic && env.autoReply) {
     // Resolve the cash-games group once (so confirmations can be posted there).
     if (env.notifyGroupName && !notifyGroupChatId) {
       try {
