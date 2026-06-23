@@ -55,7 +55,7 @@ export const env = {
     return (h || 0) * 60 + (m || 0)
   })(),
   outreachCutoffMins: (() => {
-    const [h, m] = (process.env.OUTREACH_CUTOFF ?? '16:30').split(':').map(Number)
+    const [h, m] = (process.env.OUTREACH_CUTOFF ?? '17:15').split(':').map(Number)
     return (h || 0) * 60 + (m || 0)
   })(),
   // Hard quiet hours (local time): proactive OUTREACH is held between QUIET_START
