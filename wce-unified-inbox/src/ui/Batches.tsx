@@ -299,6 +299,20 @@ export function Batches() {
     setEditKey(null)
   }
 
+  // Ban a CRM recipient straight from the picker: flag do-not-message and drop
+  // them from the list (and any current selection) so they can never be batched.
+  async function banPlayer(r: Recipient) {
+    if (source !== 'crm') return
+    if (!window.confirm(`Ban ${r.name}? Flags do-not-message and drops them from every list.`)) return
+    await supabase.from('inbox_outreach').update({ do_not_message: true }).eq('id', r.key)
+    setOutreach((prev) => prev.filter((o) => o.id !== r.key))
+    setPicked((prev) => {
+      const m = new Map(prev)
+      m.delete(r.key)
+      return m
+    })
+  }
+
   function loadPastBatches() {
     supabase
       .from('inbox_batches')
@@ -937,6 +951,15 @@ export function Batches() {
                     className="text-xs text-slate-300 hover:text-emerald-600"
                   >
                     edit
+                  </button>
+                )}
+                {source === 'crm' && (
+                  <button
+                    onClick={() => void banPlayer(r)}
+                    title="Ban — never message this player"
+                    className="text-xs text-slate-300 hover:text-rose-700"
+                  >
+                    ban
                   </button>
                 )}
                 <button
