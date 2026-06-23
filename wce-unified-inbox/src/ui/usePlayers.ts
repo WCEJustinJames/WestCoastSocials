@@ -125,6 +125,9 @@ export function usePlayers() {
   const [tournamentOnly, setTournamentOnly] = useState(false)
   // "Cash" view: only players flagged cash (cash-game segment).
   const [cashOnly, setCashOnly] = useState(false)
+  // "No contact" view: players with no phone AND no Messenger thread — the
+  // collect-their-number-in-person list.
+  const [noContactOnly, setNoContactOnly] = useState(false)
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the
@@ -207,6 +210,7 @@ export function usePlayers() {
       }
       if (tournamentOnly && !(r.tournament ?? false)) return false
       if (cashOnly && !(r.cash ?? false)) return false
+      if (noContactOnly && (!!r.phone?.trim() || !!r.beeper_chat_id?.trim())) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -234,7 +238,7 @@ export function usePlayers() {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, cashOnly, reviewed])
+  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, cashOnly, noContactOnly, reviewed])
 
   // How many players are actually on the weekly send right now.
   const weeklyCount = useMemo(
@@ -378,6 +382,7 @@ export function usePlayers() {
     weeklyOnly, setWeeklyOnly, weeklyCount,
     tournamentOnly, setTournamentOnly,
     cashOnly, setCashOnly,
+    noContactOnly, setNoContactOnly,
     reviewed, unmarkReviewed,
     load, regionCounts, regions, dupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,
