@@ -91,10 +91,10 @@ export function StopButton() {
     <PauseToggle
       column="sends_paused"
       reasonColumn="paused_reason"
-      confirmText="Pause ALL outgoing messages now?"
+      confirmText="Stop all outreach + batch sends now? (auto-replies keep running)"
       liveLabel="■ STOP"
       pausedLabel="▶ Resume sends"
-      liveTitle="Stop all outgoing messages"
+      liveTitle="Stop outreach + batch sends (auto-replies stay on)"
       pausedTitle="Sends are paused — tap to resume"
       liveClass="bg-red-600 hover:bg-red-500"
     />
