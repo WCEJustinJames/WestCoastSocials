@@ -133,9 +133,18 @@ export async function processReplies(
     byConv.set(m.conversation_id, arr)
   }
 
+  // Never auto-reply to staff / dealers / banned / hidden contacts — they're
+  // coordinating the game, not confirming a seat (the "No worries Shane, catch
+  // you at the next one" reply to the permit holder). Drop them before classify.
+  const excludedConvs = await flaggedConversationIds(db, [...byConv.keys()])
+
   const jobs: ConvJob[] = []
   const skipHandledIds: string[] = []
   for (const [conversationId, msgs] of byConv) {
+    if (excludedConvs.has(conversationId)) {
+      skipHandledIds.push(...msgs.map((m) => m.id))
+      continue
+    }
     const { count } = await db
       .from('inbox_messages')
       .select('id', { count: 'exact', head: true })
