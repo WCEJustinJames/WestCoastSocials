@@ -25,7 +25,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g9-replies'
+const SYNC_VERSION = 'g10-roster'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -147,7 +147,7 @@ async function runOnce(): Promise<void> {
   // sends can be halted instantly from the UI / SQL / cloud without restarting the
   // PC. Gates ALL outbound below, including the quiet-hours-exempt auto-reply and
   // seat-list. Fails open (see getSettings) so a DB blip can't wedge sends.
-  const { sendsPaused, repliesPaused } = await getSettings(supabaseAdmin)
+  const { sendsPaused, repliesPaused, rosterPaused } = await getSettings(supabaseAdmin)
   if (sendsPaused !== wasPaused) {
     console.log(sendsPaused ? '[paused] sends_paused ON, holding ALL outbound' : '[paused] sends_paused OFF, outbound resumes')
     wasPaused = sendsPaused
@@ -190,7 +190,7 @@ async function runOnce(): Promise<void> {
   // whole time. It can't spam — it only delete+reposts when the roster actually
   // changes. Runs only when the AI auto-reply is OFF (otherwise that path owns
   // the roster).
-  if (!sendsPaused && !anthropic && notifyGroupChatId && env.rosterKeywordFallback) {
+  if (!sendsPaused && !rosterPaused && !anthropic && notifyGroupChatId && env.rosterKeywordFallback) {
     try {
       await postSeatList(supabaseAdmin, adapter, notifyGroupChatId)
     } catch (e) {
@@ -250,7 +250,7 @@ async function runOnce(): Promise<void> {
         env.anthropicModel,
         env.autoReplyMaxPerPass,
         env.notifyPhone,
-        notifyGroupChatId,
+        rosterPaused ? null : notifyGroupChatId,
       )
       replyAi = rep.ai
       if (rep.replied || rep.confirmed || rep.escalated) {

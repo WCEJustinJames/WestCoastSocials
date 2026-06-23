@@ -6,12 +6,14 @@ type DB = SupabaseClient<Database>
 export interface InboxSettings {
   sendsPaused: boolean
   repliesPaused: boolean
+  rosterPaused: boolean
   pausedReason: string | null
 }
 
 type SettingsRow = {
   sends_paused: boolean | null
   replies_paused: boolean | null
+  roster_paused: boolean | null
   paused_reason: string | null
 }
 
@@ -37,17 +39,18 @@ export async function getSettings(db: DB): Promise<InboxSettings> {
     }
     const { data, error } = await q
       .from('inbox_settings')
-      .select('sends_paused, replies_paused, paused_reason')
+      .select('sends_paused, replies_paused, roster_paused, paused_reason')
       .eq('id', 1)
       .maybeSingle()
     if (error) throw new Error(error.message ?? 'settings query error')
     return {
       sendsPaused: data?.sends_paused ?? false,
       repliesPaused: data?.replies_paused ?? false,
+      rosterPaused: data?.roster_paused ?? false,
       pausedReason: data?.paused_reason ?? null,
     }
   } catch (e) {
     console.error('[settings] read failed, assuming NOT paused:', e instanceof Error ? e.message : e)
-    return { sendsPaused: false, repliesPaused: false, pausedReason: null }
+    return { sendsPaused: false, repliesPaused: false, rosterPaused: false, pausedReason: null }
   }
 }
