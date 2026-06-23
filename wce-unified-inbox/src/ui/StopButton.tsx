@@ -119,3 +119,21 @@ export function RepliesToggle() {
     />
   )
 }
+
+/**
+ * Pause/resume the cash-games group seat-list posting (inbox_settings.roster_paused).
+ * When paused the sync never posts or updates the group roster.
+ */
+export function RosterToggle() {
+  return (
+    <PauseToggle
+      column="roster_paused"
+      confirmText="Pause the cash-games group seat-list updates?"
+      liveLabel="⏸ Group"
+      pausedLabel="▶ Group off"
+      liveTitle="Pause the group seat-list posting"
+      pausedTitle="Group seat-list paused — tap to resume"
+      liveClass="bg-slate-600 hover:bg-slate-500"
+    />
+  )
+}

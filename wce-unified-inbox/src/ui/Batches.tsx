@@ -48,6 +48,7 @@ export function Batches() {
   const [network, setNetwork] = useState('all')
   const [region, setRegion] = useState('all')
   const [stake, setStake] = useState('all')
+  const [venue, setVenue] = useState('all')
   const [activity, setActivity] = useState('all')
   const [recipientQuery, setRecipientQuery] = useState('')
   // Which channel to contact CRM players on when more than one is available.
@@ -132,6 +133,10 @@ export function Batches() {
   )
   const stakesOpts = useMemo(
     () => Array.from(new Set(outreach.flatMap((o) => o.stakes ?? []))).sort(),
+    [outreach],
+  )
+  const venuesOpts = useMemo(
+    () => Array.from(new Set(outreach.flatMap((o) => o.venues ?? []))).sort(),
     [outreach],
   )
   const activities = useMemo(
@@ -233,13 +238,14 @@ export function Batches() {
           if (!rg.includes('all area') && !rg.includes(region.toLowerCase())) return false
         }
         if (stake !== 'all' && !(o.stakes ?? []).includes(stake)) return false
+        if (venue !== 'all' && !(o.venues ?? []).includes(venue)) return false
         if (activity !== 'all' && o.activity !== activity) return false
         if (cDay !== 'all' && o.contact_day !== cDay) return false
         if (cWindow !== 'all' && o.contact_window !== cWindow) return false
         if (q && !r.name.toLowerCase().includes(q)) return false
         return true
       })
-  }, [source, conversations, outreach, network, region, stake, activity, recipientQuery, channel, cDay, cWindow])
+  }, [source, conversations, outreach, network, region, stake, venue, activity, recipientQuery, channel, cDay, cWindow])
 
   // When a reused list loads, pick its recipients once they appear for the now-
   // active source — so the picks survive the source switch (multi-source lists).
@@ -744,6 +750,10 @@ export function Batches() {
                 <option value="all">All stakes</option>
                 {stakesOpts.map((s) => (<option key={s} value={s}>{s}</option>))}
               </select>
+              <select value={venue} onChange={(e) => setVenue(e.target.value)} title="Filter by venue" className="rounded-md border border-slate-300 px-2 py-1">
+                <option value="all">All venues</option>
+                {venuesOpts.map((v) => (<option key={v} value={v}>{v}</option>))}
+              </select>
               <select value={activity} onChange={(e) => setActivity(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
                 <option value="all">All activity</option>
                 {activities.map((a) => (<option key={a} value={a}>{a}</option>))}
@@ -796,6 +806,31 @@ export function Batches() {
         className="mb-2 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
       />
 
+      {picked.size > 0 && (
+        <div className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50/40 p-2">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-xs font-medium text-emerald-800">
+              Selected ({picked.size}) — kept across sources &amp; filters
+            </span>
+            <button onClick={clearSelection} className="text-xs text-slate-500 hover:underline">
+              clear all
+            </button>
+          </div>
+          <div className="flex max-h-28 flex-wrap gap-1 overflow-y-auto">
+            {Array.from(picked.values()).map((r) => (
+              <span
+                key={r.key}
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-xs"
+              >
+                {r.name}
+                <button onClick={() => toggle(r)} title="Remove" className="text-slate-400 hover:text-rose-600">
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <p className="mb-1 text-xs text-slate-400">
         {recipients.length} match · {recipients.filter((r) => r.sendable).length} sendable now
         {source === 'crm' && outreach.length === 0 && ' · (CRM empty — run the sync with AIRTABLE_API_KEY set)'}
