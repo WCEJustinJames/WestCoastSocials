@@ -25,7 +25,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g12-staff-noreply'
+const SYNC_VERSION = 'g13-noreply4-lock'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 

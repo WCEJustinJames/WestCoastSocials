@@ -32,7 +32,7 @@ const SYSTEM_NOISE =
 const SYSTEM_PROMPT = `You triage inbound SMS replies to a poker game invite. Justin runs West Coast Poker (WCP) and texted players inviting them to a game TONIGHT. Players are now replying. For each reply, decide how Justin should respond.
 
 Return intent:
-- "yes"   = they're coming / confirming / keen.
+- "yes"   = they're coming / confirming / keen. This INCLUDES a confirmation that also states a preference or condition — a table, stakes (e.g. $2/5 vs $2/5/10), a seat, or an arrival time. "I'll be there but prefer 2/5" is a YES, not a decline; put the preference in the note. A stated game/table/stakes preference is NEVER a "no".
 - "no"    = they can't make it / declining.
 - "maybe" = unsure, will try, asking a quick logistics thing you can't answer.
 - "other" = anything that genuinely needs Justin himself: a real question (where/what time/buy-in/address), money or banking talk, a complaint, an angry message, or something off-topic/unclear.
@@ -48,7 +48,7 @@ ${VOICE}
 - Do NOT state any specific time, place, or buy-in.
 When auto_ok is false, set "reply" to "".
 
-Also extract "note": any game/stake/seat detail the player stated (e.g. "$2/5 seat 7", "2/5/10", "save me a seat"). Keep it short; empty string if none.
+Also extract "note": any game/stake/seat/table detail or preference the player stated (e.g. "$2/5 seat 7", "prefers $2/5 not $2/5/10", "second table", "save me a seat", "arriving ~6"). Keep it short; empty string if none.
 
 Respond with ONLY a JSON array, one object per message, in the same order:
 [{"i":0,"intent":"yes","auto_ok":true,"reply":"...","note":"$2/5 seat 7"}]
@@ -218,9 +218,12 @@ export async function processReplies(
     const name = cleanName(job.name)
     const note = (v?.note ?? '').trim()
 
-    if (v && v.auto_ok && v.reply && intent !== 'other' && adapter.sendMessage) {
+    // Reserve confirmations get a generic lock emoji (no enthusiasm, per Justin);
+    // declines / maybes use the model's short acknowledgement.
+    const replyText = intent === 'yes' ? '🔒' : v && v.auto_ok && v.reply ? stripDashes(v.reply) : ''
+    if (replyText && intent !== 'other' && adapter.sendMessage) {
       try {
-        const r = await adapter.sendMessage(job.chatId, stripDashes(v.reply))
+        const r = await adapter.sendMessage(job.chatId, replyText)
         if (r.ok) replied++
       } catch (e) {
         console.error(`[reply] send error to ${job.name}:`, e instanceof Error ? e.message : e)
