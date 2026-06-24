@@ -7,6 +7,7 @@ import { MergeReview } from './ui/MergeReview'
 import { Drafts } from './ui/Drafts'
 import { Confirmed } from './ui/Confirmed'
 import { Recent } from './ui/Recent'
+import { SendShelf } from './ui/SendShelf'
 import { StopButton, RepliesToggle, RosterToggle } from './ui/StopButton'
 import { SignOut } from './ui/AuthGate'
 
@@ -68,6 +69,7 @@ export default function App() {
           <MergeReview />
         )}
       </div>
+      <SendShelf />
     </div>
   )
 }

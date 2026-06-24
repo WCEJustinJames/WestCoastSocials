@@ -23,11 +23,13 @@ interface Recipient {
   badge: string | null
   hidden: boolean
   personId: string | null
+  nickname?: string | null
   data: Json
 }
 
-function fill(template: string, name: string): string {
-  const first = name.trim().split(/\s+/)[0] ?? ''
+function fill(template: string, name: string, nickname?: string | null): string {
+  const nick = (nickname ?? '').trim()
+  const first = nick || (name.trim().split(/\s+/)[0] ?? '')
   // Tolerant of spaces/underscores: {{first name}}, {{first_name}}, {{firstname}}.
   return template
     .replace(/\{\{\s*first[\s_]*name\s*\}\}/gi, first)
@@ -86,8 +88,11 @@ export function Batches() {
   const [editKey, setEditKey] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editPhone, setEditPhone] = useState('')
+  const [editNick, setEditNick] = useState('')
   // auto-hide unreachable (no phone/thread) recipients from the picker
   const [showUnavailable, setShowUnavailable] = useState(false)
+  // when on, {{first_name}} renders each player's nickname (where one is set)
+  const [useNickname, setUseNickname] = useState(false)
 
   useEffect(() => {
     let q = supabase
@@ -225,6 +230,7 @@ export function Batches() {
                 : channels || null,
           hidden: o.hidden,
           personId: null,
+          nickname: o.nickname,
           data: {
             outreach_id: o.id,
             beeper_chat_id: o.beeper_chat_id,
@@ -284,17 +290,21 @@ export function Batches() {
     setEditKey(r.key)
     setEditName(o?.player_name ?? r.name)
     setEditPhone(o?.phone ?? '')
+    setEditNick(o?.nickname ?? '')
   }
   async function saveEdit() {
     if (!editKey) return
     const name = editName.trim()
     const phone = editPhone.trim()
+    const nickname = editNick.trim()
     await supabase
       .from('inbox_outreach')
-      .update({ player_name: name || null, phone: phone || null })
+      .update({ player_name: name || null, phone: phone || null, nickname: nickname || null })
       .eq('id', editKey)
     setOutreach((prev) =>
-      prev.map((o) => (o.id === editKey ? { ...o, player_name: name || null, phone: phone || null } : o)),
+      prev.map((o) =>
+        o.id === editKey ? { ...o, player_name: name || null, phone: phone || null, nickname: nickname || null } : o,
+      ),
     )
     setEditKey(null)
   }
@@ -391,7 +401,7 @@ export function Batches() {
     const rows = chosen.map((r) => ({
       batch_id: batch.id,
       person_id: r.personId,
-      rendered_text: fill(template, r.name),
+      rendered_text: fill(template, r.name, useNickname ? r.nickname : undefined),
       data: r.data,
       status: 'pending' as const,
       guard_flag: r.guard,
@@ -717,8 +727,13 @@ export function Batches() {
         onChange={(e) => setTemplate(e.target.value)}
         placeholder="Hey {{first_name}}, we've got a $5k freezeout this Friday 7pm — keen?"
         rows={3}
-        className="mb-4 w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+        className="mb-2 w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
       />
+      <label className="mb-4 flex items-center gap-2 text-xs text-slate-600">
+        <input type="checkbox" checked={useNickname} onChange={(e) => setUseNickname(e.target.checked)} />
+        Use nicknames for{' '}
+        <code className="rounded bg-slate-100 px-1">{'{{first_name}}'}</code> where one is set
+      </label>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <label className="cursor-pointer rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50">
@@ -917,6 +932,12 @@ export function Batches() {
                   onChange={(e) => setEditPhone(e.target.value)}
                   placeholder="phone"
                   className="w-32 rounded border border-slate-300 px-2 py-0.5 text-sm outline-none focus:border-emerald-500"
+                />
+                <input
+                  value={editNick}
+                  onChange={(e) => setEditNick(e.target.value)}
+                  placeholder="nickname"
+                  className="w-24 rounded border border-slate-300 px-2 py-0.5 text-sm outline-none focus:border-emerald-500"
                 />
                 <button
                   onClick={() => void saveEdit()}
