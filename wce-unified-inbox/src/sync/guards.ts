@@ -6,9 +6,9 @@ type DB = SupabaseClient<Database>
 
 export type GuardVerdict = { ok: true } | { ok: false; reason: string }
 
-// Default minimum days between proactive outreach touches when a contact has no
-// explicit contact_frequency_days. Conservative — better to under-message.
-const DEFAULT_FREQ_DAYS = 4
+// Skip proactive outreach once a contact has ignored this many invitations in a
+// row (no reply since). First-time / low-count contacts are exempt.
+const NO_REPLY_LIMIT = 4
 
 // A message still carrying a template token (or an empty "." body) must never go
 // out — that's the "Hi {{first}}," / spammy, not-his-voice failure mode.
@@ -38,9 +38,9 @@ type OutreachGuardRow = {
  *  - half-rendered or empty text  -> blocked for ALL sends
  *  - do_not_message / hidden      -> blocked for ALL sends
  *  - staff                        -> blocked for proactive outreach only
- *  - per-contact frequency cap    -> blocked for proactive outreach only
+ *  - ignored last N invitations   -> blocked for proactive outreach only
  * Returns a skip reason or ok. Reply/confirmation batches (isOutreach=false)
- * still honour bans but bypass the cooldown and staff checks.
+ * still honour bans but bypass the no-reply and staff checks.
  */
 export async function guardSend(
   db: DB,
@@ -79,37 +79,50 @@ export async function guardSend(
     return { ok: false, reason: 'first_time_review' }
   }
 
-  if (args.isOutreach && row.last_contacted) {
-    const freq = row.contact_frequency_days ?? DEFAULT_FREQ_DAYS
-    const lastMs = new Date(`${row.last_contacted}T00:00:00Z`).getTime()
-    if (Number.isFinite(lastMs)) {
-      const ageDays = (Date.now() - lastMs) / 86_400_000
-      if (ageDays < freq) return { ok: false, reason: `cooldown_${freq}d` }
-    }
-  }
-
-  // Non-replier guard: never send proactive outreach to someone who hasn't
-  // replied to our last message (their thread's most recent message is ours).
-  // Resolves the thread via the stored chat id — Messenger always, SMS once the
-  // send-linkage has recorded it; unlinked SMS falls back to the cooldown above.
-  if (args.isOutreach && row.beeper_chat_id) {
-    const { data: conv } = await db
-      .from('inbox_conversations')
-      .select('id')
-      .eq('external_chat_id', row.beeper_chat_id)
-      .limit(1)
-      .maybeSingle()
-    if (conv?.id) {
-      const { data: last } = await db
-        .from('inbox_messages')
-        .select('direction')
-        .eq('conversation_id', conv.id)
-        .order('timestamp', { ascending: false })
+  // No-reply guard (per Justin): stop proactive outreach once a contact has
+  // ignored our last N invitations — i.e. N+ invitations have been sent since
+  // their most recent reply (or ever, if they've never replied). First-time and
+  // low-count contacts are exempt, and time-since-last-contact no longer gates
+  // anything — a regular can be invited every night until they go quiet.
+  if (args.isOutreach) {
+    // Their most recent reply, resolved via the linked thread (if any).
+    let lastReply = '1970-01-01T00:00:00Z'
+    if (row.beeper_chat_id) {
+      const { data: conv } = await db
+        .from('inbox_conversations')
+        .select('id')
+        .eq('external_chat_id', row.beeper_chat_id)
         .limit(1)
         .maybeSingle()
-      if (last && (last.direction as unknown as string) === 'outbound') {
-        return { ok: false, reason: 'awaiting_reply' }
+      if (conv?.id) {
+        const { data: lastIn } = await db
+          .from('inbox_messages')
+          .select('timestamp')
+          .eq('conversation_id', conv.id)
+          .eq('direction', 'inbound')
+          .order('timestamp', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (lastIn?.timestamp) lastReply = lastIn.timestamp
       }
+    }
+    // Count invitations (the send ledger) to this player since that reply.
+    const ledger = db as unknown as {
+      from: (t: string) => {
+        select: (c: string, o: { count: 'exact'; head: true }) => {
+          eq: (col: string, v: string) => {
+            gt: (col: string, v: string) => Promise<{ count: number | null }>
+          }
+        }
+      }
+    }
+    const { count } = await ledger
+      .from('inbox_sent_log')
+      .select('id', { count: 'exact', head: true })
+      .eq('outreach_id', args.outreachId)
+      .gt('sent_at', lastReply)
+    if ((count ?? 0) >= NO_REPLY_LIMIT) {
+      return { ok: false, reason: `no_reply_${NO_REPLY_LIMIT}` }
     }
   }
   return { ok: true }
