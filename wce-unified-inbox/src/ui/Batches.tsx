@@ -198,36 +198,26 @@ export function Batches() {
         const chosen: 'thread' | 'sms' = useThread ? 'thread' : 'sms'
         const newSms = chosen === 'sms' && !hasThread // cold SMS to someone with no thread
         const channels = [hasPhone && 'SMS', hasThread && 'thread'].filter(Boolean).join(' + ')
-        // Frequency cap: don't re-contact within the player's contact_frequency_days.
-        const tooSoon =
-          !!o.last_contacted &&
-          !!o.contact_frequency_days &&
-          Date.now() - new Date(o.last_contacted).getTime() <
-            o.contact_frequency_days * 24 * 60 * 60 * 1000
         return {
           key: o.id,
           name: nm,
           sub: o.region ?? '—',
           sendable,
-          guard: newSms || tooSoon,
+          guard: newSms,
           guardReason: !sendable
             ? channel === 'thread'
               ? 'No existing thread'
               : channel === 'sms'
                 ? 'No phone'
                 : 'No phone or thread'
-            : tooSoon
-              ? `Contacted < ${o.contact_frequency_days}d ago`
-              : newSms
-                ? 'Will start a NEW SMS chat'
-                : null,
+            : newSms
+              ? 'Will start a NEW SMS chat'
+              : null,
           badge: !sendable
             ? 'unavailable'
-            : tooSoon
-              ? 'too soon'
-              : newSms
-                ? 'new SMS'
-                : channels || null,
+            : newSms
+              ? 'new SMS'
+              : channels || null,
           hidden: o.hidden,
           personId: null,
           nickname: o.nickname,
