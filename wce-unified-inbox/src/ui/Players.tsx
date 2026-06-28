@@ -69,6 +69,10 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
           <input type="checkbox" checked={p.fbFriendOnly} onChange={(e) => p.setFbFriendOnly(e.target.checked)} />
           FB · DM to open
         </label>
+        <label className="flex items-center gap-1 text-xs text-rose-700" title="Players we only have a first name for — work through and add surnames. Saving a surname drops the player from this list.">
+          <input type="checkbox" checked={p.firstNameOnly} onChange={(e) => p.setFirstNameOnly(e.target.checked)} />
+          first name only{p.firstNameOnlyCount ? ` (${p.firstNameOnlyCount})` : ''}
+        </label>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           <input type="checkbox" checked={p.showHidden} onChange={(e) => p.setShowHidden(e.target.checked)} />
           show hidden

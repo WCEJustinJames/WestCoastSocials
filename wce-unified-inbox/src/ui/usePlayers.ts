@@ -25,6 +25,18 @@ export const isIncomplete = (r: PlayerRow): boolean => {
   return noContact || noRegion || noStakes || noVenue
 }
 
+// "First name only" = a name with no surname — a single word that isn't just a
+// phone number. About a third of the CRM is like this (TD cash-sheet / reservation
+// captures that never recorded a surname). These are the rows to work through and
+// name; saving a surname makes the row stop matching, so it drops off the list.
+export const isFirstNameOnly = (r: PlayerRow): boolean => {
+  const n = (r.player_name ?? '').trim()
+  if (n === '' || /\s/.test(n)) return false // blank or has a surname
+  if (/^[0-9 +()-]+$/.test(n)) return false // a bare phone number
+  if (n.toLowerCase() === 'unknown') return false // no name at all, not a first name
+  return true
+}
+
 // Collapse Airtable's free-text "Source" (often a combo like "Google Contacts,
 // Facebook Messenger") into one short origin label for the chip + filter.
 function sourceFromText(s: string): string {
@@ -248,6 +260,9 @@ export function usePlayers(initialFilter?: string) {
   const [sourceFilter, setSourceFilter] = useState('all')
   // "FB · DM to open" view: Facebook friends with no thread yet (from importer).
   const [fbFriendOnly, setFbFriendOnly] = useState(initialFilter === 'fbDm')
+  // "First name only" view: players we have just a first name for — the naming
+  // backlog. Can be opened pre-filtered from the Home dashboard card.
+  const [firstNameOnly, setFirstNameOnly] = useState(initialFilter === 'firstName')
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the
@@ -339,6 +354,7 @@ export function usePlayers(initialFilter?: string) {
       if (incompleteOnly && !isIncomplete(r)) return false
       if (sourceFilter !== 'all' && sourceLabel(r) !== sourceFilter) return false
       if (fbFriendOnly && !(r.fb_friend && !r.phone?.trim() && !r.beeper_chat_id?.trim())) return false
+      if (firstNameOnly && !isFirstNameOnly(r)) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -366,7 +382,7 @@ export function usePlayers(initialFilter?: string) {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, reviewed])
+  }, [rows, query, regionFilter, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, firstNameOnly, reviewed])
 
   // Distinct sources present, with counts, for the Merge & Review source filter.
   const sources = useMemo(() => {
@@ -383,6 +399,9 @@ export function usePlayers(initialFilter?: string) {
     () => rows.filter((r) => r.fb_friend && !r.phone?.trim() && !r.beeper_chat_id?.trim()).length,
     [rows],
   )
+
+  // Players we only have a first name for — the naming backlog (chip + count).
+  const firstNameOnlyCount = useMemo(() => rows.filter(isFirstNameOnly).length, [rows])
 
   const selectedRows = useMemo(() => rows.filter((r) => sel.has(r.id)), [rows, sel])
 
@@ -559,6 +578,7 @@ export function usePlayers(initialFilter?: string) {
     incompleteOnly, setIncompleteOnly,
     sourceFilter, setSourceFilter, sources,
     fbFriendOnly, setFbFriendOnly, fbFriendCount, importFbFriends, clearFbFriends,
+    firstNameOnly, setFirstNameOnly, firstNameOnlyCount,
     reviewed, unmarkReviewed,
     chatNetworks,
     load, regionCounts, regions, dupGroups, filtered,
