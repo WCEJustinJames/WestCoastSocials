@@ -83,8 +83,10 @@ if (anthropic) {
 } else if (env.autoReply) {
   console.warn('[ai] ANTHROPIC_API_KEY not set — auto-reply + drafting are OFF (alerter will text Justin)')
 }
-if (env.airtableKey) {
+if (env.airtableSync && env.airtableKey) {
   console.log(`[outreach] Airtable CRM sync on (every ${env.outreachSyncMinutes}m)`)
+} else {
+  console.log('[outreach] Airtable retired — Supabase inbox_outreach is the source of truth')
 }
 if (env.googleRefreshToken) {
   console.log(`[contacts] Google Contacts sync on (every ${env.contactsSyncMinutes}m)`)
@@ -284,7 +286,9 @@ async function runOnce(): Promise<void> {
   }
 
   // Player Outreach CRM: mirror Airtable on a slow cadence (not every pass).
-  if (env.airtableKey && Date.now() - lastOutreachSync > env.outreachSyncMinutes * 60_000) {
+  // Retired by default — only runs when AIRTABLE_SYNC=1 is explicitly set, so a
+  // stale key lingering in .env never reawakens it (or spams 401s into the log).
+  if (env.airtableSync && env.airtableKey && Date.now() - lastOutreachSync > env.outreachSyncMinutes * 60_000) {
     lastOutreachSync = Date.now()
     try {
       const o = await syncOutreach(

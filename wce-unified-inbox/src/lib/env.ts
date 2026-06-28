@@ -19,8 +19,13 @@ export const env = {
   // Receipt OCR can use a cheaper model than drafting without hurting quality.
   receiptsModel: process.env.RECEIPTS_MODEL ?? process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
   draftMaxPerPass: Number(process.env.DRAFT_MAX_PER_PASS ?? 5),
-  // Airtable Player Outreach CRM (optional — leave the key unset to disable).
-  // When set, the sync mirrors the CRM into inbox_outreach for batch targeting.
+  // Airtable Player Outreach CRM — RETIRED. All 487 records (incl. the Source
+  // field) were copied into Supabase inbox_outreach, which is now the sole source
+  // of truth; new contacts arrive via Google Contacts / TD sheets / post-game /
+  // manual entry, all writing straight to Supabase. The legacy mirror is kept
+  // behind an explicit opt-in (AIRTABLE_SYNC=1) so a stale key left in .env can't
+  // resurrect it or spam 401s — set the flag only to deliberately re-import.
+  airtableSync: process.env.AIRTABLE_SYNC === '1',
   airtableKey: process.env.AIRTABLE_API_KEY ?? '',
   airtableBaseId: process.env.AIRTABLE_BASE_ID ?? 'appTPf6j5S1MdNXEf',
   airtableOutreachTable: process.env.AIRTABLE_OUTREACH_TABLE ?? 'Player Outreach',
