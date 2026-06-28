@@ -23,6 +23,9 @@ interface PlayerCardProps {
   showSelect?: boolean
   selected?: boolean
   onToggleSel?: (id: string) => void
+  // Real network of this player's linked Beeper thread (so we don't label an SMS
+  // thread "Messenger"). e.g. 'Google Messages', 'Facebook/Messenger'.
+  threadNetwork?: string | null
 }
 
 /** One editable player record. Shared by the Players list and the review queue. */
@@ -30,11 +33,18 @@ export function PlayerCard({
   r, e, setE, busy, isReviewed,
   onSave, onToggleHide, onUnmarkReviewed,
   showSelect = false, selected = false, onToggleSel,
+  threadNetwork = null,
 }: PlayerCardProps) {
   const stakeArr = e.stakes.split(',').map((s) => s.trim()).filter(Boolean)
   const venueArr = e.venues.split(',').map((s) => s.trim()).filter(Boolean)
-  const hasSms = !!e.phone.trim()
-  const hasThread = !!r.beeper_chat_id
+  // A linked Beeper thread is only "Messenger" when its network actually is —
+  // most are SMS (Google Messages). Resolve the real channel from the network.
+  const isMsgrThread = !!r.beeper_chat_id && /messenger|facebook|instagram/i.test(threadNetwork ?? '')
+  const isSmsThread = !!r.beeper_chat_id && /google messages|sms|messages|rcs/i.test(threadNetwork ?? '')
+  const otherNetwork =
+    !!r.beeper_chat_id && !isMsgrThread && !isSmsThread ? (threadNetwork || null) : null
+  const hasSms = !!e.phone.trim() || isSmsThread
+  const hasThread = isMsgrThread
   return (
     <li
       className={`rounded-lg border p-2 ${r.hidden ? 'opacity-60 ' : ''}${
@@ -61,7 +71,7 @@ export function PlayerCard({
         <input
           value={e.phone}
           onChange={(ev) => setE(r.id, { phone: ev.target.value })}
-          placeholder={hasThread && !hasSms ? 'no mobile' : 'Phone'}
+          placeholder={!e.phone.trim() && r.beeper_chat_id ? 'no mobile' : 'Phone'}
           className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
         />
         {/* Channel(s) this player is reachable on. When they have both SMS
@@ -86,6 +96,8 @@ export function PlayerCard({
           <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700">Messenger</span>
         ) : hasSms ? (
           <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">SMS</span>
+        ) : otherNetwork ? (
+          <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700">{otherNetwork}</span>
         ) : (
           <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">no contact</span>
         )}
