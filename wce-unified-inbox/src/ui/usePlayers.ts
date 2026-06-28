@@ -53,6 +53,7 @@ export function sourceLabel(r: { airtable_id: string | null; source?: string | n
   if (a.startsWith('lp:')) return 'letspoker'
   if (a.startsWith('staff:')) return 'staff'
   if (a.startsWith('manual:')) return 'manual'
+  if (a.startsWith('post-game:')) return 'post-game'
   if (a.startsWith('rec')) return r.source ? sourceFromText(r.source) : 'airtable'
   return 'other'
 }
@@ -61,9 +62,9 @@ export function sourceLabel(r: { airtable_id: string | null; source?: string | n
 // MCT Woodvale"). Stripped so a clean Facebook name still lines up with the record.
 const NAME_NOISE =
   /\b(poker|holdem|cash|tourney|tournament|nlh|plo|mtt|mct|woodvale|kenwick|bentley|kingsley|leederville|leedy|stirling|adriatic|kwinana|southside|north|south|central|east|west|hotel|tavern|club|bowls|president|dealer|reserve|home|game|games|player)\b/g
-const normFull = (raw: string): string =>
+export const normFull = (raw: string): string =>
   raw.toLowerCase().replace(/\$\s*\d[\d/]*/g, ' ').replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim()
-const normCore = (raw: string): string =>
+export const normCore = (raw: string): string =>
   normFull(raw).replace(NAME_NOISE, ' ').replace(/\s+/g, ' ').trim()
 
 function dedupeNames(ns: string[]): string[] {

@@ -36,6 +36,27 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_sync_heartbeat: {
+        Row: {
+          id: number
+          last_run: string
+          host: string | null
+          note: string | null
+        }
+        Insert: {
+          id: number
+          last_run?: string
+          host?: string | null
+          note?: string | null
+        }
+        Update: {
+          id?: number
+          last_run?: string
+          host?: string | null
+          note?: string | null
+        }
+        Relationships: []
+      }
       inbox_batch_items: {
         Row: {
           batch_id: string
