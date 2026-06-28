@@ -235,6 +235,10 @@ export function usePlayers(initialFilter?: string) {
   // external_chat_id -> network ('Google Messages', 'Facebook/Messenger', …) so a
   // card can show the thread's REAL channel instead of assuming Messenger.
   const [chatNetworks, setChatNetworks] = useState<Map<string, string>>(new Map())
+  // external_chat_id -> the thread's saved title (usually the contact's full name
+  // as it appears in Messenger / the phone), so the card can surface a last name
+  // the bare player_name is missing.
+  const [chatTitles, setChatTitles] = useState<Map<string, string>>(new Map())
   const [query, setQuery] = useState('')
   const [regionFilter, setRegionFilter] = useState('all')
   const [status, setStatus] = useState<string | null>(null)
@@ -316,13 +320,16 @@ export function usePlayers(initialFilter?: string) {
     // Google Messages, not Messenger) so the card badge shows the right channel.
     const { data: convs } = await supabase
       .from('inbox_conversations')
-      .select('external_chat_id, network')
+      .select('external_chat_id, network, title')
       .limit(5000)
     const nets = new Map<string, string>()
-    for (const c of (convs as { external_chat_id: string | null; network: string | null }[]) ?? []) {
+    const titles = new Map<string, string>()
+    for (const c of (convs as { external_chat_id: string | null; network: string | null; title: string | null }[]) ?? []) {
       if (c.external_chat_id && c.network) nets.set(c.external_chat_id, c.network)
+      if (c.external_chat_id && c.title) titles.set(c.external_chat_id, c.title)
     }
     setChatNetworks(nets)
+    setChatTitles(titles)
   }
   useEffect(() => {
     void load()
@@ -583,7 +590,7 @@ export function usePlayers(initialFilter?: string) {
     fbFriendOnly, setFbFriendOnly, fbFriendCount, importFbFriends, clearFbFriends,
     firstNameOnly, setFirstNameOnly, firstNameOnlyCount,
     reviewed, unmarkReviewed,
-    chatNetworks,
+    chatNetworks, chatTitles,
     load, regionCounts, regions, dupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,
     mergeOneGroup, mergeAllDuplicates,
