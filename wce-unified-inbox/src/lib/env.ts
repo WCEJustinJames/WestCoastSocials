@@ -33,6 +33,9 @@ export const env = {
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
   googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN ?? '',
   contactsSyncMinutes: Number(process.env.CONTACTS_SYNC_MINUTES ?? 720),
+  // Auto-linker cadence (minutes): match no-contact players against Beeper threads
+  // and phone-bearing records by name, linking/filling on exact unique matches.
+  autoLinkMinutes: Number(process.env.AUTOLINK_MINUTES ?? 60),
   // Auto-reply to inbound replies (poker game invites). When on, the sync reads
   // unhandled inbound messages, thanks/acknowledges the simple ones (confirm or
   // decline) automatically, and texts a confirmed-players digest to notifyPhone.
