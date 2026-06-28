@@ -102,10 +102,27 @@ export function parseFriendNames(raw: string): string[] {
       }
       return dedupeNames(names)
     }
-  } catch { /* not JSON — fall through to line parsing */ }
-  for (const line of text.split(/[\n,]+/)) {
+  } catch { /* not JSON — fall through to HTML / plain-text parsing */ }
+  // HTML (the your_friends.html export): strip tags to line breaks + decode a few
+  // entities, then line-parse and drop the date/heading rows Facebook interleaves.
+  let body = text
+  if (/<[a-z!/][^>]*>/i.test(body)) {
+    body = body
+      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<[^>]+>/g, '\n')
+      .replace(/&amp;/g, '&')
+      .replace(/&#0?39;|&apos;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&nbsp;/g, ' ')
+  }
+  for (const line of body.split(/[\n,]+/)) {
     const n = line.replace(/\(.*?\)\s*$/, '').trim()
-    if (n) names.push(n)
+    if (!n || n.length < 2 || n.length > 60) continue
+    if (/^\d/.test(n)) continue // dates / counts
+    if (/https?:\/\//i.test(n)) continue
+    if (/^(friends|your friends|facebook|name|date added)$/i.test(n)) continue
+    if (/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(n) && /\d/.test(n)) continue // timestamps
+    names.push(n)
   }
   return dedupeNames(names)
 }
