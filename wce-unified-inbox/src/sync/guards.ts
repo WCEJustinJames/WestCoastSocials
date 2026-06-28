@@ -30,6 +30,7 @@ type OutreachGuardRow = {
   last_contacted: string | null
   contact_frequency_days: number | null
   beeper_chat_id: string | null
+  snooze_until: string | null
 }
 
 /**
@@ -63,7 +64,7 @@ export async function guardSend(
   }
   const { data: row } = await q
     .from('inbox_outreach')
-    .select('do_not_message, hidden, staff, last_contacted, contact_frequency_days, beeper_chat_id')
+    .select('do_not_message, hidden, staff, last_contacted, contact_frequency_days, beeper_chat_id, snooze_until')
     .eq('id', args.outreachId)
     .maybeSingle()
   if (!row) return { ok: true }
@@ -71,6 +72,12 @@ export async function guardSend(
   if (row.do_not_message) return { ok: false, reason: 'do_not_message' }
   if (row.hidden) return { ok: false, reason: 'hidden' }
   if (args.isOutreach && row.staff) return { ok: false, reason: 'staff' }
+
+  // "On ice": parked from proactive outreach until their snooze date passes
+  // (e.g. away with work, or you benched them). Replies are never gated by this.
+  if (args.isOutreach && row.snooze_until && row.snooze_until > new Date().toISOString().slice(0, 10)) {
+    return { ok: false, reason: 'on_ice' }
+  }
 
   // Vet first-timers (opt-in, VET_FIRST_TIMERS=on): a contact we've never messaged
   // (no last_contacted) is held for one-tap review before their FIRST proactive

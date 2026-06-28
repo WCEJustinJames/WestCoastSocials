@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { normFull, normCore } from './usePlayers'
+import { normFull, normCore, VENUES } from './usePlayers'
 
 /** A trimmed CRM row — only what the post-game matcher / router needs. */
 interface CrmRow {
@@ -57,6 +57,8 @@ interface ContextRow {
 function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void }) {
   const [rows, setRows] = useState<ContextRow[]>([])
   const [loading, setLoading] = useState(true)
+  // Players actioned this session (added to a list / put on ice) drop off the panel.
+  const [handled, setHandled] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     const v = supabase as unknown as {
@@ -108,52 +110,117 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
   const fmtBack = (iso: string): string =>
     new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
-  if (loading || shown.length === 0) return null
-  const readyCount = shown.filter(isReady).length
+  const plusDays = (n: number): string => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
+  // Re-segment a player onto a venue's cash/tourney outreach (merges the venue,
+  // flags the game type) so the next batch for that venue picks them up.
+  async function addToList(r: ContextRow, venue: string, type: 'cash' | 'tournament') {
+    if (!r.outreach_id) return
+    const { data } = await supabase.from('inbox_outreach').select('venues').eq('id', r.outreach_id).maybeSingle()
+    const venues = Array.from(new Set([...(((data?.venues as string[] | null) ?? [])), venue]))
+    const patch = type === 'cash' ? { venues, cash: true } : { venues, tournament: true }
+    await supabase.from('inbox_outreach').update(patch).eq('id', r.outreach_id)
+    setHandled((s) => new Set(s).add(r.conversation_id))
+  }
+  // Park a player from outreach until a date (the send guard skips them till then).
+  async function onIce(r: ContextRow, until: string) {
+    if (!r.outreach_id) return
+    await supabase.from('inbox_outreach').update({ snooze_until: until }).eq('id', r.outreach_id)
+    setHandled((s) => new Set(s).add(r.conversation_id))
+  }
+
+  const visible = shown.filter((r) => !handled.has(r.conversation_id))
+  if (loading || visible.length === 0) return null
+  const readyCount = visible.filter(isReady).length
 
   return (
     <div className="mb-6">
       <h3 className="mb-1 text-sm font-semibold text-slate-700">Who&apos;s out — reasons &amp; when they&apos;re back</h3>
       <p className="mb-2 text-xs text-slate-400">
-        {shown.length} recently said they can&apos;t make it
-        {readyCount > 0 ? ` · ${readyCount} ready to re-invite` : ''}. Tap a player to open their thread.
+        {visible.length} recently said they can&apos;t make it
+        {readyCount > 0 ? ` · ${readyCount} ready to re-invite` : ''}. Tap a name to open their thread, or
+        re-segment / park them below.
       </p>
       <ul className="space-y-1">
-        {shown.map((r) => {
+        {visible.map((r) => {
           const ready = isReady(r)
           return (
-            <li key={r.conversation_id}>
-              <button
-                onClick={() => onOpen(r.conversation_id)}
-                title="Open this player's thread to message them"
-                className={`flex w-full items-start gap-2 rounded-md border px-3 py-2 text-left text-sm transition hover:border-emerald-400 hover:shadow-sm ${
-                  ready ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white'
-                }`}
-              >
-                <span
-                  className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
-                    ready
-                      ? 'bg-emerald-600 text-white'
-                      : r.reply_intent === 'no'
-                        ? 'bg-rose-100 text-rose-700'
-                        : 'bg-amber-100 text-amber-700'
-                  }`}
+            <li
+              key={r.conversation_id}
+              className={`rounded-md border px-3 py-2 ${
+                ready ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white'
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                <button
+                  onClick={() => onOpen(r.conversation_id)}
+                  title="Open this player's thread to message them"
+                  className="flex min-w-0 flex-1 items-start gap-2 text-left text-sm"
                 >
-                  {ready ? 're-invite ▸' : r.reply_intent === 'no' ? "can't make it" : 'maybe'}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="font-medium">{r.player_name}</span>
-                  {r.reply_note ? (
-                    <span className="ml-1 text-emerald-700">— {r.reply_note}</span>
-                  ) : (
-                    <span className="ml-1 italic text-slate-500">— “{r.reply_text.trim()}”</span>
-                  )}
-                  {r.back_on && (
-                    <span className="ml-1 whitespace-nowrap text-xs text-slate-400">(back {fmtBack(r.back_on)})</span>
-                  )}
-                </span>
+                  <span
+                    className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
+                      ready
+                        ? 'bg-emerald-600 text-white'
+                        : r.reply_intent === 'no'
+                          ? 'bg-rose-100 text-rose-700'
+                          : 'bg-amber-100 text-amber-700'
+                    }`}
+                  >
+                    {ready ? 're-invite ▸' : r.reply_intent === 'no' ? "can't make it" : 'maybe'}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium">{r.player_name}</span>
+                    {r.reply_note ? (
+                      <span className="ml-1 text-emerald-700">— {r.reply_note}</span>
+                    ) : (
+                      <span className="ml-1 italic text-slate-500">— “{r.reply_text.trim()}”</span>
+                    )}
+                    {r.back_on && (
+                      <span className="ml-1 whitespace-nowrap text-xs text-slate-400">(back {fmtBack(r.back_on)})</span>
+                    )}
+                  </span>
+                </button>
                 <span className="shrink-0 text-xs text-slate-400">{ago(r.replied_at)}</span>
-              </button>
+              </div>
+              {r.outreach_id && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1 text-[11px]">
+                  <select
+                    value=""
+                    onChange={(ev) => {
+                      const v = ev.target.value
+                      if (!v) return
+                      const [venue, type] = v.split('|') as [string, 'cash' | 'tournament']
+                      void addToList(r, venue, type)
+                    }}
+                    title="Add this player to a venue's cash or tournament outreach"
+                    className="rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600"
+                  >
+                    <option value="">＋ add to game list…</option>
+                    {VENUES.map((vn) => (
+                      <optgroup key={vn} label={vn}>
+                        <option value={`${vn}|cash`}>{vn} · cash</option>
+                        <option value={`${vn}|tournament`}>{vn} · tourney</option>
+                      </optgroup>
+                    ))}
+                  </select>
+                  <select
+                    value=""
+                    onChange={(ev) => {
+                      const v = ev.target.value
+                      if (!v) return
+                      void onIce(r, v === 'back' && r.back_on ? r.back_on : plusDays(Number(v)))
+                    }}
+                    title="Put on ice — skip proactive outreach until this date"
+                    className="rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600"
+                  >
+                    <option value="">❄ on ice…</option>
+                    <option value="7">1 week</option>
+                    <option value="14">2 weeks</option>
+                    <option value="30">1 month</option>
+                    <option value="60">2 months</option>
+                    {r.back_on && <option value="back">until {fmtBack(r.back_on)} (their date)</option>}
+                  </select>
+                </div>
+              )}
             </li>
           )
         })}
