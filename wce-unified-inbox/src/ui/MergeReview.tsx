@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { usePlayers, mergeRows, phoneCore, type PlayerRow as Row } from './usePlayers'
+import { usePlayers, mergeRows, phoneCore, sourceLabel, type PlayerRow as Row } from './usePlayers'
 import { PlayerCard } from './PlayerRow'
 
 /** Merge & Review tab — dedupe (region values + phone duplicates + manual merge)
@@ -11,11 +11,7 @@ export function MergeReview() {
     ? p.filtered.filter((r) => !p.reviewed.has(r.id))
     : p.filtered
 
-  const tag = (r: Row) =>
-    r.airtable_id.startsWith('gcsv:') || r.airtable_id.startsWith('gcontact:') ? 'google'
-      : r.airtable_id.startsWith('receipt:') ? 'receipt'
-        : r.airtable_id.startsWith('fb:') ? 'messenger'
-          : r.airtable_id.startsWith('thread:') ? 'thread' : 'airtable'
+  const tag = (r: Row) => sourceLabel(r)
 
   return (
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-6">

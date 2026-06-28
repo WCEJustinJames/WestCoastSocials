@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fileToBase64, type PickedImage } from '../lib/attachment'
+import { sourceLabel } from './usePlayers'
 import type { Database, Json } from '../types/database'
 
 type ConvRow = Database['public']['Tables']['inbox_conversations']['Row'] & {
@@ -48,6 +49,7 @@ export function Batches() {
 
   // filters
   const [network, setNetwork] = useState('all')
+  const [sourceFilter, setSourceFilter] = useState('all')
   const [region, setRegion] = useState('all')
   const [stake, setStake] = useState('all')
   const [venue, setVenue] = useState('all')
@@ -169,6 +171,10 @@ export function Batches() {
     () => Array.from(new Set(outreach.map((o) => o.activity).filter(Boolean) as string[])).sort(),
     [outreach],
   )
+  const sourcesOpts = useMemo(
+    () => Array.from(new Set(outreach.map((o) => sourceLabel(o)))).sort(),
+    [outreach],
+  )
   const networks = useMemo(
     () => Array.from(new Set(conversations.map((c) => c.network))).sort(),
     [conversations],
@@ -257,12 +263,13 @@ export function Batches() {
         if (stake !== 'all' && !(o.stakes ?? []).includes(stake)) return false
         if (venue !== 'all' && !(o.venues ?? []).includes(venue)) return false
         if (activity !== 'all' && o.activity !== activity) return false
+        if (sourceFilter !== 'all' && sourceLabel(o) !== sourceFilter) return false
         if (cDay !== 'all' && o.contact_day !== cDay) return false
         if (cWindow !== 'all' && o.contact_window !== cWindow) return false
         if (q && !r.name.toLowerCase().includes(q)) return false
         return true
       })
-  }, [source, conversations, outreach, network, region, stake, venue, activity, recipientQuery, channel, cDay, cWindow])
+  }, [source, conversations, outreach, network, region, stake, venue, activity, sourceFilter, recipientQuery, channel, cDay, cWindow])
 
   // When a reused list loads, pick its recipients once they appear for the now-
   // active source — so the picks survive the source switch (multi-source lists).
@@ -856,6 +863,10 @@ export function Batches() {
               <select value={activity} onChange={(e) => setActivity(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
                 <option value="all">All activity</option>
                 {activities.map((a) => (<option key={a} value={a}>{a}</option>))}
+              </select>
+              <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} title="Filter by contact source" className="rounded-md border border-slate-300 px-2 py-1">
+                <option value="all">All sources</option>
+                {sourcesOpts.map((s) => (<option key={s} value={s}>{s}</option>))}
               </select>
               <select
                 value={channel}
