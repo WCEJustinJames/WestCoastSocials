@@ -47,7 +47,7 @@ export function sourceLabel(airtableId: string | null): string {
 export const REGIONS = ['North', 'South', 'Central', 'All']
 export const VENUES = [
   'MCT', 'Woodvale', 'Bentley', 'Kenwick', 'Kingsley',
-  'Leederville', 'Adriatic', 'Stirling', 'Planet Royale',
+  'Leederville', 'Stirling', 'Planet Royale',
 ]
 export const STAKES = ['$2/5', '$5/10', '$2/5/10', 'PLO']
 
