@@ -74,23 +74,25 @@ export function PlayerCard({
           placeholder={!e.phone.trim() && r.beeper_chat_id ? 'no mobile' : 'Phone'}
           className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
         />
-        {/* Channel(s) this player is reachable on. When they have both SMS
-            and Messenger, the chips become a preference toggle. */}
+        {/* Channels this player is reachable on. Both shown as chips; the
+            preferred one is highlighted. Default to Messenger/FB (some players
+            only have FB, no number yet) — toggle to SMS once they share a
+            number and rapport builds. */}
         {hasSms && hasThread ? (
           <span className="flex items-center gap-1">
             <span className="text-[10px] text-slate-400">reach via</span>
             <button
               type="button"
-              title="Prefer SMS for this player"
-              onClick={() => setE(r.id, { preferred_channel: e.preferred_channel === 'sms' ? '' : 'sms' })}
-              className={`rounded-full px-1.5 py-0.5 text-[10px] ${e.preferred_channel === 'sms' ? 'bg-sky-600 text-white' : 'bg-sky-100 text-sky-700'}`}
-            >SMS</button>
+              title="Prefer Messenger/FB for this player (default)"
+              onClick={() => setE(r.id, { preferred_channel: 'thread' })}
+              className={`rounded-full px-1.5 py-0.5 text-[10px] ${e.preferred_channel !== 'sms' ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700'}`}
+            >{isMsgrThread ? 'Messenger' : (threadNetwork || 'thread')}</button>
             <button
               type="button"
-              title="Prefer Messenger for this player"
-              onClick={() => setE(r.id, { preferred_channel: e.preferred_channel === 'thread' ? '' : 'thread' })}
-              className={`rounded-full px-1.5 py-0.5 text-[10px] ${e.preferred_channel === 'thread' ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700'}`}
-            >Messenger</button>
+              title="Prefer SMS for this player (once you have their number)"
+              onClick={() => setE(r.id, { preferred_channel: 'sms' })}
+              className={`rounded-full px-1.5 py-0.5 text-[10px] ${e.preferred_channel === 'sms' ? 'bg-sky-600 text-white' : 'bg-sky-100 text-sky-700'}`}
+            >SMS</button>
           </span>
         ) : hasThread ? (
           <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700">Messenger</span>
