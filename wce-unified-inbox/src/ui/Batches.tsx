@@ -226,7 +226,12 @@ export function Batches() {
         return {
           key: o.id,
           name: nm,
-          sub: o.region ?? '—',
+          // A third of the CRM has only a first name on record (TD cash-sheet /
+          // reservation captures never had a surname), so many rows read just
+          // "Jack" — and they're DIFFERENT Jacks, each with their own number.
+          // Show phone + venue so identical first names are tellable apart and
+          // you can confirm the right person before sending.
+          sub: [o.phone, (o.venues ?? [])[0] ?? o.region].filter(Boolean).join(' · ') || '—',
           sendable,
           guard: newSms,
           guardReason: !sendable
