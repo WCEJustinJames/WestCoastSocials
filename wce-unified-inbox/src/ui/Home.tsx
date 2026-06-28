@@ -173,7 +173,7 @@ function PostGame() {
   // Attendees the sync pulled from recent TD sheets, grouped per game.
   useEffect(() => {
     void (async () => {
-      const since = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10)
+      const since = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10)
       const { data } = await supabase
         .from('inbox_td_attendees')
         .select('sheet_id, sheet_title, venue, game_date, name, is_winner')
