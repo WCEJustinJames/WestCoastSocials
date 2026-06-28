@@ -57,6 +57,58 @@ export function sourceLabel(r: { airtable_id: string | null; source?: string | n
   return 'other'
 }
 
+// Poker/venue noise operators append to CRM names (e.g. "Chris Pavitt $2/5/10
+// MCT Woodvale"). Stripped so a clean Facebook name still lines up with the record.
+const NAME_NOISE =
+  /\b(poker|holdem|cash|tourney|tournament|nlh|plo|mtt|mct|woodvale|kenwick|bentley|kingsley|leederville|leedy|stirling|adriatic|kwinana|southside|north|south|central|east|west|hotel|tavern|club|bowls|president|dealer|reserve|home|game|games|player)\b/g
+const normFull = (raw: string): string =>
+  raw.toLowerCase().replace(/\$\s*\d[\d/]*/g, ' ').replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim()
+const normCore = (raw: string): string =>
+  normFull(raw).replace(NAME_NOISE, ' ').replace(/\s+/g, ' ').trim()
+
+function dedupeNames(ns: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const n of ns) {
+    const k = n.toLowerCase().trim()
+    if (k && !seen.has(k)) { seen.add(k); out.push(n.trim()) }
+  }
+  return out
+}
+
+/**
+ * Pull friend names out of whatever gets pasted: Facebook's "Download Your
+ * Information" JSON (a `friends_v2` / `friends` array, or a bare array), or a
+ * plain newline/comma list. Lines like "Jane Doe (2 mutual friends)" keep just
+ * the name before the bracket.
+ */
+export function parseFriendNames(raw: string): string[] {
+  const text = raw.trim()
+  if (!text) return []
+  const names: string[] = []
+  try {
+    const j = JSON.parse(text) as unknown
+    const obj = j as { friends_v2?: unknown; friends?: unknown }
+    const list =
+      Array.isArray(j) ? j
+      : Array.isArray(obj.friends_v2) ? obj.friends_v2
+      : Array.isArray(obj.friends) ? obj.friends
+      : null
+    if (list) {
+      for (const it of list as unknown[]) {
+        const n = typeof it === 'string' ? it : (it as { name?: unknown })?.name
+        if (n) names.push(String(n))
+      }
+      return dedupeNames(names)
+    }
+  } catch { /* not JSON — fall through to line parsing */ }
+  for (const line of text.split(/[\n,]+/)) {
+    const n = line.replace(/\(.*?\)\s*$/, '').trim()
+    if (n) names.push(n)
+  }
+  return dedupeNames(names)
+}
+
 // Canonical dropdown vocabularies. Edit these lists to taste — existing
 // non-standard values on a player are preserved and shown as the selection.
 export const REGIONS = ['North', 'South', 'Central', 'All']
@@ -175,6 +227,8 @@ export function usePlayers() {
   const [incompleteOnly, setIncompleteOnly] = useState(false)
   // Filter by where the contact came from (phone / TD sheet / facebook / …).
   const [sourceFilter, setSourceFilter] = useState('all')
+  // "FB · DM to open" view: Facebook friends with no thread yet (from importer).
+  const [fbFriendOnly, setFbFriendOnly] = useState(false)
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the
@@ -265,6 +319,7 @@ export function usePlayers() {
       if (staffOnly && !(r.staff ?? false)) return false
       if (incompleteOnly && !isIncomplete(r)) return false
       if (sourceFilter !== 'all' && sourceLabel(r) !== sourceFilter) return false
+      if (fbFriendOnly && !(r.fb_friend && !r.phone?.trim() && !r.beeper_chat_id?.trim())) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -292,7 +347,7 @@ export function usePlayers() {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, reviewed])
+  }, [rows, query, regionFilter, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, reviewed])
 
   // Distinct sources present, with counts, for the Merge & Review source filter.
   const sources = useMemo(() => {
@@ -304,7 +359,53 @@ export function usePlayers() {
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [rows])
 
+  // FB friends still needing a first DM (friend flag set, no thread/phone yet).
+  const fbFriendCount = useMemo(
+    () => rows.filter((r) => r.fb_friend && !r.phone?.trim() && !r.beeper_chat_id?.trim()).length,
+    [rows],
+  )
+
   const selectedRows = useMemo(() => rows.filter((r) => sel.has(r.id)), [rows, sel])
+
+  // Cross-check a pasted Facebook friends list against every CRM name and set the
+  // fb_friend flag. Matches on the cleaned name (with and without venue/stake
+  // noise), so "Chris Pavitt $2/5/10 MCT Woodvale" still lines up with "Chris
+  // Pavitt". Reconciles: a name no longer on the list is un-flagged.
+  async function importFbFriends(raw: string): Promise<{ friends: number; flagged: number; cleared: number }> {
+    const friends = parseFriendNames(raw)
+    const friendKeys = new Set<string>()
+    for (const f of friends) {
+      const a = normFull(f), b = normCore(f)
+      if (a.length >= 3) friendKeys.add(a)
+      if (b.length >= 3) friendKeys.add(b)
+    }
+    const matchedIds = new Set<string>()
+    for (const r of rows) {
+      if (!r.player_name) continue
+      const a = normFull(r.player_name), b = normCore(r.player_name)
+      if ((a.length >= 3 && friendKeys.has(a)) || (b.length >= 3 && friendKeys.has(b))) matchedIds.add(r.id)
+    }
+    const toTrue = rows.filter((r) => matchedIds.has(r.id) && !r.fb_friend).map((r) => r.id)
+    const toFalse = rows.filter((r) => !matchedIds.has(r.id) && r.fb_friend).map((r) => r.id)
+    setBusy(true)
+    for (let i = 0; i < toTrue.length; i += 500)
+      await supabase.from('inbox_outreach').update({ fb_friend: true }).in('id', toTrue.slice(i, i + 500))
+    for (let i = 0; i < toFalse.length; i += 500)
+      await supabase.from('inbox_outreach').update({ fb_friend: false }).in('id', toFalse.slice(i, i + 500))
+    setBusy(false)
+    await load()
+    return { friends: friends.length, flagged: matchedIds.size, cleared: toFalse.length }
+  }
+
+  async function clearFbFriends(): Promise<number> {
+    const ids = rows.filter((r) => r.fb_friend).map((r) => r.id)
+    setBusy(true)
+    for (let i = 0; i < ids.length; i += 500)
+      await supabase.from('inbox_outreach').update({ fb_friend: false }).in('id', ids.slice(i, i + 500))
+    setBusy(false)
+    await load()
+    return ids.length
+  }
 
   function toggleSel(id: string) {
     setSel((prev) => {
@@ -436,6 +537,7 @@ export function usePlayers() {
     staffOnly, setStaffOnly,
     incompleteOnly, setIncompleteOnly,
     sourceFilter, setSourceFilter, sources,
+    fbFriendOnly, setFbFriendOnly, fbFriendCount, importFbFriends, clearFbFriends,
     reviewed, unmarkReviewed,
     chatNetworks,
     load, regionCounts, regions, dupGroups, filtered,

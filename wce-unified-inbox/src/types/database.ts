@@ -419,6 +419,7 @@ export type Database = {
           tournament: boolean
           weekly: boolean
           cash: boolean
+          fb_friend: boolean
           nickname: string | null
           contact_day: string | null
           contact_window: string | null
@@ -453,6 +454,7 @@ export type Database = {
           tournament?: boolean
           weekly?: boolean
           cash?: boolean
+          fb_friend?: boolean
           nickname?: string | null
           contact_day?: string | null
           contact_window?: string | null
@@ -487,6 +489,7 @@ export type Database = {
           tournament?: boolean
           weekly?: boolean
           cash?: boolean
+          fb_friend?: boolean
           nickname?: string | null
           contact_day?: string | null
           contact_window?: string | null

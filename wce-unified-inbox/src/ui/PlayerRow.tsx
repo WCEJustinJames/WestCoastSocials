@@ -100,6 +100,11 @@ export function PlayerCard({
           <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">SMS</span>
         ) : otherNetwork ? (
           <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700">{otherNetwork}</span>
+        ) : r.fb_friend ? (
+          <span
+            className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700"
+            title="Facebook friend, no thread yet — send one Messenger message to open the conversation; it links to this record automatically on the next sync."
+          >FB · DM to open</span>
         ) : (
           <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">no contact</span>
         )}
