@@ -25,6 +25,14 @@ export const env = {
   airtableBaseId: process.env.AIRTABLE_BASE_ID ?? 'appTPf6j5S1MdNXEf',
   airtableOutreachTable: process.env.AIRTABLE_OUTREACH_TABLE ?? 'Player Outreach',
   outreachSyncMinutes: Number(process.env.OUTREACH_SYNC_MINUTES ?? 10),
+  // Google Contacts (People API) sync (optional — leave the refresh token unset
+  // to disable). When set, the sync pulls contacts you've added (incrementally,
+  // via a stored sync token) into inbox_outreach so new in-person contacts show
+  // up in the CRM automatically. Read-only scope. See scripts/get-google-refresh-token.mjs.
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+  googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN ?? '',
+  contactsSyncMinutes: Number(process.env.CONTACTS_SYNC_MINUTES ?? 720),
   // Auto-reply to inbound replies (poker game invites). When on, the sync reads
   // unhandled inbound messages, thanks/acknowledges the simple ones (confirm or
   // decline) automatically, and texts a confirmed-players digest to notifyPhone.
