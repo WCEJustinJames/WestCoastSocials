@@ -212,8 +212,12 @@ export function Batches() {
         const nm = o.player_name || [o.first_name, o.last_name].filter(Boolean).join(' ') || '—'
         const hasThread = !!o.beeper_chat_id
         const hasPhone = !!o.phone
-        // Resolve which channel this batch will use for this player.
-        const useThread = channel === 'thread' || (channel === 'auto' && hasThread)
+        // Resolve which channel this batch will use for this player. In "auto"
+        // we default to their thread (Messenger/FB) — unless they've been toggled
+        // to prefer SMS and we actually have a number for them.
+        const useThread =
+          channel === 'thread' ||
+          (channel === 'auto' && hasThread && !(o.preferred_channel === 'sms' && hasPhone))
         const sendable =
           channel === 'thread' ? hasThread : channel === 'sms' ? hasPhone : hasThread || hasPhone
         const chosen: 'thread' | 'sms' = useThread ? 'thread' : 'sms'
