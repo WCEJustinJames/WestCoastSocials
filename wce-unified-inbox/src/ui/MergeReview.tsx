@@ -121,6 +121,47 @@ export function MergeReview() {
           placeholder="Search to review (e.g. fb_unreviewed, messenger, a name)…"
           className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
         />
+        <input
+          list="review-region-list"
+          value={p.regionFilter === 'all' ? '' : p.regionFilter}
+          onChange={(e) => p.setRegionFilter(e.target.value.trim() || 'all')}
+          placeholder="Region…"
+          className="w-32 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+        />
+        <datalist id="review-region-list">
+          {p.regions.map((r) => (<option key={r} value={r} />))}
+        </datalist>
+      </div>
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <label className="flex items-center gap-1 text-xs text-rose-700" title="Records still missing contact / region / stakes / venue">
+          <input type="checkbox" checked={p.incompleteOnly} onChange={(e) => p.setIncompleteOnly(e.target.checked)} />
+          incomplete
+        </label>
+        <label className="flex items-center gap-1 text-xs text-amber-700" title="No phone or thread — collect their details in person">
+          <input type="checkbox" checked={p.noContactOnly} onChange={(e) => p.setNoContactOnly(e.target.checked)} />
+          no contact
+        </label>
+        <label className="flex items-center gap-1 text-xs text-emerald-700" title="On the recurring weekly cash send">
+          <input type="checkbox" checked={p.weeklyOnly} onChange={(e) => p.setWeeklyOnly(e.target.checked)} />
+          weekly
+        </label>
+        <label className="flex items-center gap-1 text-xs text-purple-700" title="Tournament players">
+          <input type="checkbox" checked={p.tournamentOnly} onChange={(e) => p.setTournamentOnly(e.target.checked)} />
+          tournament
+        </label>
+        <label className="flex items-center gap-1 text-xs text-teal-700" title="Cash-game players">
+          <input type="checkbox" checked={p.cashOnly} onChange={(e) => p.setCashOnly(e.target.checked)} />
+          cash
+        </label>
+        <label className="flex items-center gap-1 text-xs text-red-700" title="Banned / opted out (do not message)">
+          <input type="checkbox" checked={p.banOnly} onChange={(e) => p.setBanOnly(e.target.checked)} />
+          ban
+        </label>
+        <label className="flex items-center gap-1 text-xs text-indigo-700" title="Staff / dealers / crew">
+          <input type="checkbox" checked={p.staffOnly} onChange={(e) => p.setStaffOnly(e.target.checked)} />
+          staff
+        </label>
+        <span className="mx-1 hidden h-4 w-px bg-slate-200 sm:block" />
         <label className="flex items-center gap-1 text-xs text-slate-500">
           <input type="checkbox" checked={onlyUnreviewed} onChange={(e) => setOnlyUnreviewed(e.target.checked)} />
           only unreviewed
