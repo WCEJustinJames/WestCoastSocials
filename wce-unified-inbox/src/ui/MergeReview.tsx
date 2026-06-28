@@ -12,9 +12,10 @@ export function MergeReview() {
     : p.filtered
 
   const tag = (r: Row) =>
-    r.airtable_id.startsWith('gcsv:') ? 'google'
+    r.airtable_id.startsWith('gcsv:') || r.airtable_id.startsWith('gcontact:') ? 'google'
       : r.airtable_id.startsWith('receipt:') ? 'receipt'
-        : r.airtable_id.startsWith('fb:') ? 'messenger' : 'airtable'
+        : r.airtable_id.startsWith('fb:') ? 'messenger'
+          : r.airtable_id.startsWith('thread:') ? 'thread' : 'airtable'
 
   return (
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-6">

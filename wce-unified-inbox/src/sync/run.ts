@@ -17,6 +17,7 @@ import { processOutbox } from './outbox'
 import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
 import { syncOutreach } from './outreach'
+import { syncGoogleContacts } from './contacts'
 import { processReplies } from './notify'
 import { postSeatList } from './roster'
 import { newAiHealth, trackAiHealth, worstOutcome, type AiOutcome } from './alert'
@@ -25,7 +26,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g15-outreach-only-replies'
+const SYNC_VERSION = 'g16-google-contacts'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -82,12 +83,17 @@ if (anthropic) {
 if (env.airtableKey) {
   console.log(`[outreach] Airtable CRM sync on (every ${env.outreachSyncMinutes}m)`)
 }
+if (env.googleRefreshToken) {
+  console.log(`[contacts] Google Contacts sync on (every ${env.contactsSyncMinutes}m)`)
+}
 if (anthropic && env.autoReply) {
   console.log(`[reply] auto-reply on — digest texts to ${env.notifyPhone}`)
 }
 
 // Airtable CRM sync runs on its own slower cadence, not every pass.
 let lastOutreachSync = 0
+// Google Contacts sync also runs on a slow cadence (default twice a day).
+let lastContactsSync = 0
 
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
@@ -279,6 +285,23 @@ async function runOnce(): Promise<void> {
       console.log(`[outreach] synced=${o.synced} players from Airtable`)
     } catch (e) {
       console.error('[outreach] sync error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Google Contacts: pull newly-added contacts into the CRM on a slow cadence,
+  // so numbers Justin saves in person show up for outreach without a CSV export.
+  if (env.googleRefreshToken && Date.now() - lastContactsSync > env.contactsSyncMinutes * 60_000) {
+    lastContactsSync = Date.now()
+    try {
+      const gc = await syncGoogleContacts(
+        supabaseAdmin,
+        env.googleClientId,
+        env.googleClientSecret,
+        env.googleRefreshToken,
+      )
+      if (gc.created) console.log(`[contacts] ${gc.created} new contact(s) imported (${gc.scanned} changed)`)
+    } catch (e) {
+      console.error('[contacts] sync error:', e instanceof Error ? e.message : e)
     }
   }
 
