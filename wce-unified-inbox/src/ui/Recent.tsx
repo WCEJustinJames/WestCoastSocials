@@ -7,18 +7,21 @@ interface Row {
   sent_at: string
 }
 
-interface LogRaw {
+interface ViewRow {
   recipient: string
+  name: string | null
   sent_at: string
-  outreach_id: string | null
 }
 
-// inbox_sent_log isn't in the generated Database types yet — cast for this table.
-const sentLog = supabase as unknown as {
+// inbox_recent_contacts (a view) isn't in the generated Database types — cast it.
+// The view already resolves the display name (CRM player → Beeper contact →
+// conversation title) and dedups to one row per recipient, so the client just
+// reads it. See supabase/migrations/0026_inbox_recent_contacts_view.sql.
+const recentView = supabase as unknown as {
   from: (t: string) => {
     select: (c: string) => {
       order: (col: string, o: { ascending: boolean }) => {
-        limit: (n: number) => Promise<{ data: LogRaw[] | null }>
+        limit: (n: number) => Promise<{ data: ViewRow[] | null }>
       }
     }
   }
@@ -39,8 +42,8 @@ function ago(iso: string): string {
 /**
  * Players recently contacted — deduped to one row per recipient (their most
  * recent send), newest first, with how long ago. Sourced from the send ledger,
- * so it covers every channel (SMS + Messenger), and names resolve from the CRM
- * where the send was linked to a player.
+ * so it covers every channel (SMS + Messenger). Name resolution + dedup happen
+ * in the inbox_recent_contacts view, so a Beeper room id never leaks into the UI.
  */
 export function Recent() {
   const [rows, setRows] = useState<Row[]>([])
@@ -48,27 +51,16 @@ export function Recent() {
 
   async function load() {
     setLoading(true)
-    const { data: logs } = await sentLog
-      .from('inbox_sent_log')
-      .select('recipient, sent_at, outreach_id')
+    const { data } = await recentView
+      .from('inbox_recent_contacts')
+      .select('recipient, name, sent_at')
       .order('sent_at', { ascending: false })
       .limit(500)
-    const dedup = new Map<string, LogRaw>()
-    for (const l of logs ?? []) {
-      if (!dedup.has(l.recipient)) dedup.set(l.recipient, l)
-    }
-    const ids = [...new Set([...dedup.values()].map((d) => d.outreach_id).filter(Boolean))] as string[]
-    const nameById = new Map<string, string>()
-    if (ids.length) {
-      const { data: outs } = await supabase.from('inbox_outreach').select('id, player_name').in('id', ids)
-      for (const o of outs ?? []) nameById.set(o.id, (o.player_name ?? '').trim())
-    }
-    const out: Row[] = [...dedup.values()].map((d) => ({
+    const out: Row[] = (data ?? []).map((d) => ({
       key: d.recipient,
-      name: (d.outreach_id ? nameById.get(d.outreach_id) : '') || d.recipient,
+      name: (d.name ?? '').trim() || d.recipient,
       sent_at: d.sent_at,
     }))
-    out.sort((a, b) => (a.sent_at < b.sent_at ? 1 : -1))
     setRows(out)
     setLoading(false)
   }
