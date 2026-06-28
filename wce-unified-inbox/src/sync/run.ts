@@ -26,7 +26,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g16-google-contacts'
+const SYNC_VERSION = 'g17-contacts-autohide'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -299,7 +299,7 @@ async function runOnce(): Promise<void> {
         env.googleClientSecret,
         env.googleRefreshToken,
       )
-      if (gc.created) console.log(`[contacts] ${gc.created} new contact(s) imported (${gc.scanned} changed)`)
+      if (gc.created) console.log(`[contacts] ${gc.created} new contact(s) imported (${gc.autoHidden} auto-hidden as non-person, ${gc.scanned} changed)`)
     } catch (e) {
       console.error('[contacts] sync error:', e instanceof Error ? e.message : e)
     }
