@@ -20,6 +20,7 @@ export function Home({ onNavigate }: { onNavigate: (filter: string | null) => vo
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-6">
       <h2 className="mb-4 text-lg font-semibold">Home</h2>
       <DashboardCards onNavigate={onNavigate} />
+      <SyncStatus />
       <PostGame />
     </div>
   )
@@ -118,6 +119,69 @@ function Stat({
     )
   }
   return <div className="rounded-lg border border-slate-200 bg-white p-3">{body}</div>
+}
+
+// ------------------------------ live sync panel -----------------------------
+
+/** Live freshness of each integration, from each one's last-run timestamp. */
+function SyncStatus() {
+  const [items, setItems] = useState<{ label: string; ago: string; tone: 'ok' | 'warn' | 'off'; detail?: string }[]>([])
+  useEffect(() => {
+    void (async () => {
+      const now = Date.now()
+      const secs = (iso?: string | null) => (iso ? Math.floor((now - new Date(iso).getTime()) / 1000) : null)
+      const fmt = (s: number | null) =>
+        s == null ? 'never'
+          : s < 90 ? `${s}s ago`
+          : s < 5400 ? `${Math.round(s / 60)}m ago`
+          : s < 172800 ? `${Math.round(s / 3600)}h ago`
+          : `${Math.round(s / 86400)}d ago`
+      const tone = (s: number | null, warnAfter: number): 'ok' | 'warn' | 'off' =>
+        s == null ? 'off' : s < warnAfter ? 'ok' : 'warn'
+
+      const { data: hbs } = await supabase.from('inbox_sync_heartbeat').select('id, last_run').in('id', [1, 2])
+      const hb = (id: number) => ((hbs ?? []).find((h) => h.id === id)?.last_run ?? null) as string | null
+      const anyDb = supabase as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            eq: (col: string, v: number) => { maybeSingle: () => Promise<{ data: { updated_at?: string } | null }> }
+            order: (col: string, o: { ascending: boolean }) => { limit: (n: number) => { maybeSingle: () => Promise<{ data: { synced_at?: string } | null }> } }
+          }
+        }
+      }
+      const cs = await anyDb.from('inbox_contacts_sync').select('updated_at').eq('id', 1).maybeSingle()
+      const lp = await anyDb.from('lp_events').select('synced_at').order('synced_at', { ascending: false }).limit(1).maybeSingle()
+
+      const sOverall = secs(hb(1))
+      setItems([
+        { label: 'Sync engine', ago: fmt(sOverall), tone: tone(sOverall, 120) },
+        { label: 'LetsPoker', ago: fmt(secs(lp.data?.synced_at)), tone: tone(secs(lp.data?.synced_at), 2 * 86400), detail: 'via poker app' },
+        { label: 'Google Contacts', ago: fmt(secs(cs.data?.updated_at)), tone: tone(secs(cs.data?.updated_at), 26 * 3600), detail: 'every 12h' },
+        { label: 'TD Sheets', ago: fmt(secs(hb(2))), tone: tone(secs(hb(2)), 90 * 60), detail: 'every 30m' },
+      ])
+    })()
+  }, [])
+
+  const dot = (t: 'ok' | 'warn' | 'off') =>
+    t === 'ok' ? 'bg-emerald-500' : t === 'warn' ? 'bg-amber-500' : 'bg-slate-300'
+
+  return (
+    <div className="mb-6 rounded-lg border border-slate-200 bg-white p-3">
+      <div className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Live sync</div>
+      <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+        {items.map((it) => (
+          <div key={it.label} className="flex items-center gap-2 text-sm">
+            <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${dot(it.tone)} ${it.tone === 'ok' ? 'animate-pulse' : ''}`} />
+            <span className="min-w-0 flex-1">
+              <span className="font-medium text-slate-700">{it.label}</span>
+              <span className="ml-1 text-xs text-slate-400">{it.ago}</span>
+              {it.detail && <span className="ml-1 text-[10px] text-slate-300">· {it.detail}</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 // ------------------------------ post-game tool ------------------------------

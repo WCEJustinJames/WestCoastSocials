@@ -25,6 +25,11 @@ const VENUE_ALIASES: Record<string, string> = {
   adriatic: 'Stirling',
   'stirling adriatic': 'Stirling',
   'stirling adriatic bowls club': 'Stirling',
+  'kingsley tavern': 'Kingsley',
+  'market city tavern': 'MCT',
+  'market city': 'MCT',
+  'woodvale tavern': 'Woodvale',
+  'the bentley hotel': 'Bentley',
 }
 const canonVenues = (vs: string[]): string[] => {
   const out: string[] = []

@@ -28,7 +28,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g23-td-sheets'
+const SYNC_VERSION = 'g24-sync-status'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -326,6 +326,10 @@ async function runOnce(): Promise<void> {
         env.googleRefreshToken,
       )
       if (td.attendees) console.log(`[tdsheets] ${td.attendees} attendee(s) from ${td.sheets} sheet(s)`)
+      // Heartbeat (id=2) so the dashboard's TD-sheets indicator shows its last run.
+      await supabaseAdmin
+        .from('inbox_sync_heartbeat')
+        .upsert({ id: 2, last_run: new Date().toISOString(), host: os.hostname(), note: `tdsheets ${td.sheets}/${td.attendees}` })
     } catch (e) {
       console.error('[tdsheets] sync error:', e instanceof Error ? e.message : e)
     }
