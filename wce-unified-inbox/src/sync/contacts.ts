@@ -6,6 +6,7 @@ type DB = SupabaseClient<Database>
 export interface ContactsResult {
   scanned: number
   created: number
+  autoHidden: number
 }
 
 interface Person {
@@ -71,6 +72,22 @@ const pickEmail = (e?: Person['emailAddresses']): string | null => {
   return primary.value ?? null
 }
 
+// Auto-hide obvious non-people on import (banks, telcos, govt, bowls clubs,
+// businesses, phone-system codes) so only real new contacts surface for review.
+// Mirrors the one-off cleanup filter. Anything with poker context is always kept.
+const POKER_CTX =
+  /\b(poker|holdem|tourney|tournament|cash|nlh|plo|mtt|mct|woodvale|kenwick|bentley|kingsley|leederville|stirling|adriatic)\b/i
+const NON_PERSON =
+  /\b(directory|psych|banking|anz|nab|commbank|commonwealth|westpac|bankwest|printing|accounting|bookkeep|association|bowls|bowlo|turf|trailers|gaming|licensing|drgl|dlgsc|fairwork|centrelink|medicare|registration|voicemail|roaming|recharge|luxonpay|square|pty|ltd|telstra|optus|vodafone|synergy|bunnings|woolworths|reception|noreply|warranty|dealership|towing|services|clinic|council|pharmacy|chemist|dental|insurance|signs)\b/i
+const NON_PERSON_LOOSE =
+  /(on\/off|\/off|rate plan|missed call|call waiting|client id|kids help|city of|online banking|account (transfer|balance)|customer (care|service)| home$)/i
+
+function looksLikeNonPerson(name: string): boolean {
+  if (/\b(bowls|bowlo)\b/i.test(name)) return true // bowls clubs are never poker
+  if (POKER_CTX.test(name)) return false // protect real poker contacts
+  return NON_PERSON.test(name) || NON_PERSON_LOOSE.test(name)
+}
+
 /**
  * Pull Google Contacts (People API) into inbox_outreach so contacts Justin adds
  * in person show up in the CRM automatically — even before he texts them. The
@@ -90,6 +107,7 @@ export async function syncGoogleContacts(
   let syncToken = await loadSyncToken(db)
   let scanned = 0
   let created = 0
+  let autoHidden = 0
 
   // One pass, retried once WITHOUT the sync token if Google reports it expired.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -123,16 +141,22 @@ export async function syncGoogleContacts(
 
     // Only contacts with a name AND a phone — a number is what makes them
     // reachable / worth inviting. Deleted contacts are skipped, never removed.
+    // Obvious non-people are imported but flagged hidden, so they stay out of
+    // the batch builder / lists (one un-hide away if we got it wrong).
     const rows = people
       .filter((p) => !p.metadata?.deleted)
-      .map((p) => ({
-        airtable_id: `gcontact:${p.resourceName}`,
-        player_name: p.names?.[0]?.displayName ?? null,
-        phone: pickPhone(p.phoneNumbers),
-        email: pickEmail(p.emailAddresses),
-        preferred_channel: 'sms',
-        synced_at: new Date().toISOString(),
-      }))
+      .map((p) => {
+        const player_name = p.names?.[0]?.displayName ?? null
+        return {
+          airtable_id: `gcontact:${p.resourceName}`,
+          player_name,
+          phone: pickPhone(p.phoneNumbers),
+          email: pickEmail(p.emailAddresses),
+          preferred_channel: 'sms',
+          hidden: player_name ? looksLikeNonPerson(player_name) : false,
+          synced_at: new Date().toISOString(),
+        }
+      })
       .filter((r) => r.player_name && r.phone)
 
     scanned = rows.length
@@ -143,7 +167,9 @@ export async function syncGoogleContacts(
         .select('airtable_id')
         .in('airtable_id', ids)
       const have = new Set((existing ?? []).map((e) => e.airtable_id))
-      created = rows.filter((r) => !have.has(r.airtable_id)).length
+      const newRows = rows.filter((r) => !have.has(r.airtable_id))
+      created = newRows.length
+      autoHidden = newRows.filter((r) => r.hidden).length
 
       const { error } = await db
         .from('inbox_outreach')
@@ -154,5 +180,5 @@ export async function syncGoogleContacts(
     break
   }
 
-  return { scanned, created }
+  return { scanned, created, autoHidden }
 }
