@@ -279,6 +279,25 @@ export async function processReplies(
     const name = cleanName(job.name)
     const note = (v?.note ?? '').trim()
 
+    // CLAIM BEFORE SEND — the cure for double auto-replies. Atomically flip this
+    // thread's inbound rows unhandled -> handled, but ONLY the rows still
+    // unhandled (.eq auto_handled,false). If a second sync pass or a duplicate
+    // run-wce.bat window is racing us, it already flipped them, so this UPDATE
+    // matches zero rows and we skip WITHOUT sending. Marking first (instead of
+    // after the send, as before) closes the multi-second window where two passes
+    // both classify the same text and fire two different acks. Postgres makes the
+    // conditional UPDATE atomic, so exactly one racer can ever win the claim.
+    const { data: claimed, error: claimErr } = await db
+      .from('inbox_messages')
+      .update({ auto_handled: true, reply_intent: intent, reply_note: note || null })
+      .in('id', job.messageIds)
+      .eq('auto_handled', false)
+      .select('id')
+    if (claimErr || !claimed || claimed.length === 0) {
+      console.log(`[reply] skip ${job.name}: thread already claimed by another pass/window`)
+      continue
+    }
+
     // Reserve confirmations get a generic lock emoji (no enthusiasm, per Justin);
     // declines / maybes use the model's short acknowledgement.
     const replyText = intent === 'yes' ? '🔒' : v && v.auto_ok && v.reply ? stripDashes(v.reply) : ''
@@ -295,11 +314,6 @@ export async function processReplies(
     if (intent === 'yes') confirmedEntries.push(note ? `${name} (${note})` : name)
     else if (intent === 'no') declinedNames.push(name)
     else needYou.push(`${name} ("${job.transcript.slice(0, 60)}")`)
-
-    await db
-      .from('inbox_messages')
-      .update({ auto_handled: true, reply_intent: intent, reply_note: note || null })
-      .in('id', job.messageIds)
   }
 
   // Text Justin a digest — only when there's something he'd want to know (new
