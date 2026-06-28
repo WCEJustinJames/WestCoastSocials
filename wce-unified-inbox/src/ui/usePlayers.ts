@@ -25,6 +25,23 @@ export const isIncomplete = (r: PlayerRow): boolean => {
   return noContact || noRegion || noStakes || noVenue
 }
 
+// Where a contact came from, derived from the airtable_id prefix — so the card
+// can show "phone / TD sheet / facebook / letspoker / …" at a glance.
+export function sourceLabel(airtableId: string | null): string {
+  const a = airtableId ?? ''
+  if (a.startsWith('gcsv:') || a.startsWith('gcontact:')) return 'phone'
+  if (a.startsWith('receipt:')) return 'receipt'
+  if (a.startsWith('td:')) return 'TD sheet'
+  if (a.startsWith('mct:')) return 'MCT sheet'
+  if (a.startsWith('fb:')) return 'facebook'
+  if (a.startsWith('thread:')) return 'beeper'
+  if (a.startsWith('lp:')) return 'letspoker'
+  if (a.startsWith('staff:')) return 'staff'
+  if (a.startsWith('manual:')) return 'manual'
+  if (a.startsWith('rec')) return 'airtable'
+  return 'other'
+}
+
 // Canonical dropdown vocabularies. Edit these lists to taste — existing
 // non-standard values on a player are preserved and shown as the selection.
 export const REGIONS = ['North', 'South', 'Central', 'All']
@@ -148,6 +165,8 @@ export function usePlayers() {
   const [staffOnly, setStaffOnly] = useState(false)
   // "Incomplete" view: records still missing contact / region / stakes / venue.
   const [incompleteOnly, setIncompleteOnly] = useState(false)
+  // Filter by where the contact came from (phone / TD sheet / facebook / …).
+  const [sourceFilter, setSourceFilter] = useState('all')
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the
@@ -246,6 +265,7 @@ export function usePlayers() {
       if (banOnly && !r.do_not_message) return false
       if (staffOnly && !(r.staff ?? false)) return false
       if (incompleteOnly && !isIncomplete(r)) return false
+      if (sourceFilter !== 'all' && sourceLabel(r.airtable_id) !== sourceFilter) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -273,7 +293,17 @@ export function usePlayers() {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, reviewed])
+  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, reviewed])
+
+  // Distinct sources present, with counts, for the Merge & Review source filter.
+  const sources = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of rows) {
+      const s = sourceLabel(r.airtable_id)
+      m.set(s, (m.get(s) ?? 0) + 1)
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1])
+  }, [rows])
 
   // How many players are actually on the weekly send right now.
   const weeklyCount = useMemo(
@@ -421,6 +451,7 @@ export function usePlayers() {
     banOnly, setBanOnly,
     staffOnly, setStaffOnly,
     incompleteOnly, setIncompleteOnly,
+    sourceFilter, setSourceFilter, sources,
     reviewed, unmarkReviewed,
     chatNetworks,
     load, regionCounts, regions, dupGroups, filtered,

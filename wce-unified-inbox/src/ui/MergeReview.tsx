@@ -132,6 +132,17 @@ export function MergeReview() {
         <datalist id="review-region-list">
           {p.regions.map((r) => (<option key={r} value={r} />))}
         </datalist>
+        <select
+          value={p.sourceFilter}
+          onChange={(e) => p.setSourceFilter(e.target.value)}
+          title="Filter by where the contact came from"
+          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+        >
+          <option value="all">All sources</option>
+          {p.sources.map(([s, n]) => (
+            <option key={s} value={s}>{s} ({n})</option>
+          ))}
+        </select>
       </div>
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <label className="flex items-center gap-1 text-xs text-rose-700" title="Records still missing contact / region / stakes / venue">

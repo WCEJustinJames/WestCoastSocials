@@ -1,4 +1,4 @@
-import { REGIONS, VENUES, STAKES, type Edit, type PlayerRow as Row } from './usePlayers'
+import { REGIONS, VENUES, STAKES, sourceLabel, type Edit, type PlayerRow as Row } from './usePlayers'
 
 /** "messaged 3d ago" / "never messaged" from a last_contacted date. */
 function sinceLabel(iso: string | null): string {
@@ -101,6 +101,13 @@ export function PlayerCard({
         ) : (
           <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">no contact</span>
         )}
+        {/* Where this contact came from (phone / TD sheet / facebook / letspoker …). */}
+        <span
+          title={`Source: ${sourceLabel(r.airtable_id)}`}
+          className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500"
+        >
+          {sourceLabel(r.airtable_id)}
+        </span>
         {isReviewed && (
           <button
             type="button"
