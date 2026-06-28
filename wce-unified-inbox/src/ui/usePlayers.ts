@@ -100,8 +100,6 @@ export function mergeRows(
     venues: unionArr(ordered.map((r) => r.venues)),
     notes: ordered.map((r) => r.notes).filter(Boolean).join(' | ') || null,
     do_not_message: ordered.some((r) => r.do_not_message),
-    // Stay on the weekly list if any merged record was on it.
-    weekly: ordered.some((r) => r.weekly ?? true),
   }
   return { primary: ordered[0], merged, dropIds: ordered.slice(1).map((r) => r.id) }
 }
@@ -122,7 +120,6 @@ export interface Edit {
   staff: boolean
   tournament: boolean
   cash: boolean
-  weekly: boolean
 }
 const toEdit = (r: PlayerRow): Edit => ({
   player_name: r.player_name ?? '',
@@ -140,7 +137,6 @@ const toEdit = (r: PlayerRow): Edit => ({
   staff: r.staff ?? false,
   tournament: r.tournament ?? false,
   cash: r.cash ?? false,
-  weekly: r.weekly ?? true,
 })
 
 /**
@@ -164,9 +160,6 @@ export function usePlayers() {
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [keeperId, setKeeperId] = useState<string | null>(null)
   const [showHidden, setShowHidden] = useState(false)
-  // "Weekly list" view: only the players who are actually on the recurring
-  // weekly cash send — weekly flag on, and none of the exclusion flags set.
-  const [weeklyOnly, setWeeklyOnly] = useState(false)
   // "Tournament" view: only players flagged tournament (play tourneys / events).
   const [tournamentOnly, setTournamentOnly] = useState(false)
   // "Cash" view: only players flagged cash (cash-game segment).
@@ -265,15 +258,6 @@ export function usePlayers() {
     const q = query.trim().toLowerCase()
     const out = rows.filter((r) => {
       if (!showHidden && r.hidden) return false
-      if (weeklyOnly) {
-        // On the weekly list = opted in and not excluded by any standing flag,
-        // and actually reachable on some channel.
-        const onList =
-          (r.weekly ?? true) && !r.do_not_message && !r.hidden &&
-          !(r.staff ?? false) && !(r.tournament ?? false) &&
-          (!!r.phone?.trim() || !!r.beeper_chat_id?.trim())
-        if (!onList) return false
-      }
       if (tournamentOnly && !(r.tournament ?? false)) return false
       if (cashOnly && !(r.cash ?? false)) return false
       if (noContactOnly && (!!r.phone?.trim() || !!r.beeper_chat_id?.trim())) return false
@@ -308,7 +292,7 @@ export function usePlayers() {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, reviewed])
+  }, [rows, query, regionFilter, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, reviewed])
 
   // Distinct sources present, with counts, for the Merge & Review source filter.
   const sources = useMemo(() => {
@@ -319,18 +303,6 @@ export function usePlayers() {
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [rows])
-
-  // How many players are actually on the weekly send right now.
-  const weeklyCount = useMemo(
-    () =>
-      rows.filter(
-        (r) =>
-          (r.weekly ?? true) && !r.do_not_message && !r.hidden &&
-          !(r.staff ?? false) && !(r.tournament ?? false) &&
-          (!!r.phone?.trim() || !!r.beeper_chat_id?.trim()),
-      ).length,
-    [rows],
-  )
 
   const selectedRows = useMemo(() => rows.filter((r) => sel.has(r.id)), [rows, sel])
 
@@ -383,7 +355,6 @@ export function usePlayers() {
         staff: e.staff,
         tournament: e.tournament,
         cash: e.cash,
-        weekly: e.weekly,
       })
       .eq('id', id)
     setBusy(false)
@@ -404,7 +375,6 @@ export function usePlayers() {
               do_not_message: e.do_not_message,
               staff: e.staff,
               tournament: e.tournament,
-              weekly: e.weekly,
               cash: e.cash,
             }
           : r,
@@ -459,7 +429,6 @@ export function usePlayers() {
     rows, edits, setE, query, setQuery, regionFilter, setRegionFilter,
     status, busy, renames, setRenames, sel, toggleSel, setSel, selectedRows,
     keeperId, setKeeperId, showHidden, setShowHidden, groupKeeper, setGroupKeeper,
-    weeklyOnly, setWeeklyOnly, weeklyCount,
     tournamentOnly, setTournamentOnly,
     cashOnly, setCashOnly,
     noContactOnly, setNoContactOnly,

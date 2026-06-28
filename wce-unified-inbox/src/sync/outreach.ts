@@ -15,6 +15,27 @@ interface AirtableRecord {
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null)
 const arr = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
 
+// Fold venue aliases that refer to the same physical place onto one canonical
+// name, so a re-import never reintroduces a split we've already merged in the CRM
+// (e.g. "Leederville Hotel" → "Leederville"). Matched case-insensitively on the
+// trimmed value; unknown venues pass through untouched. Add a line per alias.
+const VENUE_ALIASES: Record<string, string> = {
+  'leederville hotel': 'Leederville',
+  'kenwick fc': 'Kenwick',
+  adriatic: 'Stirling',
+  'stirling adriatic': 'Stirling',
+  'stirling adriatic bowls club': 'Stirling',
+}
+const canonVenues = (vs: string[]): string[] => {
+  const out: string[] = []
+  for (const raw of vs) {
+    const v = raw.trim()
+    const c = VENUE_ALIASES[v.toLowerCase()] ?? v
+    if (c && !out.includes(c)) out.push(c)
+  }
+  return out
+}
+
 /**
  * Mirror the Airtable "Player Outreach" CRM into inbox_outreach so the browser
  * can use it as a batch recipient source (it can't read Airtable directly — the
@@ -55,7 +76,7 @@ export async function syncOutreach(
         beeper_contact_name: str(f['Beeper Contact Name']),
         region: str(f['Region']),
         stakes: arr(f['Stakes']),
-        venues: arr(f['Venues']),
+        venues: canonVenues(arr(f['Venues'])),
         activity: str(f['Activity']),
         outreach_status: str(f['Outreach Status']),
         game_type: str(f['Game Type']),

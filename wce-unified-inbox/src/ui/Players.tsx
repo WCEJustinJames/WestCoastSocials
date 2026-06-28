@@ -13,7 +13,7 @@ export function Players() {
         </button>
       </div>
       <p className="mb-4 text-sm text-slate-500">
-        {p.rows.length} players · {p.weeklyCount} on weekly list ·{' '}
+        {p.rows.length} players ·{' '}
         {p.regions.length} region values ·{' '}
         {p.dupGroups.length} phone-duplicate group(s) — clean up in Merge &amp; Review.
       </p>
@@ -48,10 +48,6 @@ export function Players() {
             <option key={s} value={s}>{s} ({n})</option>
           ))}
         </select>
-        <label className="flex items-center gap-1 text-xs text-emerald-700" title="Show only players on the recurring weekly cash send">
-          <input type="checkbox" checked={p.weeklyOnly} onChange={(e) => p.setWeeklyOnly(e.target.checked)} />
-          weekly list
-        </label>
         <label className="flex items-center gap-1 text-xs text-purple-700" title="Show only tournament players">
           <input type="checkbox" checked={p.tournamentOnly} onChange={(e) => p.setTournamentOnly(e.target.checked)} />
           tournament
