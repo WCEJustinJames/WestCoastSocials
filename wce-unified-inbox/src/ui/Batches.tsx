@@ -186,6 +186,21 @@ export function Batches() {
     () => Array.from(new Set(outreach.flatMap((o) => o.venues ?? []))).sort(),
     [outreach],
   )
+  // Most common home venue among the currently-picked recipients — used to
+  // auto-tag the batch when you leave the venue blank, so "last messaged for
+  // {venue}" always populates. CRM picks only (inbox picks have no home venue).
+  const suggestedVenue = useMemo(() => {
+    if (source !== 'crm') return ''
+    const counts = new Map<string, number>()
+    for (const key of picked.keys()) {
+      const o = outreach.find((x) => x.id === key)
+      for (const v of o?.venues ?? []) counts.set(v, (counts.get(v) ?? 0) + 1)
+    }
+    let best = ''
+    let n = 0
+    for (const [v, c] of counts) if (c > n) { best = v; n = c }
+    return best
+  }, [picked, outreach, source])
   // Venue / weekly-game labels you can tag a batch with: every venue seen on a
   // player plus any venue already used on a previous batch (so recurring weekly
   // games stay pickable even if no current recipient lists them).
@@ -439,7 +454,7 @@ export function Batches() {
         template_body: template,
         status: 'draft',
         created_by: 'manual',
-        venue: batchVenue.trim() || null,
+        venue: (batchVenue.trim() || suggestedVenue) || null,
         attachment_data: attachImg?.dataBase64 ?? null,
         attachment_name: attachImg?.name ?? null,
         attachment_mime: attachImg?.mime ?? null,
@@ -796,7 +811,7 @@ export function Batches() {
         <code className="rounded bg-slate-100 px-1">{'{{first_name}}'}</code> to personalise.
       </p>
 
-      <label className="mb-1 block text-sm font-medium">Venue / weekly game (optional)</label>
+      <label className="mb-1 block text-sm font-medium">Venue / weekly game</label>
       <input
         list="batch-venues"
         value={batchVenue}
@@ -809,9 +824,25 @@ export function Batches() {
           <option key={v} value={v} />
         ))}
       </datalist>
-      <p className="mb-3 text-xs text-slate-500">
-        Tags this batch so you can browse and rebuild this venue's weekly list below.
-      </p>
+      {!batchVenue.trim() && suggestedVenue ? (
+        <p className="mb-3 text-xs text-emerald-700">
+          Will tag as{' '}
+          <button
+            type="button"
+            onClick={() => setBatchVenue(suggestedVenue)}
+            className="font-semibold underline hover:text-emerald-800"
+          >
+            {suggestedVenue}
+          </button>{' '}
+          (most common venue of your picks) unless you set one — so each recipient&apos;s
+          &ldquo;last messaged for {suggestedVenue}&rdquo; fills in.
+        </p>
+      ) : (
+        <p className="mb-3 text-xs text-slate-500">
+          Tags this batch so you can browse and rebuild this venue&apos;s weekly list below — and powers
+          each player&apos;s &ldquo;last messaged for {'{venue}'}&rdquo; signal.
+        </p>
+      )}
 
       {pastBatches.length > 0 &&
         (() => {

@@ -55,7 +55,10 @@ ${VOICE}
 - Do NOT state any specific time, place, or buy-in.
 When auto_ok is false, set "reply" to "".
 
-Also extract "note": any game/stake/seat/table detail or preference the player stated (e.g. "$2/5 seat 7", "prefers $2/5 not $2/5/10", "second table", "save me a seat", "arriving ~6"). Keep it short; empty string if none.
+Also extract "note": the single most useful detail the player stated, kept short.
+- For "yes": any game/stake/seat/table preference (e.g. "$2/5 seat 7", "prefers $2/5 not $2/5/10", "second table", "save me a seat", "arriving ~6").
+- For "no"/"maybe": WHY they can't make it and, crucially, WHEN they'll be back if they say — e.g. "away in Thailand for a month", "back first week of July", "in Sydney, back next week", "works night shifts", "Woodvale too far". Always capture a return date/timeframe when they give one; it tells Justin when to re-invite.
+Keep it a short phrase; empty string if there's genuinely nothing.
 
 Respond with ONLY a JSON array, one object per message, in the same order:
 [{"i":0,"intent":"yes","auto_ok":true,"reply":"...","note":"$2/5 seat 7"}]
