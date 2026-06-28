@@ -46,6 +46,16 @@ export function Batches() {
   const [source, setSource] = useState<Source>('inbox')
   const [conversations, setConversations] = useState<ConvRow[]>([])
   const [outreach, setOutreach] = useState<OutreachRow[]>([])
+  // Per-player send signals (last-messaged date + venue, and the unanswered-
+  // outreach count that drives the 👻 ghost), keyed by outreach id. Precomputed
+  // server-side in the inbox_outreach_signals view.
+  type SignalRow = {
+    outreach_id: string
+    last_sent_at: string | null
+    last_venue: string | null
+    unanswered_outreach: number
+  }
+  const [signals, setSignals] = useState<Map<string, SignalRow>>(new Map())
 
   // filters
   const [network, setNetwork] = useState('all')
@@ -132,6 +142,26 @@ export function Batches() {
       setOutreach(all)
     })()
   }, [source, showHidden])
+
+  // Load per-player send signals once (only the ~135 messaged players carry one,
+  // well under the 1k row cap, so a single filtered fetch is enough).
+  useEffect(() => {
+    const v = supabase as unknown as {
+      from: (t: string) => {
+        select: (c: string) => {
+          not: (col: string, op: string, val: unknown) => Promise<{ data: SignalRow[] | null }>
+        }
+      }
+    }
+    v.from('inbox_outreach_signals')
+      .select('outreach_id, last_sent_at, last_venue, unanswered_outreach')
+      .not('last_sent_at', 'is', null)
+      .then(({ data }) => {
+        const m = new Map<string, SignalRow>()
+        for (const s of data ?? []) m.set(s.outreach_id, s)
+        setSignals(m)
+      })
+  }, [])
 
   async function toggleHide(key: string, currentlyHidden: boolean) {
     const table = source === 'inbox' ? 'inbox_conversations' : 'inbox_outreach'
@@ -1069,6 +1099,27 @@ export function Batches() {
                 <label className="flex flex-1 cursor-pointer items-center gap-2">
                   <input type="checkbox" checked={picked.has(r.key)} onChange={() => toggle(r)} />
                   <span className="flex-1">{r.name}</span>
+                  {(() => {
+                    const sig = source === 'crm' ? signals.get(r.key) : undefined
+                    if (!sig?.last_sent_at) return null
+                    const d = Math.max(
+                      0,
+                      Math.floor((Date.now() - new Date(sig.last_sent_at).getTime()) / 86_400_000),
+                    )
+                    const ghost = (sig.unanswered_outreach ?? 0) >= 2
+                    return (
+                      <span
+                        className={`shrink-0 text-xs ${ghost ? 'text-rose-500' : 'text-slate-400'}`}
+                        title={`Last messaged ${d} day${d === 1 ? '' : 's'} ago${
+                          sig.last_venue ? ` for ${sig.last_venue}` : ''
+                        }${ghost ? ` · no reply to the last ${sig.unanswered_outreach} outreach messages` : ''}`}
+                      >
+                        {ghost ? '👻 ' : ''}
+                        {sig.last_venue ? `${sig.last_venue} · ` : ''}
+                        {d}d
+                      </span>
+                    )
+                  })()}
                   <span className="text-xs text-slate-400">{r.sub}</span>
                   {r.badge && (
                     <span
