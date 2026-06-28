@@ -229,6 +229,7 @@ export function MergeReview() {
               showSelect
               selected={p.sel.has(r.id)}
               onToggleSel={p.toggleSel}
+              threadNetwork={p.chatNetworks.get(r.beeper_chat_id ?? '') ?? null}
             />
           )
         })}

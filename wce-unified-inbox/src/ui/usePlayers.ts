@@ -119,6 +119,9 @@ const toEdit = (r: PlayerRow): Edit => ({
 export function usePlayers() {
   const [rows, setRows] = useState<PlayerRow[]>([])
   const [edits, setEdits] = useState<Record<string, Edit>>({})
+  // external_chat_id -> network ('Google Messages', 'Facebook/Messenger', …) so a
+  // card can show the thread's REAL channel instead of assuming Messenger.
+  const [chatNetworks, setChatNetworks] = useState<Map<string, string>>(new Map())
   const [query, setQuery] = useState('')
   const [regionFilter, setRegionFilter] = useState('all')
   const [status, setStatus] = useState<string | null>(null)
@@ -190,6 +193,18 @@ export function usePlayers() {
     setRows(list)
     setEdits(Object.fromEntries(list.map((r) => [r.id, toEdit(r)])))
     setRenames({})
+
+    // Resolve each linked thread's network (a Beeper thread is often SMS via
+    // Google Messages, not Messenger) so the card badge shows the right channel.
+    const { data: convs } = await supabase
+      .from('inbox_conversations')
+      .select('external_chat_id, network')
+      .limit(5000)
+    const nets = new Map<string, string>()
+    for (const c of (convs as { external_chat_id: string | null; network: string | null }[]) ?? []) {
+      if (c.external_chat_id && c.network) nets.set(c.external_chat_id, c.network)
+    }
+    setChatNetworks(nets)
   }
   useEffect(() => {
     void load()
@@ -407,6 +422,7 @@ export function usePlayers() {
     staffOnly, setStaffOnly,
     incompleteOnly, setIncompleteOnly,
     reviewed, unmarkReviewed,
+    chatNetworks,
     load, regionCounts, regions, dupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,
     mergeOneGroup, mergeAllDuplicates,

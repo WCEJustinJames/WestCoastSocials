@@ -75,6 +75,7 @@ export function Players() {
               onSave={p.savePlayer}
               onToggleHide={p.toggleHidePlayer}
               onUnmarkReviewed={p.unmarkReviewed}
+              threadNetwork={p.chatNetworks.get(r.beeper_chat_id ?? '') ?? null}
             />
           )
         })}
