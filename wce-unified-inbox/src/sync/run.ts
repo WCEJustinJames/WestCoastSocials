@@ -25,7 +25,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g14-skip-after-manual-reply'
+const SYNC_VERSION = 'g15-outreach-only-replies'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 

@@ -22,6 +22,13 @@ const SEND_DELAY_MS = 1500
 // 9pm is held overnight and still needs to be inside the lookback at 9am.
 const LOOKBACK_MS = 16 * 60 * 60 * 1000
 
+// The auto-reply rail answers replies to invitations we actually SENT — nothing
+// else. A chat is "in an outreach cycle" only if it has a send-ledger entry
+// within this window (comfortably longer than the reply lookback, so a next-
+// morning reply to last night's invite still counts). Anything we never invited
+// — business, admin, a chat about the Facebook page — is left for Justin.
+const INVITE_LOOKBACK_MS = 30 * 60 * 60 * 1000
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // Beeper mirrors group/system events as inbound messages ("X joined the chat").
@@ -138,10 +145,47 @@ export async function processReplies(
   // you at the next one" reply to the permit holder). Drop them before classify.
   const excludedConvs = await flaggedConversationIds(db, [...byConv.keys()])
 
+  // Outreach-only gate: resolve each conversation's chat id, then find which of
+  // those we actually invited recently (the ledger keys recipient = chat id).
+  // The rail replies ONLY inside those threads — a chat we never invited (e.g.
+  // the Facebook-page conversation with Desmond) is never auto-answered, so a
+  // message like "No options" can't be misread as declining a game.
+  const chatIdByConv = new Map<string, string>()
+  for (const [cid, ms] of byConv) {
+    const conv = ms[0].conversation as unknown as { external_chat_id?: string } | null
+    if (conv?.external_chat_id) chatIdByConv.set(cid, conv.external_chat_id)
+  }
+  const invitedChats = new Set<string>()
+  {
+    const chatIds = [...new Set(chatIdByConv.values())]
+    if (chatIds.length) {
+      const ledger = db as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            in: (col: string, v: string[]) => {
+              gt: (col: string, v: string) => Promise<{ data: { recipient: string }[] | null }>
+            }
+          }
+        }
+      }
+      const { data: sent } = await ledger
+        .from('inbox_sent_log')
+        .select('recipient')
+        .in('recipient', chatIds)
+        .gt('sent_at', new Date(Date.now() - INVITE_LOOKBACK_MS).toISOString())
+      for (const s of sent ?? []) invitedChats.add(s.recipient)
+    }
+  }
+
   const jobs: ConvJob[] = []
   const skipHandledIds: string[] = []
   for (const [conversationId, msgs] of byConv) {
     if (excludedConvs.has(conversationId)) {
+      skipHandledIds.push(...msgs.map((m) => m.id))
+      continue
+    }
+    // Outreach-only: skip any thread we didn't recently invite.
+    if (!invitedChats.has(chatIdByConv.get(conversationId) ?? '')) {
       skipHandledIds.push(...msgs.map((m) => m.id))
       continue
     }
