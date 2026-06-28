@@ -29,13 +29,13 @@ export function Home({ onNavigate }: { onNavigate: (filter: string | null) => vo
 // ----------------------------- dashboard cards ------------------------------
 
 function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) => void }) {
-  const [stats, setStats] = useState<{ players: number; noContact: number; fbDm: number } | null>(null)
+  const [stats, setStats] = useState<{ players: number; noContact: number; fbDm: number; firstName: number } | null>(null)
   const [beat, setBeat] = useState<{ note: string | null; last: string | null } | null>(null)
 
   useEffect(() => {
     void (async () => {
       const head = { count: 'exact' as const, head: true }
-      const [players, noContact, fbDm] = await Promise.all([
+      const [players, noContact, fbDm, firstName] = await Promise.all([
         supabase.from('inbox_outreach').select('id', head).eq('hidden', false),
         supabase
           .from('inbox_outreach')
@@ -50,11 +50,22 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
           .eq('fb_friend', true)
           .is('phone', null)
           .is('beeper_chat_id', null),
+        // First-name-only: a name with no space (no surname), excluding the
+        // nameless "Unknown" rows. Mirrors isFirstNameOnly in usePlayers.
+        supabase
+          .from('inbox_outreach')
+          .select('id', head)
+          .eq('hidden', false)
+          .not('player_name', 'is', null)
+          .neq('player_name', '')
+          .not('player_name', 'ilike', '% %')
+          .not('player_name', 'ilike', 'unknown'),
       ])
       setStats({
         players: players.count ?? 0,
         noContact: noContact.count ?? 0,
         fbDm: fbDm.count ?? 0,
+        firstName: firstName.count ?? 0,
       })
       const { data: hb } = await supabase
         .from('inbox_sync_heartbeat')
@@ -78,6 +89,7 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
       <Stat label="Players" value={stats?.players} onClick={() => onNavigate(null)} />
       <Stat label="No contact" value={stats?.noContact} tone="amber" onClick={() => onNavigate('noContact')} />
       <Stat label="FB · DM to open" value={stats?.fbDm} tone="indigo" onClick={() => onNavigate('fbDm')} />
+      <Stat label="First name only" value={stats?.firstName} tone="rose" onClick={() => onNavigate('firstName')} />
       <div className="rounded-lg border border-slate-200 bg-white p-3">
         <div className="text-[11px] uppercase tracking-wide text-slate-400">Sync</div>
         <div className="mt-1 truncate text-sm font-semibold text-slate-700">{beat?.note ?? '—'}</div>
@@ -95,11 +107,14 @@ function Stat({
 }: {
   label: string
   value?: number
-  tone?: 'slate' | 'amber' | 'indigo'
+  tone?: 'slate' | 'amber' | 'indigo' | 'rose'
   onClick?: () => void
 }) {
   const color =
-    tone === 'amber' ? 'text-amber-700' : tone === 'indigo' ? 'text-indigo-700' : 'text-slate-800'
+    tone === 'amber' ? 'text-amber-700'
+    : tone === 'indigo' ? 'text-indigo-700'
+    : tone === 'rose' ? 'text-rose-700'
+    : 'text-slate-800'
   const body = (
     <>
       <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
