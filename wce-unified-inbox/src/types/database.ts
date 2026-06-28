@@ -57,6 +57,42 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_td_attendees: {
+        Row: {
+          id: string
+          sheet_id: string
+          sheet_title: string | null
+          venue: string | null
+          game_date: string | null
+          name: string
+          is_winner: boolean
+          category: string | null
+          synced_at: string
+        }
+        Insert: {
+          id?: string
+          sheet_id: string
+          sheet_title?: string | null
+          venue?: string | null
+          game_date?: string | null
+          name: string
+          is_winner?: boolean
+          category?: string | null
+          synced_at?: string
+        }
+        Update: {
+          id?: string
+          sheet_id?: string
+          sheet_title?: string | null
+          venue?: string | null
+          game_date?: string | null
+          name?: string
+          is_winner?: boolean
+          category?: string | null
+          synced_at?: string
+        }
+        Relationships: []
+      }
       inbox_batch_items: {
         Row: {
           batch_id: string
