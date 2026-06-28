@@ -124,6 +124,7 @@ export type Database = {
           attachment_name: string | null
           attachment_mime: string | null
           is_outreach: boolean
+          venue: string | null
         }
         Insert: {
           created_at?: string
@@ -138,6 +139,7 @@ export type Database = {
           attachment_name?: string | null
           attachment_mime?: string | null
           is_outreach?: boolean
+          venue?: string | null
         }
         Update: {
           created_at?: string
@@ -152,6 +154,7 @@ export type Database = {
           attachment_name?: string | null
           attachment_mime?: string | null
           is_outreach?: boolean
+          venue?: string | null
         }
         Relationships: []
       }
