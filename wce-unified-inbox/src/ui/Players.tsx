@@ -113,6 +113,16 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
 function FbFriendsImporter({ p }: { p: ReturnType<typeof usePlayers> }) {
   const [raw, setRaw] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
+  const [drag, setDrag] = useState(false)
+  const readFile = (f?: File) => {
+    if (!f) return
+    const r = new FileReader()
+    r.onload = () => {
+      setRaw(String(r.result ?? ''))
+      setMsg(`Loaded “${f.name}” — now click Match & flag.`)
+    }
+    r.readAsText(f)
+  }
   return (
     <details className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm">
       <summary className="cursor-pointer select-none font-medium text-slate-700">
@@ -122,15 +132,34 @@ function FbFriendsImporter({ p }: { p: ReturnType<typeof usePlayers> }) {
         )}
       </summary>
       <p className="mt-2 text-xs text-slate-500">
-        Facebook → Settings → <em>Download Your Information</em> → select only “Friends and followers” →
-        Format JSON → download, then paste the file here. Or paste one name per line. Matching is by
-        name, so it’s an indicator only — review before relying on it.
+        From your Facebook download open <em>connections_and_followers</em> and drag{' '}
+        <em>your_friends.html</em> (or .json) onto the box below — or{' '}
+        <label className="cursor-pointer font-medium text-indigo-600 hover:underline">
+          choose a file
+          <input
+            type="file"
+            accept=".json,.html,.htm,.txt"
+            className="hidden"
+            onChange={(e) => readFile(e.target.files?.[0])}
+          />
+        </label>
+        , or paste names one per line. JSON or HTML both work — matching is by name, so review first.
       </p>
       <textarea
         value={raw}
         onChange={(e) => setRaw(e.target.value)}
-        placeholder={"Chris O'Brien\nJane Smith\n…   (or paste the whole friends.json)"}
-        className="mt-2 h-28 w-full rounded-md border border-slate-300 p-2 font-mono text-xs outline-none focus:border-emerald-500"
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDrag(true)
+        }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDrag(false)
+          readFile(e.dataTransfer.files?.[0])
+        }}
+        placeholder={'Drag your_friends.html / .json here — or paste names, one per line'}
+        className={`mt-2 h-28 w-full rounded-md border p-2 font-mono text-xs outline-none focus:border-emerald-500 ${drag ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300'}`}
       />
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <button
