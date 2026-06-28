@@ -37,6 +37,17 @@ export function Players() {
         <datalist id="players-region-list">
           {p.regions.map((r) => (<option key={r} value={r} />))}
         </datalist>
+        <select
+          value={p.sourceFilter}
+          onChange={(e) => p.setSourceFilter(e.target.value)}
+          title="Filter by where the contact came from"
+          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+        >
+          <option value="all">All sources</option>
+          {p.sources.map(([s, n]) => (
+            <option key={s} value={s}>{s} ({n})</option>
+          ))}
+        </select>
         <label className="flex items-center gap-1 text-xs text-emerald-700" title="Show only players on the recurring weekly cash send">
           <input type="checkbox" checked={p.weeklyOnly} onChange={(e) => p.setWeeklyOnly(e.target.checked)} />
           weekly list
