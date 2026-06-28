@@ -15,13 +15,19 @@ interface CrmRow {
  * Home / Dashboard tab — the CRM's landing page. At-a-glance counts plus the
  * featured Post-game thank-you tool. More cards can slot in over time.
  */
-export function Home({ onNavigate }: { onNavigate: (filter: string | null) => void }) {
+export function Home({
+  onNavigate,
+  onOpenConversation,
+}: {
+  onNavigate: (filter: string | null) => void
+  onOpenConversation: (conversationId: string) => void
+}) {
   return (
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-6">
       <h2 className="mb-4 text-lg font-semibold">Home</h2>
       <DashboardCards onNavigate={onNavigate} />
       <SyncStatus />
-      <PlayerContext />
+      <PlayerContext onOpen={onOpenConversation} />
       <PostGame />
     </div>
   )
@@ -37,6 +43,7 @@ interface ContextRow {
   reply_note: string | null
   reply_text: string
   replied_at: string
+  back_on: string | null
 }
 
 /**
@@ -47,7 +54,7 @@ interface ContextRow {
  * who's since said yes). Throwaway one-liners ("Ah bugger") are filtered out so
  * only replies that actually carry context show.
  */
-function PlayerContext() {
+function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void }) {
   const [rows, setRows] = useState<ContextRow[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -65,7 +72,7 @@ function PlayerContext() {
     }
     const since = new Date(Date.now() - 45 * 86_400_000).toISOString()
     v.from('inbox_player_context')
-      .select('conversation_id, player_name, outreach_id, reply_intent, reply_note, reply_text, replied_at')
+      .select('conversation_id, player_name, outreach_id, reply_intent, reply_note, reply_text, replied_at, back_on')
       .gt('replied_at', since)
       .order('replied_at', { ascending: false })
       .limit(40)
@@ -75,50 +82,81 @@ function PlayerContext() {
       })
   }, [])
 
-  // Only keep replies that actually carry context: a note (extracted reason /
-  // return), or a non-trivial message body. Drops "Ah bugger" / "All good".
-  const shown = useMemo(
-    () =>
-      rows.filter((r) => (r.reply_note ?? '').trim() !== '' || (r.reply_text ?? '').trim().length >= 14),
-    [rows],
-  )
+  const today = new Date().toISOString().slice(0, 10)
+  const isReady = (r: ContextRow): boolean => !!r.back_on && r.back_on <= today
+
+  // Keep replies that carry context: a return date, a note, or a non-trivial body
+  // (drops "Ah bugger" / "All good"). Players whose return date has passed — ready
+  // to re-invite — sort to the very top; otherwise most recent first.
+  const shown = useMemo(() => {
+    const keep = rows.filter(
+      (r) => !!r.back_on || (r.reply_note ?? '').trim() !== '' || (r.reply_text ?? '').trim().length >= 14,
+    )
+    return keep.sort((a, b) => {
+      const ar = (a.back_on && a.back_on <= today ? 0 : 1)
+      const br = (b.back_on && b.back_on <= today ? 0 : 1)
+      if (ar !== br) return ar - br
+      return a.replied_at < b.replied_at ? 1 : -1
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows])
+
   const ago = (iso: string): string => {
     const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
     return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d}d ago`
   }
+  const fmtBack = (iso: string): string =>
+    new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
   if (loading || shown.length === 0) return null
+  const readyCount = shown.filter(isReady).length
 
   return (
     <div className="mb-6">
       <h3 className="mb-1 text-sm font-semibold text-slate-700">Who&apos;s out — reasons &amp; when they&apos;re back</h3>
       <p className="mb-2 text-xs text-slate-400">
-        {shown.length} recently said they can&apos;t make it. Re-invite when their timing lines up.
+        {shown.length} recently said they can&apos;t make it
+        {readyCount > 0 ? ` · ${readyCount} ready to re-invite` : ''}. Tap a player to open their thread.
       </p>
       <ul className="space-y-1">
-        {shown.map((r) => (
-          <li
-            key={r.conversation_id}
-            className="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
-          >
-            <span
-              className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
-                r.reply_intent === 'no' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'
-              }`}
-            >
-              {r.reply_intent === 'no' ? "can't make it" : 'maybe'}
-            </span>
-            <div className="min-w-0 flex-1">
-              <span className="font-medium">{r.player_name}</span>
-              {r.reply_note ? (
-                <span className="ml-1 text-emerald-700">— {r.reply_note}</span>
-              ) : (
-                <span className="ml-1 italic text-slate-500">— “{r.reply_text.trim()}”</span>
-              )}
-            </div>
-            <span className="shrink-0 text-xs text-slate-400">{ago(r.replied_at)}</span>
-          </li>
-        ))}
+        {shown.map((r) => {
+          const ready = isReady(r)
+          return (
+            <li key={r.conversation_id}>
+              <button
+                onClick={() => onOpen(r.conversation_id)}
+                title="Open this player's thread to message them"
+                className={`flex w-full items-start gap-2 rounded-md border px-3 py-2 text-left text-sm transition hover:border-emerald-400 hover:shadow-sm ${
+                  ready ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white'
+                }`}
+              >
+                <span
+                  className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
+                    ready
+                      ? 'bg-emerald-600 text-white'
+                      : r.reply_intent === 'no'
+                        ? 'bg-rose-100 text-rose-700'
+                        : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {ready ? 're-invite ▸' : r.reply_intent === 'no' ? "can't make it" : 'maybe'}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{r.player_name}</span>
+                  {r.reply_note ? (
+                    <span className="ml-1 text-emerald-700">— {r.reply_note}</span>
+                  ) : (
+                    <span className="ml-1 italic text-slate-500">— “{r.reply_text.trim()}”</span>
+                  )}
+                  {r.back_on && (
+                    <span className="ml-1 whitespace-nowrap text-xs text-slate-400">(back {fmtBack(r.back_on)})</span>
+                  )}
+                </span>
+                <span className="shrink-0 text-xs text-slate-400">{ago(r.replied_at)}</span>
+              </button>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

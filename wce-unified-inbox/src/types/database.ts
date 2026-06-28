@@ -388,6 +388,7 @@ export type Database = {
           raw: Json | null
           reply_intent: string | null
           reply_note: string | null
+          reply_back_on: string | null
           sender_id: string | null
           sender_name: string | null
           sort_key: string | null
@@ -410,6 +411,7 @@ export type Database = {
           raw?: Json | null
           reply_intent?: string | null
           reply_note?: string | null
+          reply_back_on?: string | null
           sender_id?: string | null
           sender_name?: string | null
           sort_key?: string | null
@@ -432,6 +434,7 @@ export type Database = {
           raw?: Json | null
           reply_intent?: string | null
           reply_note?: string | null
+          reply_back_on?: string | null
           sender_id?: string | null
           sender_name?: string | null
           sort_key?: string | null

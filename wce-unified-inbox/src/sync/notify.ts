@@ -60,8 +60,10 @@ Also extract "note": the single most useful detail the player stated, kept short
 - For "no"/"maybe": WHY they can't make it and, crucially, WHEN they'll be back if they say — e.g. "away in Thailand for a month", "back first week of July", "in Sydney, back next week", "works night shifts", "Woodvale too far". Always capture a return date/timeframe when they give one; it tells Justin when to re-invite.
 Keep it a short phrase; empty string if there's genuinely nothing.
 
+Also set "back_on": for a "no"/"maybe" where they say WHEN they'll be back or free to play again, the resolved calendar date as YYYY-MM-DD — use the "Today is" date below to resolve relative phrases ("next week" ≈ +7 days, "first week of July", "back in a month", "mid next month"). Empty string for "yes", or when no return time is given.
+
 Respond with ONLY a JSON array, one object per message, in the same order:
-[{"i":0,"intent":"yes","auto_ok":true,"reply":"...","note":"$2/5 seat 7"}]
+[{"i":0,"intent":"no","auto_ok":true,"reply":"...","note":"away with work","back_on":"2026-07-15"}]
 No prose, no code fences.`
 
 interface ConvJob {
@@ -78,6 +80,7 @@ interface Verdict {
   auto_ok: boolean
   reply: string
   note?: string
+  back_on?: string
 }
 
 /**
@@ -244,7 +247,7 @@ export async function processReplies(
     const resp = await anthropic.messages.create({
       model,
       max_tokens: 2000,
-      system: SYSTEM_PROMPT,
+      system: `${SYSTEM_PROMPT}\n\nToday is ${new Date().toISOString().slice(0, 10)}.`,
       messages: [
         {
           role: 'user',
@@ -281,6 +284,10 @@ export async function processReplies(
     const intent = v?.intent ?? 'other'
     const name = cleanName(job.name)
     const note = (v?.note ?? '').trim()
+    // A resolved return date ("back first week of July" → 2026-07-01), stored so
+    // the Home "Who's out" panel can flag them ready to re-invite once it passes.
+    const backOnRaw = (v?.back_on ?? '').trim()
+    const backOn = /^\d{4}-\d{2}-\d{2}$/.test(backOnRaw) ? backOnRaw : null
 
     // CLAIM BEFORE SEND — the cure for double auto-replies. Atomically flip this
     // thread's inbound rows unhandled -> handled, but ONLY the rows still
@@ -292,7 +299,7 @@ export async function processReplies(
     // conditional UPDATE atomic, so exactly one racer can ever win the claim.
     const { data: claimed, error: claimErr } = await db
       .from('inbox_messages')
-      .update({ auto_handled: true, reply_intent: intent, reply_note: note || null })
+      .update({ auto_handled: true, reply_intent: intent, reply_note: note || null, reply_back_on: backOn })
       .in('id', job.messageIds)
       .eq('auto_handled', false)
       .select('id')
