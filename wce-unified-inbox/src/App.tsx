@@ -23,6 +23,13 @@ export default function App() {
     setPlayersFilter(filter)
     setView('players')
   }
+  // Home's "Who's out" panel can deep-link straight into a player's thread so you
+  // can re-invite them. A nonce forces re-selection even if the same id is clicked.
+  const [inboxConv, setInboxConv] = useState<{ id: string; nonce: number } | null>(null)
+  const goInbox = (conversationId: string) => {
+    setInboxConv((prev) => ({ id: conversationId, nonce: (prev?.nonce ?? 0) + 1 }))
+    setView('inbox')
+  }
   return (
     <div className="flex h-screen flex-col bg-slate-50 text-slate-900">
       <nav className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-white px-3 py-1.5">
@@ -63,9 +70,9 @@ export default function App() {
       </nav>
       <div className="min-h-0 flex-1">
         {view === 'home' ? (
-          <Home onNavigate={goPlayers} />
+          <Home onNavigate={goPlayers} onOpenConversation={goInbox} />
         ) : view === 'inbox' ? (
-          <Inbox />
+          <Inbox openConversation={inboxConv} />
         ) : view === 'batches' ? (
           <Batches />
         ) : view === 'drafts' ? (

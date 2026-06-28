@@ -8,9 +8,19 @@ type Conversation = Database['public']['Tables']['inbox_conversations']['Row'] &
 }
 type Message = Database['public']['Tables']['inbox_messages']['Row']
 
-export function Inbox() {
+export function Inbox({
+  openConversation,
+}: {
+  openConversation?: { id: string; nonce: number } | null
+}) {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
+
+  // Deep-link from elsewhere (e.g. Home's "Who's out" panel): open this thread.
+  // Keyed on the nonce so clicking the same player again still re-opens it.
+  useEffect(() => {
+    if (openConversation?.id) setActiveId(openConversation.id)
+  }, [openConversation?.id, openConversation?.nonce])
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
 
