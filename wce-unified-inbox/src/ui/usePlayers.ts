@@ -392,6 +392,8 @@ export function usePlayers(initialFilter?: string) {
   // Pavitt". Reconciles: a name no longer on the list is un-flagged.
   async function importFbFriends(raw: string): Promise<{ friends: number; flagged: number; cleared: number }> {
     const friends = parseFriendNames(raw)
+    // Persist the list so the sync keeps re-flagging newly-added players (no re-import).
+    await supabase.from('inbox_fb_friends').upsert({ id: 1, names: friends, updated_at: new Date().toISOString() })
     const friendKeys = new Set<string>()
     for (const f of friends) {
       const a = normFull(f), b = normCore(f)
