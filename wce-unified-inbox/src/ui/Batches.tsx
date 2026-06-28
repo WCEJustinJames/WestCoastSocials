@@ -77,6 +77,8 @@ export function Batches() {
   const [items, setItems] = useState<ItemRow[]>([])
   const [include, setInclude] = useState<Record<string, boolean>>({})
   const [edits, setEdits] = useState<Record<string, string>>({})
+  // Preview "why won't it send" filter — 'all' or a specific reason bucket.
+  const [previewFilter, setPreviewFilter] = useState<string>('all')
   // previously-built batches you can reload the recipient list from
   const [pastBatches, setPastBatches] = useState<
     { id: string; name: string; status: string; created_at: string; venue: string | null }[]
@@ -470,6 +472,31 @@ export function Batches() {
   }
   const includedCount = items.filter((it) => include[it.id] && sendableItem(it)).length
 
+  // Why each contact will / won't send — drives the preview breakdown + filter.
+  // 'Will send' for reachable, un-guarded rows; otherwise the guard reason
+  // ("Will start a NEW SMS chat", "Messaged in the last 24h", "No phone or
+  // thread", …) so you can see and isolate exactly why the rest are held back.
+  const itemBucket = (it: ItemRow): string =>
+    sendableItem(it) && !it.guard_flag
+      ? 'Will send'
+      : it.guard_reason || (sendableItem(it) ? 'Guarded' : 'Unreachable')
+  const previewBuckets = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const it of items) {
+      const b =
+        sendableItem(it) && !it.guard_flag
+          ? 'Will send'
+          : it.guard_reason || (sendableItem(it) ? 'Guarded' : 'Unreachable')
+      m.set(b, (m.get(b) ?? 0) + 1)
+    }
+    // 'Will send' first, then each held-back reason by descending count.
+    return [...m.entries()].sort((a, b) =>
+      a[0] === 'Will send' ? -1 : b[0] === 'Will send' ? 1 : b[1] - a[1],
+    )
+  }, [items])
+  const shownItems =
+    previewFilter === 'all' ? items : items.filter((it) => itemBucket(it) === previewFilter)
+
   async function approveSend() {
     if (!batchId || includedCount === 0) return
     setBusy(true)
@@ -641,8 +668,35 @@ export function Batches() {
           Select all ({includedCount}/{items.filter((it) => sendableItem(it)).length} sendable)
         </label>
 
+        {/* Why each contact will / won't send — click a reason to show just those
+            rows (e.g. everyone held back because it'd be a new cold SMS). */}
+        {previewBuckets.length > 1 && (
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            {([['all', items.length], ...previewBuckets] as [string, number][]).map(([b, n]) => {
+              const active = previewFilter === b
+              const send = b === 'Will send'
+              return (
+                <button
+                  key={b}
+                  onClick={() => setPreviewFilter(active && b !== 'all' ? 'all' : b)}
+                  title={b === 'all' ? 'Show everyone' : `Show only: ${b}`}
+                  className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                    active
+                      ? send
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                        : 'border-amber-400 bg-amber-50 text-amber-800'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  {b === 'all' ? 'All' : b} ({n})
+                </button>
+              )
+            })}
+          </div>
+        )}
+
         <ul className="space-y-2">
-          {items.map((it) => {
+          {shownItems.map((it) => {
             const data = it.data as { network?: string; region?: string } | null
             const canSend = sendableItem(it)
             return (
