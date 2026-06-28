@@ -77,8 +77,10 @@ export function Batches() {
   const [edits, setEdits] = useState<Record<string, string>>({})
   // previously-built batches you can reload the recipient list from
   const [pastBatches, setPastBatches] = useState<
-    { id: string; name: string; status: string; created_at: string }[]
+    { id: string; name: string; status: string; created_at: string; venue: string | null }[]
   >([])
+  // venue / weekly game this batch is tagged with (for recurring per-venue lists)
+  const [batchVenue, setBatchVenue] = useState('')
   // per-recipient name/phone corrections made in the preview
   const [nameEdits, setNameEdits] = useState<Record<string, string>>({})
   const [phoneEdits, setPhoneEdits] = useState<Record<string, string>>({})
@@ -149,6 +151,19 @@ export function Batches() {
   const venuesOpts = useMemo(
     () => Array.from(new Set(outreach.flatMap((o) => o.venues ?? []))).sort(),
     [outreach],
+  )
+  // Venue / weekly-game labels you can tag a batch with: every venue seen on a
+  // player plus any venue already used on a previous batch (so recurring weekly
+  // games stay pickable even if no current recipient lists them).
+  const batchVenuesOpts = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...venuesOpts,
+          ...pastBatches.map((b) => b.venue?.trim()).filter(Boolean) as string[],
+        ]),
+      ).sort(),
+    [venuesOpts, pastBatches],
   )
   const activities = useMemo(
     () => Array.from(new Set(outreach.map((o) => o.activity).filter(Boolean) as string[])).sort(),
@@ -316,7 +331,7 @@ export function Batches() {
   function loadPastBatches() {
     supabase
       .from('inbox_batches')
-      .select('id, name, status, created_at')
+      .select('id, name, status, created_at, venue')
       .order('created_at', { ascending: false })
       .limit(50)
       .then(({ data }) => setPastBatches((data as typeof pastBatches) ?? []))
@@ -376,6 +391,7 @@ export function Batches() {
         template_body: template,
         status: 'draft',
         created_by: 'manual',
+        venue: batchVenue.trim() || null,
         attachment_data: attachImg?.dataBase64 ?? null,
         attachment_name: attachImg?.name ?? null,
         attachment_mime: attachImg?.mime ?? null,
@@ -503,6 +519,7 @@ export function Batches() {
     setReplaceText('')
     setPicked(new Map())
     setName('')
+    setBatchVenue('')
     setTemplate('')
     setAttachImg(null)
   }
@@ -679,29 +696,63 @@ export function Batches() {
         <code className="rounded bg-slate-100 px-1">{'{{first_name}}'}</code> to personalise.
       </p>
 
-      {pastBatches.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-xs font-medium text-slate-500">Reuse a past list:</span>
-          <select
-            defaultValue=""
-            onChange={(e) => {
-              if (e.target.value) void loadList(e.target.value)
-              e.target.value = ''
-            }}
-            className="max-w-xs flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
-          >
-            <option value="">— pick a previous batch —</option>
-            {pastBatches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name} · {new Date(b.created_at).toLocaleDateString()} · {b.status}
-              </option>
-            ))}
-          </select>
-          <button onClick={loadPastBatches} className="text-xs text-emerald-700 hover:underline">
-            refresh
-          </button>
-        </div>
-      )}
+      <label className="mb-1 block text-sm font-medium">Venue / weekly game (optional)</label>
+      <input
+        list="batch-venues"
+        value={batchVenue}
+        onChange={(e) => setBatchVenue(e.target.value)}
+        placeholder="e.g. Leederville Tuesday, Kingsley cash…"
+        className="mb-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+      />
+      <datalist id="batch-venues">
+        {batchVenuesOpts.map((v) => (
+          <option key={v} value={v} />
+        ))}
+      </datalist>
+      <p className="mb-3 text-xs text-slate-500">
+        Tags this batch so you can browse and rebuild this venue's weekly list below.
+      </p>
+
+      {pastBatches.length > 0 &&
+        (() => {
+          const v = batchVenue.trim().toLowerCase()
+          const list = v
+            ? pastBatches.filter((b) => (b.venue ?? '').trim().toLowerCase() === v)
+            : pastBatches
+          return (
+            <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-xs font-medium text-slate-500">
+                {v ? `Reuse a ${batchVenue.trim()} list:` : 'Reuse a past list:'}
+              </span>
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  const id = e.target.value
+                  if (id) {
+                    const b = pastBatches.find((x) => x.id === id)
+                    if (b?.venue && !batchVenue.trim()) setBatchVenue(b.venue)
+                    void loadList(id)
+                  }
+                  e.target.value = ''
+                }}
+                className="max-w-xs flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
+              >
+                <option value="">
+                  {list.length ? '— pick a previous batch —' : '— none for this venue —'}
+                </option>
+                {list.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.venue ? `${b.venue} · ` : ''}
+                    {new Date(b.created_at).toLocaleDateString()} · {b.name} · {b.status}
+                  </option>
+                ))}
+              </select>
+              <button onClick={loadPastBatches} className="text-xs text-emerald-700 hover:underline">
+                refresh
+              </button>
+            </div>
+          )
+        })()}
 
       <label className="mb-1 block text-sm font-medium">Batch name (for your reference)</label>
       <input
