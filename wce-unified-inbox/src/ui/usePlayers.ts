@@ -25,10 +25,25 @@ export const isIncomplete = (r: PlayerRow): boolean => {
   return noContact || noRegion || noStakes || noVenue
 }
 
-// Where a contact came from, derived from the airtable_id prefix — so the card
-// can show "phone / TD sheet / facebook / letspoker / …" at a glance.
-export function sourceLabel(airtableId: string | null): string {
-  const a = airtableId ?? ''
+// Collapse Airtable's free-text "Source" (often a combo like "Google Contacts,
+// Facebook Messenger") into one short origin label for the chip + filter.
+function sourceFromText(s: string): string {
+  if (/facebook|messenger/i.test(s)) return 'facebook'
+  if (/raffle/i.test(s)) return 'raffle'
+  if (/reservation|pdf/i.test(s)) return 'reservations'
+  if (/phone contacts|google contacts/i.test(s)) return 'phone'
+  if (/cash players?/i.test(s)) return 'cash list'
+  if (/receipt/i.test(s)) return 'receipt'
+  if (/\btd\b|transfer/i.test(s)) return 'TD sheet'
+  return 'airtable'
+}
+
+// Where a contact came from — so the card can show "phone / facebook / raffle /
+// TD sheet / letspoker / …" at a glance. Prefix-based for our own imports; for
+// Airtable rows we use the mirrored "Source" field (the real origin) when set,
+// falling back to the generic "airtable" only when it's blank.
+export function sourceLabel(r: { airtable_id: string | null; source?: string | null }): string {
+  const a = r.airtable_id ?? ''
   if (a.startsWith('gcsv:') || a.startsWith('gcontact:')) return 'phone'
   if (a.startsWith('receipt:')) return 'receipt'
   if (a.startsWith('td:')) return 'TD sheet'
@@ -38,7 +53,7 @@ export function sourceLabel(airtableId: string | null): string {
   if (a.startsWith('lp:')) return 'letspoker'
   if (a.startsWith('staff:')) return 'staff'
   if (a.startsWith('manual:')) return 'manual'
-  if (a.startsWith('rec')) return 'airtable'
+  if (a.startsWith('rec')) return r.source ? sourceFromText(r.source) : 'airtable'
   return 'other'
 }
 
@@ -265,7 +280,7 @@ export function usePlayers() {
       if (banOnly && !r.do_not_message) return false
       if (staffOnly && !(r.staff ?? false)) return false
       if (incompleteOnly && !isIncomplete(r)) return false
-      if (sourceFilter !== 'all' && sourceLabel(r.airtable_id) !== sourceFilter) return false
+      if (sourceFilter !== 'all' && sourceLabel(r) !== sourceFilter) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -299,7 +314,7 @@ export function usePlayers() {
   const sources = useMemo(() => {
     const m = new Map<string, number>()
     for (const r of rows) {
-      const s = sourceLabel(r.airtable_id)
+      const s = sourceLabel(r)
       m.set(s, (m.get(s) ?? 0) + 1)
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1])

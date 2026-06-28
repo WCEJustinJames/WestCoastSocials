@@ -432,6 +432,7 @@ export type Database = {
           stakes: string[]
           synced_at: string
           venues: string[]
+          source: string | null
         }
         Insert: {
           activity?: string | null
@@ -465,6 +466,7 @@ export type Database = {
           stakes?: string[]
           synced_at?: string
           venues?: string[]
+          source?: string | null
         }
         Update: {
           activity?: string | null
@@ -498,6 +500,7 @@ export type Database = {
           stakes?: string[]
           synced_at?: string
           venues?: string[]
+          source?: string | null
         }
         Relationships: []
       }

@@ -101,12 +101,13 @@ export function PlayerCard({
         ) : (
           <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">no contact</span>
         )}
-        {/* Where this contact came from (phone / TD sheet / facebook / letspoker …). */}
+        {/* Where this contact came from (phone / facebook / raffle / letspoker …).
+            Hover shows the full raw Airtable source when we have it. */}
         <span
-          title={`Source: ${sourceLabel(r.airtable_id)}`}
+          title={r.source ? `Source: ${r.source}` : `Source: ${sourceLabel(r)}`}
           className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500"
         >
-          {sourceLabel(r.airtable_id)}
+          {sourceLabel(r)}
         </span>
         {isReviewed && (
           <button

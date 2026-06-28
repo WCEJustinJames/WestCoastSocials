@@ -62,6 +62,7 @@ export async function syncOutreach(
         last_active: str(f['Last Active']),
         last_contacted: str(f['Last Contacted']),
         notes: str(f['Notes']),
+        source: str(f['Source']),
         synced_at: new Date().toISOString(),
       }
     })
@@ -74,6 +75,22 @@ export async function syncOutreach(
         .upsert(rows, { onConflict: 'airtable_id', ignoreDuplicates: true })
       if (error) throw error
       synced += rows.length
+
+      // The "Source" (real origin: Facebook Messenger / Google Contacts / raffle
+      // cards / reservation PDF …) IS allowed to refresh on existing rows — it's
+      // not something Justin hand-edits, and the generic "airtable" label is
+      // useless without it. Upsert just airtable_id + source (no ignoreDuplicates),
+      // which updates source while leaving every other field — and his edits —
+      // untouched.
+      const srcRows = rows
+        .filter((r) => r.source)
+        .map((r) => ({ airtable_id: r.airtable_id, source: r.source }))
+      if (srcRows.length) {
+        const { error: se } = await db
+          .from('inbox_outreach')
+          .upsert(srcRows, { onConflict: 'airtable_id' })
+        if (se) throw se
+      }
     }
     offset = data.offset
   } while (offset)
