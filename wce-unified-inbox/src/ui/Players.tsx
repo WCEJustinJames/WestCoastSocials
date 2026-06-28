@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { usePlayers } from './usePlayers'
 import { PlayerCard } from './PlayerRow'
 
-/** Players tab — the full contact list + per-player settings (browse / edit). */
-export function Players() {
-  const p = usePlayers()
+/** Players tab — the full contact list + per-player settings (browse / edit).
+ * `initialFilter` lets the Home dashboard open this tab pre-filtered (e.g. the
+ * "No contact" card jumps straight to the no-contact list). */
+export function Players({ initialFilter }: { initialFilter?: string | null }) {
+  const p = usePlayers(initialFilter ?? undefined)
   return (
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-6">
       <div className="mb-1 flex items-center justify-between">

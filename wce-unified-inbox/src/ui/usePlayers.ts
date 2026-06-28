@@ -197,7 +197,7 @@ const toEdit = (r: PlayerRow): Edit => ({
  * edit) and the Merge & Review tab (dedupe / triage). Each consumer gets its own
  * instance; only one tab is mounted at a time, so the cost is a reload on switch.
  */
-export function usePlayers() {
+export function usePlayers(initialFilter?: string) {
   const [rows, setRows] = useState<PlayerRow[]>([])
   const [edits, setEdits] = useState<Record<string, Edit>>({})
   // external_chat_id -> network ('Google Messages', 'Facebook/Messenger', …) so a
@@ -218,8 +218,9 @@ export function usePlayers() {
   // "Cash" view: only players flagged cash (cash-game segment).
   const [cashOnly, setCashOnly] = useState(false)
   // "No contact" view: players with no phone AND no Messenger thread — the
-  // collect-their-number-in-person list.
-  const [noContactOnly, setNoContactOnly] = useState(false)
+  // collect-their-number-in-person list. Can be opened pre-filtered from the
+  // Home dashboard's "No contact" card.
+  const [noContactOnly, setNoContactOnly] = useState(initialFilter === 'noContact')
   // "Banned" view: do_not_message set (opted out / barred).
   const [banOnly, setBanOnly] = useState(false)
   // "Staff" view: dealers / permit holders / crew (never proactively invited).
@@ -229,7 +230,7 @@ export function usePlayers() {
   // Filter by where the contact came from (phone / TD sheet / facebook / …).
   const [sourceFilter, setSourceFilter] = useState('all')
   // "FB · DM to open" view: Facebook friends with no thread yet (from importer).
-  const [fbFriendOnly, setFbFriendOnly] = useState(false)
+  const [fbFriendOnly, setFbFriendOnly] = useState(initialFilter === 'fbDm')
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the

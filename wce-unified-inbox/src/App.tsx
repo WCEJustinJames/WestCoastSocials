@@ -16,6 +16,13 @@ type View = 'home' | 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | '
 
 export default function App() {
   const [view, setView] = useState<View>('home')
+  // A Home dashboard card can deep-link into the Players tab with a filter
+  // pre-applied (e.g. the "No contact" card opens the no-contact list to work through).
+  const [playersFilter, setPlayersFilter] = useState<string | null>(null)
+  const goPlayers = (filter: string | null) => {
+    setPlayersFilter(filter)
+    setView('players')
+  }
   return (
     <div className="flex h-screen flex-col bg-slate-50 text-slate-900">
       <nav className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-white px-3 py-1.5">
@@ -41,7 +48,7 @@ export default function App() {
         <TabButton active={view === 'receipts'} onClick={() => setView('receipts')}>
           Receipts
         </TabButton>
-        <TabButton active={view === 'players'} onClick={() => setView('players')}>
+        <TabButton active={view === 'players'} onClick={() => goPlayers(null)}>
           Players
         </TabButton>
         <TabButton active={view === 'merge'} onClick={() => setView('merge')}>
@@ -56,7 +63,7 @@ export default function App() {
       </nav>
       <div className="min-h-0 flex-1">
         {view === 'home' ? (
-          <Home />
+          <Home onNavigate={goPlayers} />
         ) : view === 'inbox' ? (
           <Inbox />
         ) : view === 'batches' ? (
@@ -70,7 +77,7 @@ export default function App() {
         ) : view === 'receipts' ? (
           <Receipts />
         ) : view === 'players' ? (
-          <Players />
+          <Players initialFilter={playersFilter} />
         ) : (
           <MergeReview />
         )}

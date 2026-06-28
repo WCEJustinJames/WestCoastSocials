@@ -15,11 +15,11 @@ interface CrmRow {
  * Home / Dashboard tab — the CRM's landing page. At-a-glance counts plus the
  * featured Post-game thank-you tool. More cards can slot in over time.
  */
-export function Home() {
+export function Home({ onNavigate }: { onNavigate: (filter: string | null) => void }) {
   return (
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-6">
       <h2 className="mb-4 text-lg font-semibold">Home</h2>
-      <DashboardCards />
+      <DashboardCards onNavigate={onNavigate} />
       <PostGame />
     </div>
   )
@@ -27,7 +27,7 @@ export function Home() {
 
 // ----------------------------- dashboard cards ------------------------------
 
-function DashboardCards() {
+function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) => void }) {
   const [stats, setStats] = useState<{ players: number; noContact: number; fbDm: number } | null>(null)
   const [beat, setBeat] = useState<{ note: string | null; last: string | null } | null>(null)
 
@@ -74,9 +74,9 @@ function DashboardCards() {
 
   return (
     <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Stat label="Players" value={stats?.players} />
-      <Stat label="No contact" value={stats?.noContact} tone="amber" />
-      <Stat label="FB · DM to open" value={stats?.fbDm} tone="indigo" />
+      <Stat label="Players" value={stats?.players} onClick={() => onNavigate(null)} />
+      <Stat label="No contact" value={stats?.noContact} tone="amber" onClick={() => onNavigate('noContact')} />
+      <Stat label="FB · DM to open" value={stats?.fbDm} tone="indigo" onClick={() => onNavigate('fbDm')} />
       <div className="rounded-lg border border-slate-200 bg-white p-3">
         <div className="text-[11px] uppercase tracking-wide text-slate-400">Sync</div>
         <div className="mt-1 truncate text-sm font-semibold text-slate-700">{beat?.note ?? '—'}</div>
@@ -86,15 +86,38 @@ function DashboardCards() {
   )
 }
 
-function Stat({ label, value, tone = 'slate' }: { label: string; value?: number; tone?: 'slate' | 'amber' | 'indigo' }) {
+function Stat({
+  label,
+  value,
+  tone = 'slate',
+  onClick,
+}: {
+  label: string
+  value?: number
+  tone?: 'slate' | 'amber' | 'indigo'
+  onClick?: () => void
+}) {
   const color =
     tone === 'amber' ? 'text-amber-700' : tone === 'indigo' ? 'text-indigo-700' : 'text-slate-800'
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
+  const body = (
+    <>
       <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
       <div className={`mt-1 text-2xl font-bold ${color}`}>{value ?? '—'}</div>
-    </div>
+    </>
   )
+  if (onClick) {
+    return (
+      <button
+        onClick={onClick}
+        title={`Open ${label} in Players →`}
+        className="rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-emerald-400 hover:shadow-sm"
+      >
+        {body}
+        <div className="mt-0.5 text-[10px] text-emerald-600">work through →</div>
+      </button>
+    )
+  }
+  return <div className="rounded-lg border border-slate-200 bg-white p-3">{body}</div>
 }
 
 // ------------------------------ post-game tool ------------------------------
