@@ -14,6 +14,17 @@ const filledCount = (r: PlayerRow): number =>
   [r.player_name, r.email, r.region, r.beeper_chat_id, r.activity, r.outreach_status].filter(Boolean)
     .length + (r.stakes?.length ?? 0) + (r.venues?.length ?? 0)
 
+// "Partial / incomplete" = a record still missing something you'd want before
+// inviting them: a way to reach them, a region, stakes, or a venue. These are the
+// rows to work through in Merge & Review.
+export const isIncomplete = (r: PlayerRow): boolean => {
+  const noContact = !r.phone?.trim() && !r.beeper_chat_id?.trim()
+  const noRegion = !(r.region ?? '').trim()
+  const noStakes = (r.stakes?.length ?? 0) === 0
+  const noVenue = (r.venues?.length ?? 0) === 0
+  return noContact || noRegion || noStakes || noVenue
+}
+
 // Canonical dropdown vocabularies. Edit these lists to taste — existing
 // non-standard values on a player are preserved and shown as the selection.
 export const REGIONS = ['North', 'South', 'Central', 'All']
@@ -128,6 +139,12 @@ export function usePlayers() {
   // "No contact" view: players with no phone AND no Messenger thread — the
   // collect-their-number-in-person list.
   const [noContactOnly, setNoContactOnly] = useState(false)
+  // "Banned" view: do_not_message set (opted out / barred).
+  const [banOnly, setBanOnly] = useState(false)
+  // "Staff" view: dealers / permit holders / crew (never proactively invited).
+  const [staffOnly, setStaffOnly] = useState(false)
+  // "Incomplete" view: records still missing contact / region / stakes / venue.
+  const [incompleteOnly, setIncompleteOnly] = useState(false)
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the
@@ -211,6 +228,9 @@ export function usePlayers() {
       if (tournamentOnly && !(r.tournament ?? false)) return false
       if (cashOnly && !(r.cash ?? false)) return false
       if (noContactOnly && (!!r.phone?.trim() || !!r.beeper_chat_id?.trim())) return false
+      if (banOnly && !r.do_not_message) return false
+      if (staffOnly && !(r.staff ?? false)) return false
+      if (incompleteOnly && !isIncomplete(r)) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -238,7 +258,7 @@ export function usePlayers() {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, cashOnly, noContactOnly, reviewed])
+  }, [rows, query, regionFilter, showHidden, weeklyOnly, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, reviewed])
 
   // How many players are actually on the weekly send right now.
   const weeklyCount = useMemo(
@@ -383,6 +403,9 @@ export function usePlayers() {
     tournamentOnly, setTournamentOnly,
     cashOnly, setCashOnly,
     noContactOnly, setNoContactOnly,
+    banOnly, setBanOnly,
+    staffOnly, setStaffOnly,
+    incompleteOnly, setIncompleteOnly,
     reviewed, unmarkReviewed,
     load, regionCounts, regions, dupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,
