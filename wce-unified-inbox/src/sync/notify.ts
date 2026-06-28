@@ -145,6 +145,23 @@ export async function processReplies(
       skipHandledIds.push(...msgs.map((m) => m.id))
       continue
     }
+    // If Justin has already replied by hand since the player's latest text, the
+    // thread is handled — never let the rail fire a second reply on top of him.
+    // His manual reply is mirrored as a later outbound in the same conversation,
+    // so a most-recent outbound newer than the latest inbound means "answered".
+    const latestInbound = Math.max(...msgs.map((m) => new Date(m.timestamp).getTime()))
+    const { data: lastOut } = await db
+      .from('inbox_messages')
+      .select('timestamp')
+      .eq('conversation_id', conversationId)
+      .eq('direction', 'outbound')
+      .order('timestamp', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (lastOut?.timestamp && new Date(lastOut.timestamp).getTime() > latestInbound) {
+      skipHandledIds.push(...msgs.map((m) => m.id))
+      continue
+    }
     const { count } = await db
       .from('inbox_messages')
       .select('id', { count: 'exact', head: true })
