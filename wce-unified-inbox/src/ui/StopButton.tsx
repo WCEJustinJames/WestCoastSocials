@@ -17,33 +17,31 @@ const sb = supabase as unknown as {
 
 /**
  * Generic pause/play pill bound to one boolean column on inbox_settings (id=1).
- * The PC sync re-reads these every pass, so a flip halts/resumes instantly from
- * any device, no restart. Polls every 5s to reflect changes made elsewhere.
+ * The button shows the feature's CURRENT STATE at a glance — green ▶️ while it's
+ * running, red ⏸️ while it's paused — and the hover explains the action you'll
+ * take. The PC sync re-reads these every pass, so a flip halts/resumes instantly
+ * from any device, no restart. Polls every 5s to reflect changes made elsewhere.
  */
 function PauseToggle({
   column,
   reasonColumn,
   confirmText,
-  liveLabel,
-  pausedLabel,
-  liveTitle,
+  name,
+  activeTitle,
   pausedTitle,
-  liveClass,
 }: {
   column: string
   reasonColumn?: string
   confirmText: string
-  liveLabel: string
-  pausedLabel: string
-  liveTitle: string
+  name: string
+  activeTitle: string
   pausedTitle: string
-  liveClass: string
 }) {
   const [paused, setPaused] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   // Two-tap confirm for the guarded (pausing) direction — first tap arms, second
-  // commits. Replaces window.confirm(), whose synchronous modal froze paint for
-  // the whole time it was open (the INP "blocked UI for ~1s" warnings).
+  // commits. Replaces window.confirm(), whose synchronous modal froze paint (the
+  // INP "blocked UI for ~1s" warnings).
   const [armed, setArmed] = useState(false)
   const [err, setErr] = useState(false)
 
@@ -90,16 +88,22 @@ function PauseToggle({
 
   if (paused === null) return null
 
-  const label = err ? '⚠ retry' : armed ? '⚠ tap to confirm' : paused ? pausedLabel : liveLabel
+  // State-at-a-glance: running = green ▶️, paused = red ⏸️, about-to-pause = amber.
+  const label = err ? '⚠ retry' : armed ? '⚠ tap to confirm' : paused ? `⏸️ ${name}` : `▶️ ${name}`
+  const color = err
+    ? 'bg-red-600'
+    : armed
+      ? 'bg-amber-500 hover:bg-amber-400'
+      : paused
+        ? 'bg-red-600 hover:bg-red-500'
+        : 'bg-emerald-600 hover:bg-emerald-500'
 
   return (
     <button
       onClick={toggle}
       disabled={busy}
-      title={armed ? confirmText : paused ? pausedTitle : liveTitle}
-      className={`rounded-md px-3 py-1 text-sm font-semibold text-white disabled:opacity-60 ${
-        armed ? 'bg-amber-600 hover:bg-amber-500' : paused ? 'bg-amber-600 hover:bg-amber-500' : liveClass
-      }`}
+      title={armed ? confirmText : paused ? pausedTitle : activeTitle}
+      className={`rounded-md px-3 py-1 text-sm font-semibold text-white disabled:opacity-60 ${color}`}
     >
       {label}
     </button>
@@ -107,8 +111,9 @@ function PauseToggle({
 }
 
 /**
- * The hard STOP button — master kill-switch (inbox_settings.sends_paused). Halts
- * ALL outgoing messages (outreach AND auto-replies) instantly, from any device.
+ * The hard STOP — master kill-switch (inbox_settings.sends_paused). Halts ALL
+ * proactive outreach + batch sends instantly; auto-replies keep running. Shows
+ * green ▶️ Sends while live, red ⏸️ Sends while stopped.
  */
 export function StopButton() {
   return (
@@ -116,30 +121,25 @@ export function StopButton() {
       column="sends_paused"
       reasonColumn="paused_reason"
       confirmText="Stop all outreach + batch sends now? (auto-replies keep running)"
-      liveLabel="■ STOP"
-      pausedLabel="▶ Resume sends"
-      liveTitle="Stop outreach + batch sends (auto-replies stay on)"
-      pausedTitle="Sends are paused — tap to resume"
-      liveClass="bg-red-600 hover:bg-red-500"
+      name="Sends"
+      activeTitle="Outreach + batch sends are active — press to pause (auto-replies stay on)"
+      pausedTitle="Sends are paused — press to resume"
     />
   )
 }
 
 /**
  * Independent pause for just the AI auto-replies (inbox_settings.replies_paused).
- * Proactive outreach keeps running; only the reactive reply rail is held. The
- * master STOP above still halts replies too.
+ * Proactive outreach keeps running; only the reactive reply rail is held.
  */
 export function RepliesToggle() {
   return (
     <PauseToggle
       column="replies_paused"
       confirmText="Pause AI auto-replies? (outreach keeps running)"
-      liveLabel="⏸ Replies"
-      pausedLabel="▶ Replies off"
-      liveTitle="Pause the AI auto-replies only"
-      pausedTitle="Auto-replies paused — tap to resume"
-      liveClass="bg-slate-600 hover:bg-slate-500"
+      name="Replies"
+      activeTitle="AI auto-replies are active — press to pause"
+      pausedTitle="Auto-replies are paused — press to resume"
     />
   )
 }
@@ -153,11 +153,9 @@ export function RosterToggle() {
     <PauseToggle
       column="roster_paused"
       confirmText="Pause the cash-games group seat-list updates?"
-      liveLabel="⏸ Group"
-      pausedLabel="▶ Group off"
-      liveTitle="Pause the group seat-list posting"
-      pausedTitle="Group seat-list paused — tap to resume"
-      liveClass="bg-slate-600 hover:bg-slate-500"
+      name="Group"
+      activeTitle="Group seat-list posting is active — press to pause"
+      pausedTitle="Group seat-list is paused — press to resume"
     />
   )
 }
