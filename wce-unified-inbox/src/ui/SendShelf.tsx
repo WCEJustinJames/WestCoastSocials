@@ -25,27 +25,34 @@ const ORDER: Record<string, number> = {
  * each name fades + strikes through the moment it sends. Disappears when done.
  */
 export function SendShelf() {
-  const [batchName, setBatchName] = useState<string | null>(null)
+  const [batch, setBatch] = useState<{ name: string; status: string; scheduledFor: string | null } | null>(null)
   const [items, setItems] = useState<Item[]>([])
+  // Collapsed by default (just the batch + send time); auto-expands the moment
+  // sending starts so you can watch it fly, and a click toggles it any time.
+  const [open, setOpen] = useState(false)
 
   async function load() {
-    const { data: batch } = await supabase
+    const { data: b } = await supabase
       .from('inbox_batches')
-      .select('id, name')
+      .select('id, name, status, scheduled_for')
       .in('status', ['approved', 'sending'] as const)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
-    if (!batch) {
-      setBatchName(null)
+    if (!b) {
+      setBatch(null)
       setItems([])
       return
     }
-    setBatchName(batch.name ?? 'batch')
+    setBatch({
+      name: b.name ?? 'batch',
+      status: b.status,
+      scheduledFor: (b as { scheduled_for?: string | null }).scheduled_for ?? null,
+    })
     const { data: its } = await supabase
       .from('inbox_batch_items')
       .select('id, status, data')
-      .eq('batch_id', batch.id)
+      .eq('batch_id', b.id)
     const list: Item[] = (its ?? []).map((it) => ({
       id: it.id,
       status: it.status,
@@ -60,18 +67,39 @@ export function SendShelf() {
     return () => clearInterval(t)
   }, [])
 
-  if (!batchName || items.length === 0) return null
+  const sending = batch?.status === 'sending' || items.some((i) => i.status === 'sending')
+  // Pop the list open the moment a send goes live (you can still collapse it).
+  useEffect(() => {
+    if (sending) setOpen(true)
+  }, [sending])
+
+  if (!batch || items.length === 0) return null
   const sent = items.filter((i) => i.status === 'sent').length
   const failed = items.filter((i) => i.status === 'failed').length
+  const sendTime = sending
+    ? 'sending now…'
+    : batch.scheduledFor && new Date(batch.scheduledFor) > new Date()
+      ? `sends ${new Date(batch.scheduledFor).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+      : 'queued'
 
   return (
     <div className="fixed right-0 top-12 z-40 flex max-h-[80vh] w-56 flex-col overflow-hidden rounded-l-lg border border-slate-200 bg-white/95 shadow-lg backdrop-blur">
-      <div className="shrink-0 border-b border-slate-100 px-3 py-2">
-        <div className="truncate text-xs font-semibold text-slate-700">Sending: {batchName}</div>
-        <div className="text-[11px] text-slate-500">
-          {sent}/{items.length} sent{failed ? ` · ${failed} failed` : ''}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={open ? 'Collapse' : 'Expand to see each recipient'}
+        className="shrink-0 border-b border-slate-100 px-3 py-2 text-left hover:bg-slate-50"
+      >
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-slate-400">{open ? '▾' : '▸'}</span>
+          <span className="flex-1 truncate text-xs font-semibold text-slate-700">
+            {sending ? 'Sending' : 'Queued'}: {batch.name}
+          </span>
         </div>
-      </div>
+        <div className="pl-3.5 text-[11px] text-slate-500">
+          {sent}/{items.length} sent{failed ? ` · ${failed} failed` : ''} · {sendTime}
+        </div>
+      </button>
+      {open && (
       <ul className="overflow-y-auto px-2 py-1 text-sm">
         {items.map((i) => (
           <li
@@ -93,6 +121,7 @@ export function SendShelf() {
           </li>
         ))}
       </ul>
+      )}
     </div>
   )
 }

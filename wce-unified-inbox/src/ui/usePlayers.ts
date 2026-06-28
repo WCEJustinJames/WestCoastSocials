@@ -141,7 +141,10 @@ export function parseFriendNames(raw: string): string[] {
 
 // Canonical dropdown vocabularies. Edit these lists to taste — existing
 // non-standard values on a player are preserved and shown as the selection.
-export const REGIONS = ['North', 'South', 'Central', 'All']
+// "North + Central" / "South + Central" cover players happy to travel across two
+// zones — the substring region filter means they show up under either zone's
+// list (e.g. a "South + Central" player matches both a South and a Central game).
+export const REGIONS = ['North', 'South', 'Central', 'North + Central', 'South + Central', 'All']
 export const VENUES = [
   'MCT', 'Woodvale', 'Bentley', 'Kenwick', 'Kingsley',
   'Leederville', 'Stirling', 'Planet Royale',
