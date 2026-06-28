@@ -149,10 +149,6 @@ export function MergeReview() {
           <input type="checkbox" checked={p.noContactOnly} onChange={(e) => p.setNoContactOnly(e.target.checked)} />
           no contact
         </label>
-        <label className="flex items-center gap-1 text-xs text-emerald-700" title="On the recurring weekly cash send">
-          <input type="checkbox" checked={p.weeklyOnly} onChange={(e) => p.setWeeklyOnly(e.target.checked)} />
-          weekly
-        </label>
         <label className="flex items-center gap-1 text-xs text-purple-700" title="Tournament players">
           <input type="checkbox" checked={p.tournamentOnly} onChange={(e) => p.setTournamentOnly(e.target.checked)} />
           tournament
