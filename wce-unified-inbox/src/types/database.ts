@@ -93,6 +93,12 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_fb_friends: {
+        Row: { id: number; names: Json; updated_at: string }
+        Insert: { id?: number; names?: Json; updated_at?: string }
+        Update: { id?: number; names?: Json; updated_at?: string }
+        Relationships: []
+      }
       inbox_batch_items: {
         Row: {
           batch_id: string

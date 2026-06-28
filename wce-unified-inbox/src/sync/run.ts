@@ -20,6 +20,7 @@ import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
 import { syncTdSheets } from './tdsheets'
 import { autoLink } from './autolink'
+import { matchFbFriends } from './fbmatch'
 import { processReplies } from './notify'
 import { postSeatList } from './roster'
 import { newAiHealth, trackAiHealth, worstOutcome, type AiOutcome } from './alert'
@@ -28,7 +29,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g24-sync-status'
+const SYNC_VERSION = 'g25-fb-rematch'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -102,6 +103,8 @@ let lastContactsSync = 0
 let lastTdSheets = 0
 // Name-match auto-linker runs on its own slow cadence too.
 let lastAutoLink = 0
+// FB-friend re-match runs on the same slow cadence.
+let lastFbMatch = 0
 
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
@@ -346,6 +349,18 @@ async function runOnce(): Promise<void> {
       }
     } catch (e) {
       console.error('[autolink] error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // FB-friend re-match: keep the fb_friend flag current as new players land, from
+  // the stored friends list (the in-app importer writes it). No-op until imported.
+  if (Date.now() - lastFbMatch > env.autoLinkMinutes * 60_000) {
+    lastFbMatch = Date.now()
+    try {
+      const fm = await matchFbFriends(supabaseAdmin)
+      if (fm.flagged || fm.cleared) console.log(`[fbmatch] flagged ${fm.flagged}, cleared ${fm.cleared}`)
+    } catch (e) {
+      console.error('[fbmatch] error:', e instanceof Error ? e.message : e)
     }
   }
 
