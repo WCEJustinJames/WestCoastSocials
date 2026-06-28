@@ -21,7 +21,7 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const PEOPLE_URL = 'https://people.googleapis.com/v1/people/me/connections'
 
 /** Exchange the long-lived refresh token for a short-lived access token. */
-async function accessToken(clientId: string, clientSecret: string, refreshToken: string): Promise<string> {
+export async function accessToken(clientId: string, clientSecret: string, refreshToken: string): Promise<string> {
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },

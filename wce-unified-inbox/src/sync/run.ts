@@ -18,6 +18,7 @@ import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
 import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
+import { syncTdSheets } from './tdsheets'
 import { autoLink } from './autolink'
 import { processReplies } from './notify'
 import { postSeatList } from './roster'
@@ -27,7 +28,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g22-reply-claim'
+const SYNC_VERSION = 'g23-td-sheets'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -86,6 +87,7 @@ if (env.airtableKey) {
 }
 if (env.googleRefreshToken) {
   console.log(`[contacts] Google Contacts sync on (every ${env.contactsSyncMinutes}m)`)
+  console.log(`[tdsheets] TD-sheet attendee pull on (every ${env.tdSheetsSyncMinutes}m)`)
 }
 console.log(`[autolink] name-match auto-linker on (every ${env.autoLinkMinutes}m)`)
 if (anthropic && env.autoReply) {
@@ -96,6 +98,8 @@ if (anthropic && env.autoReply) {
 let lastOutreachSync = 0
 // Google Contacts sync also runs on a slow cadence (default twice a day).
 let lastContactsSync = 0
+// TD-sheet attendee pull runs on its own slow cadence.
+let lastTdSheets = 0
 // Name-match auto-linker runs on its own slow cadence too.
 let lastAutoLink = 0
 
@@ -306,6 +310,24 @@ async function runOnce(): Promise<void> {
       if (gc.created) console.log(`[contacts] ${gc.created} new contact(s) imported (${gc.autoHidden} auto-hidden as non-person, ${gc.scanned} changed)`)
     } catch (e) {
       console.error('[contacts] sync error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // TD sheets: pull tonight's attendees (cash players, tournament winners, and
+  // electronic-paying tournament entrants) from the "DD/MM Venue" Google Sheets
+  // into inbox_td_attendees, so the post-game tool has them one tap away.
+  if (env.googleRefreshToken && Date.now() - lastTdSheets > env.tdSheetsSyncMinutes * 60_000) {
+    lastTdSheets = Date.now()
+    try {
+      const td = await syncTdSheets(
+        supabaseAdmin,
+        env.googleClientId,
+        env.googleClientSecret,
+        env.googleRefreshToken,
+      )
+      if (td.attendees) console.log(`[tdsheets] ${td.attendees} attendee(s) from ${td.sheets} sheet(s)`)
+    } catch (e) {
+      console.error('[tdsheets] sync error:', e instanceof Error ? e.message : e)
     }
   }
 

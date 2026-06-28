@@ -111,6 +111,14 @@ interface Attendee {
   include: boolean
 }
 
+interface TdGame {
+  sheet_id: string
+  title: string
+  venue: string
+  game_date: string | null
+  entries: { name: string; winner: boolean }[]
+}
+
 /** Heavily-varied post-game message pools (casual Aussie poker-host voice). */
 const OPENERS = ['Hey {n}', '{n}!', 'Gday {n}', 'Hi {n}', 'Evening {n}', 'Cheers {n}', '{n} 👋']
 const THANKS = [
@@ -160,6 +168,31 @@ function PostGame() {
   const [rows, setRows] = useState<Attendee[]>([])
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [tdGames, setTdGames] = useState<TdGame[]>([])
+
+  // Attendees the sync pulled from recent TD sheets, grouped per game.
+  useEffect(() => {
+    void (async () => {
+      const since = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10)
+      const { data } = await supabase
+        .from('inbox_td_attendees')
+        .select('sheet_id, sheet_title, venue, game_date, name, is_winner')
+        .gte('game_date', since)
+        .order('game_date', { ascending: false })
+      const groups = new Map<string, TdGame>()
+      for (const r of (data ?? []) as {
+        sheet_id: string; sheet_title: string | null; venue: string | null
+        game_date: string | null; name: string; is_winner: boolean
+      }[]) {
+        const g =
+          groups.get(r.sheet_id) ??
+          { sheet_id: r.sheet_id, title: r.sheet_title ?? r.venue ?? 'game', venue: r.venue ?? '', game_date: r.game_date, entries: [] }
+        g.entries.push({ name: r.name, winner: r.is_winner })
+        groups.set(r.sheet_id, g)
+      }
+      setTdGames([...groups.values()])
+    })()
+  }, [])
 
   const sendable = useMemo(() => rows.filter((r) => r.include && r.channel), [rows])
 
@@ -186,20 +219,26 @@ function PostGame() {
 
   // Match pasted names to CRM records, CREATING any unknowns so they're pulled
   // into the CRM (per Justin's rule). Then build the editable review list.
-  async function build() {
-    const names = Array.from(
-      new Map(
-        raw
-          .split(/\n+/)
-          .map((l) => l.replace(/\(.*?\)\s*$/, '').trim())
-          .filter(Boolean)
-          .map((n) => [n.toLowerCase(), n]),
-      ).values(),
-    )
-    if (names.length === 0) {
-      setStatus('Paste at least one attendee name.')
+  // Core matcher — shared by the paste box and the TD-sheet pull. Takes a list of
+  // {name, winner}, dedupes, matches each to a CRM record (creating unknowns as
+  // no-contact rows), and builds the editable review list. venueArg is passed
+  // explicitly so the TD loader isn't bitten by stale `venue` state.
+  async function buildFrom(entries: { name: string; winner: boolean }[], venueArg = venue) {
+    const map = new Map<string, { name: string; winner: boolean }>()
+    for (const e of entries) {
+      const n = e.name.trim()
+      if (!n) continue
+      const k = n.toLowerCase()
+      const prev = map.get(k)
+      if (!prev) map.set(k, { name: n, winner: e.winner })
+      else if (e.winner) prev.winner = true
+    }
+    const list = [...map.values()]
+    if (list.length === 0) {
+      setStatus('Add at least one attendee name.')
       return
     }
+    const v = venueArg.trim()
     setBusy(true)
     setStatus('Matching…')
     const crm = await loadCrm()
@@ -221,13 +260,13 @@ function PostGame() {
     }
 
     // Create rows for the unknown names so they land in the CRM as no-contact.
-    const unknowns = names.filter((n) => findUnique(n) === 'none')
+    const unknowns = list.map((e) => e.name).filter((n) => findUnique(n) === 'none')
     let created = 0
     if (unknowns.length) {
       const ins = unknowns.map((n) => ({
         airtable_id: `post-game:${crypto.randomUUID()}`,
         player_name: n,
-        venues: venue.trim() ? [venue.trim()] : [],
+        venues: v ? [v] : [],
         source: 'Post-game',
         synced_at: new Date().toISOString(),
       }))
@@ -239,10 +278,10 @@ function PostGame() {
     }
 
     const createdSet = new Set(unknowns.map((n) => n.toLowerCase()))
-    const built: Attendee[] = names.map((name) => {
+    const built: Attendee[] = list.map(({ name, winner }) => {
       const m = findUnique(name)
       if (m === 'many') {
-        return { name, player: null, status: 'ambiguous', channel: null, winner: false, message: genMessage(name, venue, false), include: false }
+        return { name, player: null, status: 'ambiguous', channel: null, winner, message: genMessage(name, v, winner), include: false }
       }
       const player = m === 'none' ? null : m
       const route = player ? routeOf(player) : { status: 'nocontact' as RowStatus, channel: null }
@@ -252,8 +291,8 @@ function PostGame() {
         player,
         status,
         channel: route.channel,
-        winner: false,
-        message: genMessage(name, venue, false),
+        winner,
+        message: genMessage(name, v, winner),
         include: !!route.channel,
       }
     })
@@ -264,6 +303,16 @@ function PostGame() {
         (created ? ` · added ${created} new to CRM` : '') +
         (built.some((r) => r.status === 'ambiguous') ? ` · ${built.filter((r) => r.status === 'ambiguous').length} ambiguous (skipped)` : ''),
     )
+  }
+
+  function build() {
+    const names = raw.split(/\n+/).map((l) => l.replace(/\(.*?\)\s*$/, '').trim()).filter(Boolean)
+    void buildFrom(names.map((name) => ({ name, winner: false })))
+  }
+
+  function loadTd(g: TdGame) {
+    setVenue(g.venue)
+    void buildFrom(g.entries, g.venue)
   }
 
   function patch(i: number, p: Partial<Attendee>) {
@@ -335,6 +384,24 @@ function PostGame() {
         gets a uniquely-worded thanks (mark winners for a congrats), then it all goes to your normal
         approve-then-send queue. Auto-pull from LP / TD sheets drops in here once those are connected.
       </p>
+
+      {tdGames.length > 0 && (
+        <div className="mt-3 rounded-md border border-emerald-200 bg-white p-2">
+          <p className="mb-1 text-xs font-medium text-slate-600">From TD sheets — tap to load that night's players:</p>
+          <div className="flex flex-wrap gap-2">
+            {tdGames.map((g) => (
+              <button
+                key={g.sheet_id}
+                disabled={busy}
+                onClick={() => loadTd(g)}
+                className="rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-100 disabled:opacity-40"
+              >
+                {g.title} · {g.entries.length} players{g.entries.some((e) => e.winner) ? ' · 🏆' : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <input
