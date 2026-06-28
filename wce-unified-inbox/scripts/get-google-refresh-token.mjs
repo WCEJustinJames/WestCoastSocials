@@ -1,11 +1,14 @@
-// One-time helper: get a Google OAuth refresh token for the Contacts (People
-// API) sync. Put GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env first,
-// then from the wce-unified-inbox folder run:
+// One-time helper: get a Google OAuth refresh token for the sync. Covers the
+// Contacts (People API) sync AND read-only access to the TD-sheet Google Sheets
+// (find them by name in Drive, read the attendee columns). Put GOOGLE_CLIENT_ID
+// and GOOGLE_CLIENT_SECRET in your .env first, then from the wce-unified-inbox
+// folder run:
 //
 //   node scripts/get-google-refresh-token.mjs
 //
-// It opens a local consent flow (sign in as the account whose contacts you want
-// to sync) and prints the GOOGLE_REFRESH_TOKEN line to paste into your .env.
+// It opens a local consent flow (sign in as the Google account that OWNS the
+// contacts + TD sheets) and prints the GOOGLE_REFRESH_TOKEN line for your .env.
+// Re-run this whenever the scopes below change (you'll be asked to re-approve).
 import 'dotenv/config'
 import http from 'node:http'
 
@@ -13,7 +16,15 @@ const clientId = process.env.GOOGLE_CLIENT_ID
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET
 const PORT = 53682
 const redirectUri = `http://localhost:${PORT}`
-const SCOPE = 'https://www.googleapis.com/auth/contacts.readonly'
+// contacts.readonly      — the People API contacts sync (existing)
+// drive.metadata.readonly — find tonight's TD sheet by name/folder (metadata only,
+//                           NOT file contents — can't read other Drive files)
+// spreadsheets.readonly   — read the attendee columns out of that one sheet
+const SCOPE = [
+  'https://www.googleapis.com/auth/contacts.readonly',
+  'https://www.googleapis.com/auth/drive.metadata.readonly',
+  'https://www.googleapis.com/auth/spreadsheets.readonly',
+].join(' ')
 
 if (!clientId || !clientSecret) {
   console.error('\n❌ Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env first, then re-run.\n')
