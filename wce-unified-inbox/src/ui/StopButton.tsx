@@ -41,6 +41,11 @@ function PauseToggle({
 }) {
   const [paused, setPaused] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
+  // Two-tap confirm for the guarded (pausing) direction — first tap arms, second
+  // commits. Replaces window.confirm(), whose synchronous modal froze paint for
+  // the whole time it was open (the INP "blocked UI for ~1s" warnings).
+  const [armed, setArmed] = useState(false)
+  const [err, setErr] = useState(false)
 
   async function load() {
     const { data } = await sb.from('inbox_settings').select(column).eq('id', 1).maybeSingle()
@@ -53,31 +58,50 @@ function PauseToggle({
     return () => clearInterval(t)
   }, [])
 
+  // Auto-disarm if the confirming second tap doesn't come within 3s.
+  useEffect(() => {
+    if (!armed) return
+    const t = setTimeout(() => setArmed(false), 3000)
+    return () => clearTimeout(t)
+  }, [armed])
+
   async function toggle() {
     if (paused === null || busy) return
     const next = !paused
-    if (next && !window.confirm(confirmText)) return
+    // Pausing is the guarded direction: arm on the first tap, act on the second.
+    // Resuming acts immediately.
+    if (next && confirmText && !armed) {
+      setArmed(true)
+      return
+    }
+    setArmed(false)
     setBusy(true)
     const patch: Record<string, unknown> = { [column]: next, updated_at: new Date().toISOString() }
     if (reasonColumn) patch[reasonColumn] = next ? 'paused from app' : null
     const { error } = await sb.from('inbox_settings').update(patch).eq('id', 1)
     setBusy(false)
-    if (!error) setPaused(next)
-    else window.alert('Could not update — try again.')
+    if (!error) {
+      setPaused(next)
+    } else {
+      setErr(true)
+      setTimeout(() => setErr(false), 2500)
+    }
   }
 
   if (paused === null) return null
+
+  const label = err ? '⚠ retry' : armed ? '⚠ tap to confirm' : paused ? pausedLabel : liveLabel
 
   return (
     <button
       onClick={toggle}
       disabled={busy}
-      title={paused ? pausedTitle : liveTitle}
+      title={armed ? confirmText : paused ? pausedTitle : liveTitle}
       className={`rounded-md px-3 py-1 text-sm font-semibold text-white disabled:opacity-60 ${
-        paused ? 'bg-amber-600 hover:bg-amber-500' : liveClass
+        armed ? 'bg-amber-600 hover:bg-amber-500' : paused ? 'bg-amber-600 hover:bg-amber-500' : liveClass
       }`}
     >
-      {paused ? pausedLabel : liveLabel}
+      {label}
     </button>
   )
 }
