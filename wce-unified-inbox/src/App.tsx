@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Home } from './ui/Home'
 import { Inbox } from './ui/Inbox'
 import { Batches } from './ui/Batches'
 import { Receipts } from './ui/Receipts'
@@ -11,14 +12,17 @@ import { SendShelf } from './ui/SendShelf'
 import { StopButton, RepliesToggle, RosterToggle } from './ui/StopButton'
 import { SignOut } from './ui/AuthGate'
 
-type View = 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts' | 'players' | 'merge'
+type View = 'home' | 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts' | 'players' | 'merge'
 
 export default function App() {
-  const [view, setView] = useState<View>('inbox')
+  const [view, setView] = useState<View>('home')
   return (
     <div className="flex h-screen flex-col bg-slate-50 text-slate-900">
       <nav className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-white px-3 py-1.5">
         <span className="mr-2 text-sm font-semibold">WCE Unified Inbox</span>
+        <TabButton active={view === 'home'} onClick={() => setView('home')}>
+          Home
+        </TabButton>
         <TabButton active={view === 'inbox'} onClick={() => setView('inbox')}>
           Inbox
         </TabButton>
@@ -51,7 +55,9 @@ export default function App() {
         </div>
       </nav>
       <div className="min-h-0 flex-1">
-        {view === 'inbox' ? (
+        {view === 'home' ? (
+          <Home />
+        ) : view === 'inbox' ? (
           <Inbox />
         ) : view === 'batches' ? (
           <Batches />
