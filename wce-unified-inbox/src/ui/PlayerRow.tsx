@@ -26,6 +26,9 @@ interface PlayerCardProps {
   // Real network of this player's linked Beeper thread (so we don't label an SMS
   // thread "Messenger"). e.g. 'Google Messages', 'Facebook/Messenger'.
   threadNetwork?: string | null
+  // The linked thread's saved title (the contact's full name in Messenger / the
+  // phone) — surfaced as context when the bare player_name is missing a surname.
+  threadName?: string | null
 }
 
 /** One editable player record. Shared by the Players list and the review queue. */
@@ -33,10 +36,24 @@ export function PlayerCard({
   r, e, setE, busy, isReviewed,
   onSave, onToggleHide, onUnmarkReviewed,
   showSelect = false, selected = false, onToggleSel,
-  threadNetwork = null,
+  threadNetwork = null, threadName = null,
 }: PlayerCardProps) {
   const stakeArr = e.stakes.split(',').map((s) => s.trim()).filter(Boolean)
   const venueArr = e.venues.split(',').map((s) => s.trim()).filter(Boolean)
+  // Captured context the structured fields don't show yet — the thread's saved
+  // name (often the full name), the original contact label (carries venue / cash
+  // tags like "Abel cash kingsley"), and any free note ("Skimpy"). Surfacing it
+  // lets you see who someone is and fill in the gaps. A fuller saved name gets a
+  // one-tap "use" to drop it straight into the name field.
+  const nameKey = e.player_name.trim().toLowerCase().replace(/[^a-z]/g, '')
+  const savedName = (threadName ?? '').trim()
+  const fullerSaved =
+    savedName && /\s/.test(savedName) && savedName.toLowerCase().replace(/[^a-z]/g, '') !== nameKey
+      ? savedName
+      : ''
+  const contactLabel = (r.beeper_contact_name ?? '').trim()
+  const showContact = contactLabel && contactLabel.toLowerCase().replace(/[^a-z]/g, '') !== nameKey
+  const noteText = (r.notes ?? '').trim()
   // A linked Beeper thread is only "Messenger" when its network actually is —
   // most are SMS (Google Messages). Resolve the real channel from the network.
   const isMsgrThread = !!r.beeper_chat_id && /messenger|facebook|instagram/i.test(threadNetwork ?? '')
@@ -222,6 +239,34 @@ export function PlayerCard({
           className="w-24 rounded-md border border-slate-200 px-2 py-1 text-xs outline-none focus:border-emerald-500"
         />
       </div>
+      {(fullerSaved || showContact || noteText) && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-400">
+          <span className="text-slate-300" title="Captured context — transcribe into the fields above">ℹ context:</span>
+          {fullerSaved && (
+            <span>
+              saved as <span className="text-slate-600">“{fullerSaved}”</span>
+              <button
+                type="button"
+                onClick={() => setE(r.id, { player_name: fullerSaved })}
+                className="ml-1 rounded bg-slate-100 px-1 text-[10px] text-emerald-700 hover:bg-emerald-100"
+                title="Use this full name as the player's name"
+              >
+                use
+              </button>
+            </span>
+          )}
+          {showContact && (
+            <span>
+              contact “<span className="text-slate-600">{contactLabel}</span>”
+            </span>
+          )}
+          {noteText && (
+            <span>
+              note: <span className="text-slate-600">{noteText}</span>
+            </span>
+          )}
+        </div>
+      )}
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
         <span className="text-slate-400">contact:</span>
         <select

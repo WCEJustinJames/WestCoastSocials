@@ -96,6 +96,7 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
               onToggleHide={p.toggleHidePlayer}
               onUnmarkReviewed={p.unmarkReviewed}
               threadNetwork={p.chatNetworks.get(r.beeper_chat_id ?? '') ?? null}
+              threadName={p.chatTitles.get(r.beeper_chat_id ?? '') ?? null}
             />
           )
         })}
