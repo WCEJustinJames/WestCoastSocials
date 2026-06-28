@@ -18,6 +18,7 @@ import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
 import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
+import { autoLink } from './autolink'
 import { processReplies } from './notify'
 import { postSeatList } from './roster'
 import { newAiHealth, trackAiHealth, worstOutcome, type AiOutcome } from './alert'
@@ -26,7 +27,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g19-fb-default-channel'
+const SYNC_VERSION = 'g20-autolink'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -86,6 +87,7 @@ if (env.airtableKey) {
 if (env.googleRefreshToken) {
   console.log(`[contacts] Google Contacts sync on (every ${env.contactsSyncMinutes}m)`)
 }
+console.log(`[autolink] name-match auto-linker on (every ${env.autoLinkMinutes}m)`)
 if (anthropic && env.autoReply) {
   console.log(`[reply] auto-reply on — digest texts to ${env.notifyPhone}`)
 }
@@ -94,6 +96,8 @@ if (anthropic && env.autoReply) {
 let lastOutreachSync = 0
 // Google Contacts sync also runs on a slow cadence (default twice a day).
 let lastContactsSync = 0
+// Name-match auto-linker runs on its own slow cadence too.
+let lastAutoLink = 0
 
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
@@ -302,6 +306,20 @@ async function runOnce(): Promise<void> {
       if (gc.created) console.log(`[contacts] ${gc.created} new contact(s) imported (${gc.autoHidden} auto-hidden as non-person, ${gc.scanned} changed)`)
     } catch (e) {
       console.error('[contacts] sync error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Auto-linker: reconnect no-contact players to their existing Beeper thread,
+  // and fill missing phones from another record — by exact, unique name match.
+  if (Date.now() - lastAutoLink > env.autoLinkMinutes * 60_000) {
+    lastAutoLink = Date.now()
+    try {
+      const al = await autoLink(supabaseAdmin)
+      if (al.threadsLinked || al.phonesFilled) {
+        console.log(`[autolink] linked ${al.threadsLinked} thread(s), filled ${al.phonesFilled} phone(s)`)
+      }
+    } catch (e) {
+      console.error('[autolink] error:', e instanceof Error ? e.message : e)
     }
   }
 
