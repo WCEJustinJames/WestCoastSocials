@@ -270,6 +270,10 @@ export function usePlayers(initialFilter?: string) {
   // "First name only" view: players we have just a first name for — the naming
   // backlog. Can be opened pre-filtered from the Home dashboard card.
   const [firstNameOnly, setFirstNameOnly] = useState(initialFilter === 'firstName')
+  // Ids of fb_friend players who verify as real players (their name appears in
+  // TD/LP attendance) — the only ones "FB · DM to open" surfaces, so the filter
+  // isn't cluttered with non-player Facebook friends. From inbox_fb_dm_verified.
+  const [verifiedFbIds, setVerifiedFbIds] = useState<Set<string>>(new Set())
   // per phone-duplicate-group: which record's name to keep
   const [groupKeeper, setGroupKeeper] = useState<Record<string, string>>({})
   // Which players the user has reviewed (saved). Persisted in the browser so the
@@ -330,6 +334,13 @@ export function usePlayers(initialFilter?: string) {
     }
     setChatNetworks(nets)
     setChatTitles(titles)
+
+    // Which fb_friend no-contact players are verified as real players (in TD/LP).
+    const fbView = supabase as unknown as {
+      from: (t: string) => { select: (c: string) => Promise<{ data: { id: string }[] | null }> }
+    }
+    const { data: vfb } = await fbView.from('inbox_fb_dm_verified').select('id')
+    setVerifiedFbIds(new Set((vfb ?? []).map((x) => x.id)))
   }
   useEffect(() => {
     void load()
@@ -363,7 +374,7 @@ export function usePlayers(initialFilter?: string) {
       if (staffOnly && !(r.staff ?? false)) return false
       if (incompleteOnly && !isIncomplete(r)) return false
       if (sourceFilter !== 'all' && sourceLabel(r) !== sourceFilter) return false
-      if (fbFriendOnly && !(r.fb_friend && !r.phone?.trim() && !r.beeper_chat_id?.trim())) return false
+      if (fbFriendOnly && !verifiedFbIds.has(r.id)) return false
       if (firstNameOnly && !isFirstNameOnly(r)) return false
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
@@ -392,7 +403,7 @@ export function usePlayers(initialFilter?: string) {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, firstNameOnly, reviewed])
+  }, [rows, query, regionFilter, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, firstNameOnly, verifiedFbIds, reviewed])
 
   // Distinct sources present, with counts, for the Merge & Review source filter.
   const sources = useMemo(() => {
@@ -404,11 +415,9 @@ export function usePlayers(initialFilter?: string) {
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [rows])
 
-  // FB friends still needing a first DM (friend flag set, no thread/phone yet).
-  const fbFriendCount = useMemo(
-    () => rows.filter((r) => r.fb_friend && !r.phone?.trim() && !r.beeper_chat_id?.trim()).length,
-    [rows],
-  )
+  // FB friends still needing a first DM — verified players only (no-contact
+  // fb_friend whose name appears in TD/LP attendance), matching the filter.
+  const fbFriendCount = verifiedFbIds.size
 
   // Players we only have a first name for — the naming backlog (chip + count).
   const firstNameOnlyCount = useMemo(() => rows.filter(isFirstNameOnly).length, [rows])

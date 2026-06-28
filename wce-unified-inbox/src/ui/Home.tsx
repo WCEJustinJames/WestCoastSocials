@@ -246,13 +246,10 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
           .eq('hidden', false)
           .is('phone', null)
           .is('beeper_chat_id', null),
-        supabase
-          .from('inbox_outreach')
-          .select('id', head)
-          .eq('hidden', false)
-          .eq('fb_friend', true)
-          .is('phone', null)
-          .is('beeper_chat_id', null),
+        // FB · DM to open — verified players only (in TD/LP attendance).
+        (supabase as unknown as {
+          from: (t: string) => { select: (c: string, o: typeof head) => Promise<{ count: number | null }> }
+        }).from('inbox_fb_dm_verified').select('id', head),
         // First-name-only: a name with no space (no surname), excluding the
         // nameless "Unknown" rows. Mirrors isFirstNameOnly in usePlayers.
         supabase
