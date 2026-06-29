@@ -27,8 +27,91 @@ export function Home({
       <h2 className="mb-4 text-lg font-semibold">Home</h2>
       <DashboardCards onNavigate={onNavigate} />
       <SyncStatus />
+      <FifoDue onOpen={onOpenConversation} />
       <PlayerContext onOpen={onOpenConversation} />
       <PostGame />
+    </div>
+  )
+}
+
+// ---------------------------- FIFO due-back panel ----------------------------
+
+interface FifoRow {
+  outreach_id: string
+  player_name: string
+  conversation_id: string | null
+  games: number
+  last_game: string
+  avg_away: number | null
+  due_around: string
+  away_days: number
+}
+
+/**
+ * FIFO (fly-in/fly-out) players projected to be back in town around now, from
+ * their LP/TD attendance cadence — so you can re-invite them the moment their
+ * roster brings them home. Reads inbox_fifo_due; shows overdue + due-this-week,
+ * each one click into their thread.
+ */
+function FifoDue({ onOpen }: { onOpen: (conversationId: string) => void }) {
+  const [rows, setRows] = useState<FifoRow[]>([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    const v = supabase as unknown as {
+      from: (t: string) => { select: (c: string) => Promise<{ data: FifoRow[] | null }> }
+    }
+    v.from('inbox_fifo_due')
+      .select('outreach_id, player_name, conversation_id, games, last_game, avg_away, due_around, away_days')
+      .then(({ data }) => {
+        setRows(data ?? [])
+        setLoading(false)
+      })
+  }, [])
+
+  const todayN = Math.floor(Date.now() / 86_400_000)
+  const fmt = (iso: string): string =>
+    new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+  // Due back this week or already overdue, and currently away.
+  const due = rows
+    .filter((r) => r.away_days >= 7 && dayNum(r.due_around) <= todayN + 7)
+    .sort((a, b) => (a.due_around < b.due_around ? -1 : 1))
+  if (loading || due.length === 0) return null
+
+  return (
+    <div className="mb-6">
+      <h3 className="mb-1 text-sm font-semibold text-slate-700">✈ FIFO players due back</h3>
+      <p className="mb-2 text-xs text-slate-400">
+        {due.length} fly-in/out {due.length === 1 ? 'player is' : 'players are'} due back around now — good time to re-invite.
+      </p>
+      <ul className="space-y-1">
+        {due.map((r) => {
+          const overdue = dayNum(r.due_around) < todayN
+          return (
+            <li key={r.outreach_id}>
+              <button
+                onClick={() => r.conversation_id && onOpen(r.conversation_id)}
+                disabled={!r.conversation_id}
+                title={r.conversation_id ? 'Open their thread to re-invite' : 'No thread linked yet'}
+                className="flex w-full items-center gap-2 rounded-md border border-sky-200 bg-sky-50/50 px-3 py-2 text-left text-sm transition enabled:hover:border-sky-400 enabled:hover:shadow-sm disabled:cursor-default"
+              >
+                <span
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
+                    overdue ? 'bg-amber-500 text-white' : 'bg-sky-600 text-white'
+                  }`}
+                >
+                  {overdue ? `overdue ${todayN - dayNum(r.due_around)}d` : 'due ▸'}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{r.player_name}</span>
+                  <span className="ml-1 text-xs text-slate-500">
+                    due ~{fmt(r.due_around)} · away {r.away_days}d · {r.games} games, ~{r.avg_away ?? '?'}d spells
+                  </span>
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }
