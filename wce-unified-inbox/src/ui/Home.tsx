@@ -48,6 +48,42 @@ interface ContextRow {
   note: string | null
 }
 
+interface PatternInfo {
+  games: number
+  first: string
+  last: string
+  sinceLast: number
+  avgAway: number
+  maxGap: number
+  visits: number
+  status: 'in town' | 'away' | 'unknown'
+  dueAround: string | null
+}
+const dayNum = (iso: string): number => Math.floor(new Date(iso + 'T00:00:00').getTime() / 86_400_000)
+const addDays = (iso: string, n: number): string =>
+  new Date((dayNum(iso) + n) * 86_400_000).toISOString().slice(0, 10)
+/**
+ * Infer a fly-in/fly-out pattern from a player's attendance dates: cluster games
+ * into "visits" separated by away spells (gaps > 10 days), and report whether
+ * they're currently in town or away, plus a rough due-back from their typical
+ * away length. Needs ≥2 games to say anything about cadence.
+ */
+function analyzeAttendance(isoDates: string[]): PatternInfo | null {
+  const days = Array.from(new Set(isoDates.filter(Boolean))).sort()
+  if (days.length === 0) return null
+  const nums = days.map(dayNum)
+  const last = days[days.length - 1]
+  const sinceLast = Math.floor(Date.now() / 86_400_000) - nums[nums.length - 1]
+  const gaps: number[] = []
+  for (let i = 1; i < nums.length; i++) gaps.push(nums[i] - nums[i - 1])
+  const away = gaps.filter((g) => g > 10)
+  const avgAway = away.length ? Math.round(away.reduce((a, b) => a + b, 0) / away.length) : 0
+  const maxGap = gaps.length ? Math.max(...gaps) : 0
+  const status: PatternInfo['status'] = days.length < 2 ? 'unknown' : sinceLast > 10 ? 'away' : 'in town'
+  const dueAround = status === 'away' && avgAway ? addDays(last, avgAway) : null
+  return { games: days.length, first: days[0], last, sinceLast, avgAway, maxGap, visits: 1 + away.length, status, dueAround }
+}
+
 /**
  * "Who's out" — players whose most recent reply was a decline / maybe, with the
  * reason and any return date they gave ("back first week of July", "away in
@@ -63,6 +99,8 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
   const [handled, setHandled] = useState<Set<string>>(new Set())
   // Which row's contact label is being edited, + the draft text.
   const [labelDraft, setLabelDraft] = useState<{ id: string; text: string } | null>(null)
+  // Expanded FIFO attendance pattern (which row, loading, computed info).
+  const [pattern, setPattern] = useState<{ id: string; loading: boolean; info: PatternInfo | null } | null>(null)
 
   useEffect(() => {
     const v = supabase as unknown as {
@@ -153,6 +191,15 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
     await supabase.from('inbox_outreach').update({ notes: text.trim() || null }).eq('id', r.outreach_id)
     setRows((rs) => rs.map((x) => (x.conversation_id === r.conversation_id ? { ...x, note: text.trim() || null } : x)))
     setLabelDraft(null)
+  }
+  // Pull this player's full TD + LP attendance and infer their fly-in/out pattern.
+  async function loadPattern(r: ContextRow) {
+    setPattern({ id: r.conversation_id, loading: true, info: null })
+    const rpc = supabase as unknown as {
+      rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: { d: string }[] | null }>
+    }
+    const { data } = await rpc.rpc('player_attendance', { p_name: r.player_name })
+    setPattern({ id: r.conversation_id, loading: false, info: analyzeAttendance((data ?? []).map((x) => x.d)) })
   }
 
   const visible = shown.filter((r) => !handled.has(r.conversation_id))
@@ -293,12 +340,58 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                     ✈ FIFO{r.fifo ? ' ✓' : ''}
                   </button>
                   <button
+                    onClick={() => (pattern?.id === r.conversation_id ? setPattern(null) : void loadPattern(r))}
+                    title="Explore their TD-sheet + LetsPoker attendance for a fly-in/out pattern"
+                    className="rounded border border-slate-200 px-1 py-0.5 text-slate-600 hover:border-slate-300"
+                  >
+                    📊 pattern
+                  </button>
+                  <button
                     onClick={() => void resolve(r)}
                     title="Resolved — dismiss from this panel for good"
                     className="ml-auto rounded border border-slate-200 px-1 py-0.5 text-slate-500 hover:border-emerald-300 hover:text-emerald-700"
                   >
                     ✓ resolved
                   </button>
+                </div>
+              )}
+              {pattern?.id === r.conversation_id && (
+                <div className="mt-1.5 rounded bg-slate-50 px-2 py-1.5 text-[11px] text-slate-600">
+                  {pattern.loading ? (
+                    'Reading TD + LP attendance…'
+                  ) : !pattern.info ? (
+                    'No TD/LP attendance on record for this name.'
+                  ) : (
+                    <div className="space-y-0.5">
+                      <div>
+                        <span className="font-medium">{pattern.info.games}</span> games · {pattern.info.first} → {pattern.info.last} ·
+                        last seen {pattern.info.sinceLast}d ago
+                      </div>
+                      {pattern.info.games >= 2 && (
+                        <div>
+                          {pattern.info.visits} visits · away spells avg ~{pattern.info.avgAway || '—'}d (longest{' '}
+                          {pattern.info.maxGap}d)
+                        </div>
+                      )}
+                      <div>
+                        status:{' '}
+                        <span
+                          className={
+                            pattern.info.status === 'away' ? 'font-medium text-amber-700' : 'font-medium text-emerald-700'
+                          }
+                        >
+                          {pattern.info.status}
+                          {pattern.info.status === 'away' ? ` ${pattern.info.sinceLast}d` : ''}
+                        </span>
+                        {pattern.info.dueAround &&
+                          ` · due back ~${pattern.info.dueAround}${
+                            dayNum(pattern.info.dueAround) < Math.floor(Date.now() / 86_400_000)
+                              ? ' (overdue — good time to invite)'
+                              : ''
+                          }`}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </li>
