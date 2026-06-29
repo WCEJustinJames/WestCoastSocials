@@ -226,6 +226,7 @@ export type Database = {
           account_id: string | null
           adapter: Database['public']['Enums']['inbox_adapter']
           auto_send_enabled: boolean
+          context_resolved_at: string | null
           created_at: string
           external_chat_id: string
           id: string
@@ -241,6 +242,7 @@ export type Database = {
           account_id?: string | null
           adapter: Database['public']['Enums']['inbox_adapter']
           auto_send_enabled?: boolean
+          context_resolved_at?: string | null
           created_at?: string
           external_chat_id: string
           id?: string
@@ -256,6 +258,7 @@ export type Database = {
           account_id?: string | null
           adapter?: Database['public']['Enums']['inbox_adapter']
           auto_send_enabled?: boolean
+          context_resolved_at?: string | null
           created_at?: string
           external_chat_id?: string
           id?: string
@@ -487,6 +490,7 @@ export type Database = {
           cash: boolean
           fb_friend: boolean
           snooze_until: string | null
+          fifo: boolean
           nickname: string | null
           contact_day: string | null
           contact_window: string | null
@@ -523,6 +527,7 @@ export type Database = {
           cash?: boolean
           fb_friend?: boolean
           snooze_until?: string | null
+          fifo?: boolean
           nickname?: string | null
           contact_day?: string | null
           contact_window?: string | null
@@ -559,6 +564,7 @@ export type Database = {
           cash?: boolean
           fb_friend?: boolean
           snooze_until?: string | null
+          fifo?: boolean
           nickname?: string | null
           contact_day?: string | null
           contact_window?: string | null

@@ -44,6 +44,8 @@ interface ContextRow {
   reply_text: string
   replied_at: string
   back_on: string | null
+  fifo: boolean
+  note: string | null
 }
 
 /**
@@ -57,8 +59,10 @@ interface ContextRow {
 function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void }) {
   const [rows, setRows] = useState<ContextRow[]>([])
   const [loading, setLoading] = useState(true)
-  // Players actioned this session (added to a list / put on ice) drop off the panel.
+  // Players actioned this session (added to a list / on ice / resolved) drop off.
   const [handled, setHandled] = useState<Set<string>>(new Set())
+  // Which row's contact label is being edited, + the draft text.
+  const [labelDraft, setLabelDraft] = useState<{ id: string; text: string } | null>(null)
 
   useEffect(() => {
     const v = supabase as unknown as {
@@ -74,7 +78,7 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
     }
     const since = new Date(Date.now() - 45 * 86_400_000).toISOString()
     v.from('inbox_player_context')
-      .select('conversation_id, player_name, outreach_id, reply_intent, reply_note, reply_text, replied_at, back_on')
+      .select('conversation_id, player_name, outreach_id, reply_intent, reply_note, reply_text, replied_at, back_on, fifo, note')
       .gt('replied_at', since)
       .order('replied_at', { ascending: false })
       .limit(40)
@@ -127,6 +131,29 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
     await supabase.from('inbox_outreach').update({ snooze_until: until }).eq('id', r.outreach_id)
     setHandled((s) => new Set(s).add(r.conversation_id))
   }
+  // Mark this entry resolved — dismiss it for good (until they reply again).
+  async function resolve(r: ContextRow) {
+    await supabase
+      .from('inbox_conversations')
+      .update({ context_resolved_at: new Date().toISOString() })
+      .eq('id', r.conversation_id)
+    setHandled((s) => new Set(s).add(r.conversation_id))
+  }
+  // Flag / unflag a fly-in-fly-out worker (doesn't dismiss — stays so you can
+  // explore their pattern). Optimistic so the chip flips immediately.
+  async function toggleFifo(r: ContextRow) {
+    if (!r.outreach_id) return
+    const next = !r.fifo
+    await supabase.from('inbox_outreach').update({ fifo: next }).eq('id', r.outreach_id)
+    setRows((rs) => rs.map((x) => (x.conversation_id === r.conversation_id ? { ...x, fifo: next } : x)))
+  }
+  // Edit the player's contact label (the free note that carries venue/cash tags).
+  async function saveLabel(r: ContextRow, text: string) {
+    if (!r.outreach_id) return
+    await supabase.from('inbox_outreach').update({ notes: text.trim() || null }).eq('id', r.outreach_id)
+    setRows((rs) => rs.map((x) => (x.conversation_id === r.conversation_id ? { ...x, note: text.trim() || null } : x)))
+    setLabelDraft(null)
+  }
 
   const visible = shown.filter((r) => !handled.has(r.conversation_id))
   if (loading || visible.length === 0) return null
@@ -169,6 +196,11 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="font-medium">{r.player_name}</span>
+                    {r.fifo && (
+                      <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-medium text-sky-700" title="Fly-in/fly-out worker">
+                        ✈ FIFO
+                      </span>
+                    )}
                     {r.reply_note ? (
                       <span className="ml-1 text-emerald-700">— {r.reply_note}</span>
                     ) : (
@@ -219,6 +251,54 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                     <option value="60">2 months</option>
                     {r.back_on && <option value="back">until {fmtBack(r.back_on)} (their date)</option>}
                   </select>
+                  <input
+                    type="date"
+                    value=""
+                    onChange={(ev) => ev.target.value && void onIce(r, ev.target.value)}
+                    title="On ice until an exact date"
+                    className="rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600"
+                  />
+                  {labelDraft?.id === r.conversation_id ? (
+                    <span className="inline-flex items-center gap-1">
+                      <input
+                        autoFocus
+                        value={labelDraft.text}
+                        onChange={(ev) => setLabelDraft({ id: r.conversation_id, text: ev.target.value })}
+                        onKeyDown={(ev) => {
+                          if (ev.key === 'Enter') void saveLabel(r, labelDraft.text)
+                          if (ev.key === 'Escape') setLabelDraft(null)
+                        }}
+                        placeholder="contact label / note"
+                        className="w-40 rounded border border-slate-300 px-1 py-0.5 text-[11px]"
+                      />
+                      <button onClick={() => void saveLabel(r, labelDraft.text)} className="text-emerald-700 hover:underline">save</button>
+                      <button onClick={() => setLabelDraft(null)} className="text-slate-400 hover:underline">×</button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setLabelDraft({ id: r.conversation_id, text: r.note ?? '' })}
+                      title="Edit this player's contact label / note"
+                      className="rounded border border-slate-200 px-1 py-0.5 text-slate-600 hover:border-slate-300"
+                    >
+                      ✎ {r.note ? <span className="text-slate-500">{r.note}</span> : 'label'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void toggleFifo(r)}
+                    title="Mark as fly-in/fly-out (FIFO) worker"
+                    className={`rounded border px-1 py-0.5 ${
+                      r.fifo ? 'border-sky-400 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    ✈ FIFO{r.fifo ? ' ✓' : ''}
+                  </button>
+                  <button
+                    onClick={() => void resolve(r)}
+                    title="Resolved — dismiss from this panel for good"
+                    className="ml-auto rounded border border-slate-200 px-1 py-0.5 text-slate-500 hover:border-emerald-300 hover:text-emerald-700"
+                  >
+                    ✓ resolved
+                  </button>
                 </div>
               )}
             </li>
