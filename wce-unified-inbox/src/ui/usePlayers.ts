@@ -391,12 +391,18 @@ export function usePlayers(initialFilter?: string) {
       }
       return true
     })
-    // Surface the rows still needing attention: unreviewed first, then most
-    // recently added/updated, then alphabetical. Reviewed rows sink to the bottom.
+    // Surface the rows still needing attention: unreviewed first, then freshly
+    // added contacts (newest contact-list import at the very top), then most
+    // recently synced, then alphabetical. Reviewed rows sink to the bottom.
     out.sort((a, b) => {
       const ar = reviewed.has(a.id) ? 1 : 0
       const br = reviewed.has(b.id) ? 1 : 0
       if (ar !== br) return ar - br
+      // Rows with an added_at (just imported from a contacts upload) come first,
+      // newest-added first; rows without one ('' sorts last) fall through.
+      const aa = a.added_at ?? ''
+      const ba = b.added_at ?? ''
+      if (aa !== ba) return aa < ba ? 1 : -1
       const at = a.synced_at ?? ''
       const bt = b.synced_at ?? ''
       if (at !== bt) return at < bt ? 1 : -1

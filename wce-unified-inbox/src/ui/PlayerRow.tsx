@@ -10,6 +10,21 @@ function sinceLabel(iso: string | null): string {
   return `messaged ${Math.floor(days / 30)}mo ago`
 }
 
+/** Short "added 30 Jun" label for a newly-imported contact's added_at date. */
+function addedLabel(iso: string | null): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return `added ${d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`
+}
+/** How many days ago a contact was added (for highlighting the freshest imports). */
+function addedDaysAgo(iso: string | null): number | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return Math.floor((Date.now() - d.getTime()) / 86_400_000)
+}
+
 interface PlayerCardProps {
   r: Row
   e: Edit
@@ -62,6 +77,10 @@ export function PlayerCard({
     !!r.beeper_chat_id && !isMsgrThread && !isSmsThread ? (threadNetwork || null) : null
   const hasSms = !!e.phone.trim() || isSmsThread
   const hasThread = isMsgrThread
+  // Freshly-imported contacts (added_at set by a contacts upload) get a date badge
+  // so the latest import reads at a glance; the newest (≤14d) are emphasised.
+  const added = addedLabel(r.added_at)
+  const addedFresh = (addedDaysAgo(r.added_at) ?? 99) <= 14
   return (
     <li
       className={`rounded-lg border p-2 ${r.hidden ? 'opacity-60 ' : ''}${
@@ -133,6 +152,16 @@ export function PlayerCard({
         >
           {sourceLabel(r)}
         </span>
+        {added && (
+          <span
+            title={`Added to the CRM on ${r.added_at?.slice(0, 10)}`}
+            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+              addedFresh ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            ✚ {added}
+          </span>
+        )}
         {isReviewed && (
           <button
             type="button"

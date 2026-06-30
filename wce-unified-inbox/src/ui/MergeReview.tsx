@@ -233,6 +233,7 @@ export function MergeReview() {
               selected={p.sel.has(r.id)}
               onToggleSel={p.toggleSel}
               threadNetwork={p.chatNetworks.get(r.beeper_chat_id ?? '') ?? null}
+              threadName={p.chatTitles.get(r.beeper_chat_id ?? '') ?? null}
             />
           )
         })}
