@@ -491,6 +491,7 @@ export type Database = {
           fb_friend: boolean
           snooze_until: string | null
           fifo: boolean
+          whale: boolean
           nickname: string | null
           contact_day: string | null
           contact_window: string | null
@@ -529,6 +530,7 @@ export type Database = {
           fb_friend?: boolean
           snooze_until?: string | null
           fifo?: boolean
+          whale?: boolean
           nickname?: string | null
           contact_day?: string | null
           contact_window?: string | null
@@ -567,6 +569,7 @@ export type Database = {
           fb_friend?: boolean
           snooze_until?: string | null
           fifo?: boolean
+          whale?: boolean
           nickname?: string | null
           contact_day?: string | null
           contact_window?: string | null

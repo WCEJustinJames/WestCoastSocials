@@ -202,6 +202,22 @@ export function PlayerCard({
           />
           cash
         </label>
+        <label className="flex items-center gap-1 text-xs text-blue-700" title="Whale — priority customer; higher-touch outreach, ranked first">
+          <input
+            type="checkbox"
+            checked={e.whale}
+            onChange={(ev) => setE(r.id, { whale: ev.target.checked })}
+          />
+          🐋 whale
+        </label>
+        <label className="flex items-center gap-1 text-xs text-sky-700" title="FIFO worker — fly-in/fly-out; surfaces on the 'due back' panel when a swing ends">
+          <input
+            type="checkbox"
+            checked={e.fifo}
+            onChange={(ev) => setE(r.id, { fifo: ev.target.checked })}
+          />
+          ✈ fifo
+        </label>
         <button
           onClick={() => void onSave(r.id)}
           disabled={busy}

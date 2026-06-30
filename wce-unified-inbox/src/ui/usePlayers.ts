@@ -205,6 +205,8 @@ export interface Edit {
   staff: boolean
   tournament: boolean
   cash: boolean
+  whale: boolean
+  fifo: boolean
 }
 const toEdit = (r: PlayerRow): Edit => ({
   player_name: r.player_name ?? '',
@@ -222,6 +224,8 @@ const toEdit = (r: PlayerRow): Edit => ({
   staff: r.staff ?? false,
   tournament: r.tournament ?? false,
   cash: r.cash ?? false,
+  whale: r.whale ?? false,
+  fifo: r.fifo ?? false,
 })
 
 /**
@@ -521,6 +525,8 @@ export function usePlayers(initialFilter?: string) {
         staff: e.staff,
         tournament: e.tournament,
         cash: e.cash,
+        whale: e.whale,
+        fifo: e.fifo,
       })
       .eq('id', id)
     setBusy(false)
@@ -542,6 +548,8 @@ export function usePlayers(initialFilter?: string) {
               staff: e.staff,
               tournament: e.tournament,
               cash: e.cash,
+              whale: e.whale,
+              fifo: e.fifo,
             }
           : r,
       ),
