@@ -2,7 +2,7 @@
 
 **How to use this:** start a FRESH chat and say *"Read wce-unified-inbox/HANDOVER.md and continue."* This doc is the source of truth; long chats get slow. `NEXT-SESSION-TODO.md` = the prioritised roadmap.
 
-_Last updated: 2026-06-30 (Perth). Source of truth is now **Supabase-only** (Airtable retired). Running sync code: `g25-fb-rematch` — bump on next backend deploy. Many UI features shipped this session (see Changelog)._
+_Last updated: 2026-06-30 (Perth). Source of truth is now **Supabase-only** (Airtable retired). Running sync code: `g26-variants-whale` — RESTART `run-wce.bat` to activate (whale draft tone + invite-variant generator). Many UI features shipped this session (see Changelog)._
 
 ---
 
@@ -80,8 +80,18 @@ Insert an approved batch the PC drains:
 - **UI**: Home dashboard + Who's-out + FIFO panels, attendance pattern explorer, context surfacing, FB-verified filter, last-messaged/ghost signals, batch preview reason filter, collapsible SendShelf, region combos, first-name-only filter, on-ice/snooze + guard, in-place panel actions.
 - **Double auto-reply fixed**; classifier now extracts return-date + absence reason.
 
+### Roadmap build — Lists / Schedules / Analytics / whale / action queue / variants (2026-06-30, parallel session)
+Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live**; UI on `laughing-ritchie`). Strictly additive; pre-change backups in `bak.inbox_*_20260630`. **Backend needs a `run-wce.bat` restart** (`SYNC_VERSION=g26-variants-whale`) for the whale draft tone + invite-variant generator.
+- **Venue lists** (`0039`): adopted the stranded `inbox_lists`/`inbox_list_members` into the repo; `game_type` on lists, `pinned`/`added_by` on members; `canon_venue()`, `inbox_attendance_norm` view, `seed_tourney_list()` (≥2 tourneys/90d at a venue, add-only — cash lists are manual). New **Lists tab**; Batches "Load a venue list".
+- **Recurring schedules** (`0040`): `inbox_schedules` seeded from the locked weekly map; `materialise_due_schedules()` builds the next game's batch the evening before as a DRAFT from the venue list; pg_cron `wce-materialise-schedules` (09:00 UTC = 17:00 Perth). New **Schedules tab**; Batches surfaces scheduler drafts to approve. (Existing 5 lists untouched — link/re-key them in the Lists/Schedules tabs.)
+- **Conversion analytics** (`0041`): `inbox_batch_conversion` view (sent→reply/yes per batch + by venue, 7-day attribution). New **Analytics tab**.
+- **Whale flag** (`0042`): `inbox_outreach.whale` (manual), card toggle + finished the previously-missing fifo card toggle; whale players get a warmer AI reply draft. _(Follow-ups: whale-first ordering in Batches + auto-reply tone in `notify.ts`.)_
+- **Home action queue** (`0043`): top-of-Home panel (needs-you replies via new `inbox_messages.action_resolved` + unread threads via `context_resolved_at`); hides when empty. **Email source NOT wired** — needs a Gmail source (the People-API token's scope is contacts/sheets only).
+- **Invite variants** (`0044`): sync pre-writes 3 invite options/venue into `inbox_invite_variants` (refreshed ~daily); pick one in Batches. Populates after the restart.
+- **On-ice shading** carried into the player card + Batches picker. **Assisted dup-merge** (by full name, phone-dedup misses) added to Merge & Review.
+
 ## Open items
-- **Restart `run-wce.bat`** (pull `laughing-ritchie`) to activate the classifier's `reply_back_on`/absence extraction + latest sync; bump `SYNC_VERSION`. Ensure `ANTHROPIC_API_KEY` is set on the PC.
+- **Restart `run-wce.bat`** (pull `laughing-ritchie`) to activate the classifier's `reply_back_on`/absence extraction + the whale draft tone + invite-variant generator (`SYNC_VERSION=g26-variants-whale`). Ensure `ANTHROPIC_API_KEY` is set on the PC.
 - Open offers: carry "on ice" shading into Batches picker + Players card; pre-send Beeper bridge health-check (Google Messages bridge can silently swallow sends if the phone connection drops — it shows "Not sent" even when delivered).
 - **Roadmap**: `NEXT-SESSION-TODO.md` — 5 prioritised items + 12 further suggestions.
 
