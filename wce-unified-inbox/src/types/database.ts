@@ -753,6 +753,59 @@ export type Database = {
           },
         ]
       }
+      inbox_schedules: {
+        Row: {
+          id: string
+          name: string
+          venue: string | null
+          game_type: string
+          day_of_week: number
+          event_time: string | null
+          list_id: string | null
+          template_body: string
+          lead_days: number
+          active: boolean
+          last_materialised_for: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          venue?: string | null
+          game_type?: string
+          day_of_week: number
+          event_time?: string | null
+          list_id?: string | null
+          template_body: string
+          lead_days?: number
+          active?: boolean
+          last_materialised_for?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          venue?: string | null
+          game_type?: string
+          day_of_week?: number
+          event_time?: string | null
+          list_id?: string | null
+          template_body?: string
+          lead_days?: number
+          active?: boolean
+          last_materialised_for?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'inbox_schedules_list_id_fkey'
+            columns: ['list_id']
+            isOneToOne: false
+            referencedRelation: 'inbox_lists'
+            referencedColumns: ['id']
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -760,6 +813,10 @@ export type Database = {
     Functions: {
       seed_tourney_list: {
         Args: { p_list_id: string; p_days?: number; p_min?: number }
+        Returns: number
+      }
+      materialise_due_schedules: {
+        Args: Record<string, never>
         Returns: number
       }
     }
