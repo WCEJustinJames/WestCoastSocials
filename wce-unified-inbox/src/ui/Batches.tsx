@@ -93,6 +93,10 @@ export function Batches() {
   const [pastBatches, setPastBatches] = useState<
     { id: string; name: string; status: string; created_at: string; venue: string | null }[]
   >([])
+  // standing venue lists (Lists tab) you can load straight into the recipient picker
+  const [venueLists, setVenueLists] = useState<
+    { id: string; name: string; venue: string | null; game_type: string | null }[]
+  >([])
   // venue / weekly game this batch is tagged with (for recurring per-venue lists)
   const [batchVenue, setBatchVenue] = useState('')
   // per-recipient name/phone corrections made in the preview
@@ -420,6 +424,29 @@ export function Batches() {
     setStatus(`Loaded ${keys.size} recipients from that list — edit the template and Build preview.`)
     setTimeout(() => setStatus(null), 6000)
   }
+  // Load the standing venue lists (Lists tab) for the recipient-source picker.
+  useEffect(() => {
+    supabase
+      .from('inbox_lists')
+      .select('id, name, venue, game_type')
+      .order('venue', { nullsFirst: false })
+      .order('name')
+      .then(({ data }) => setVenueLists((data as typeof venueLists) ?? []))
+  }, [])
+
+  // Load a standing list's members into the CRM recipient selection (same auto-pick
+  // path as reusing a past batch). All send guards still apply downstream at build.
+  async function loadVenueList(id: string) {
+    const { data } = await supabase.from('inbox_list_members').select('outreach_id').eq('list_id', id)
+    const keys = new Set<string>((data ?? []).map((m) => (m as { outreach_id: string }).outreach_id))
+    const l = venueLists.find((x) => x.id === id)
+    if (l?.venue && !batchVenue.trim()) setBatchVenue(l.venue)
+    setSource('crm')
+    setPendingKeys(keys)
+    setStatus(`Loaded ${keys.size} from “${l?.name ?? 'list'}” — edit the template and Build preview.`)
+    setTimeout(() => setStatus(null), 6000)
+  }
+
   function toggle(r: Recipient) {
     setPicked((prev) => {
       const m = new Map(prev)
@@ -842,6 +869,29 @@ export function Batches() {
           Tags this batch so you can browse and rebuild this venue&apos;s weekly list below — and powers
           each player&apos;s &ldquo;last messaged for {'{venue}'}&rdquo; signal.
         </p>
+      )}
+
+      {venueLists.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-xs font-medium text-slate-500">Load a venue list:</span>
+          <select
+            defaultValue=""
+            onChange={(e) => {
+              const id = e.target.value
+              if (id) void loadVenueList(id)
+              e.target.value = ''
+            }}
+            className="max-w-xs flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
+          >
+            <option value="">— pick a standing list —</option>
+            {venueLists.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.venue ? `${l.venue} · ` : ''}{l.game_type ?? 'list'} · {l.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-[11px] text-slate-400">from the Lists tab · guards still apply at send</span>
+        </div>
       )}
 
       {pastBatches.length > 0 &&
