@@ -808,7 +808,20 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      inbox_batch_conversion: {
+        Row: {
+          batch_id: string
+          name: string
+          venue: string | null
+          created_at: string
+          sent: number
+          replied: number
+          yes: number
+          no: number
+          maybe: number
+        }
+        Relationships: []
+      }
     }
     Functions: {
       seed_tourney_list: {
