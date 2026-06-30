@@ -28,6 +28,7 @@ export function Home({
       <DashboardCards onNavigate={onNavigate} />
       <SyncStatus />
       <FifoDue onOpen={onOpenConversation} />
+      <WinBack onOpen={onOpenConversation} />
       <PlayerContext onOpen={onOpenConversation} />
       <PostGame />
     </div>
@@ -107,6 +108,126 @@ function FifoDue({ onOpen }: { onOpen: (conversationId: string) => void }) {
                     due ~{fmt(r.due_around)} · away {r.away_days}d · {r.games} games, ~{r.avg_away ?? '?'}d spells
                   </span>
                 </span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+// ----------------------------- win-back panel ------------------------------
+
+interface LapsedRow {
+  outreach_id: string
+  player_name: string
+  conversation_id: string | null
+  phone: string | null
+  beeper_chat_id: string | null
+  last_seen: string
+  days_since_last: number
+  baseline_games: number
+  recent_games: number
+  prominent_night: string | null
+  prominent_venue: string | null
+  favourite_event: string | null
+  total_winnings: number | string | null
+  lifetime_entries: number | null
+}
+
+/**
+ * "Win back" — players who used to play LetsPoker regularly and have gone quiet:
+ * a sharp drop over a rolling 90-day window vs the prior ~6 months, unseen 30+
+ * days. Reads inbox_lapsing_regulars, where every row is already a reachable,
+ * non-excluded contact (no staff/banned/hidden/FIFO/on-ice, not just messaged),
+ * so each one is a real customer worth a personal re-invite before they're gone.
+ * Click opens their thread when one exists; phone-only players show an SMS chip
+ * (their number is in the tooltip — reach them from Batches). Highest-ROI save.
+ */
+function WinBack({ onOpen }: { onOpen: (conversationId: string) => void }) {
+  const [rows, setRows] = useState<LapsedRow[]>([])
+  const [loading, setLoading] = useState(true)
+  // Rows Justin has actioned this session drop off the list (local, not saved).
+  const [done, setDone] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    const v = supabase as unknown as {
+      from: (t: string) => { select: (c: string) => Promise<{ data: LapsedRow[] | null }> }
+    }
+    v.from('inbox_lapsing_regulars')
+      .select(
+        'outreach_id, player_name, conversation_id, phone, beeper_chat_id, last_seen, days_since_last, baseline_games, recent_games, prominent_night, prominent_venue, favourite_event, total_winnings, lifetime_entries',
+      )
+      .then(({ data }) => {
+        setRows(data ?? [])
+        setLoading(false)
+      })
+  }, [])
+
+  // "47d" while it still reads as days, otherwise round to months.
+  const fmtGone = (days: number): string => (days < 60 ? `${days}d` : `${Math.round(days / 30)}mo`)
+  // total_winnings is numeric → PostgREST returns it as a string; coerce.
+  const money = (n: number | string | null): string | null => {
+    const v = Number(n)
+    return v > 0 ? `$${Math.round(v).toLocaleString()}` : null
+  }
+
+  const visible = rows.filter((r) => !done.has(r.outreach_id))
+  if (loading || visible.length === 0) return null
+
+  return (
+    <div className="mb-6">
+      <h3 className="mb-1 text-sm font-semibold text-slate-700">🎣 Win back — lapsed regulars</h3>
+      <p className="mb-2 text-xs text-slate-400">
+        {visible.length} former {visible.length === 1 ? 'regular has' : 'regulars have'} gone quiet — a
+        personal note now is the best save.
+      </p>
+      <ul className="space-y-1">
+        {visible.map((r) => {
+          const where = [
+            r.prominent_night,
+            r.prominent_venue && r.prominent_venue !== 'Other/Unknown' ? r.prominent_venue : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+          const won = money(r.total_winnings)
+          return (
+            <li key={r.outreach_id} className="flex items-stretch gap-1">
+              <button
+                onClick={() => r.conversation_id && onOpen(r.conversation_id)}
+                disabled={!r.conversation_id}
+                title={
+                  r.conversation_id
+                    ? 'Open their thread to re-invite'
+                    : r.phone
+                      ? `No thread yet — text ${r.phone} (or reach them from Batches)`
+                      : 'No thread linked yet'
+                }
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2 text-left text-sm transition enabled:hover:border-amber-400 enabled:hover:shadow-sm disabled:cursor-default"
+              >
+                <span className="shrink-0 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] text-white">
+                  {r.recent_games === 0 ? 'gone' : 'fading'} {fmtGone(r.days_since_last)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{r.player_name}</span>
+                  <span className="ml-1 text-xs text-slate-500">
+                    was ~{r.baseline_games} games/6mo, now {r.recent_games || 'none'}
+                    {where ? ` · ${where}` : ''}
+                    {won ? ` · ${won} won` : ''}
+                  </span>
+                </span>
+                {!r.conversation_id && r.phone && (
+                  <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">
+                    SMS
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setDone((s) => new Set(s).add(r.outreach_id))}
+                title="Dismiss for now (back next reload)"
+                className="shrink-0 rounded-md px-1.5 text-slate-300 hover:text-slate-600"
+              >
+                ×
               </button>
             </li>
           )
