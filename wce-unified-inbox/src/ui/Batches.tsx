@@ -101,6 +101,8 @@ export function Batches() {
   const [scheduledDrafts, setScheduledDrafts] = useState<
     { id: string; name: string; venue: string | null; created_at: string }[]
   >([])
+  // tonight's games (from the schedules) with their resolved venue list, for one-tap targeting
+  const [tonight, setTonight] = useState<{ venue: string; name: string; listId: string | null }[]>([])
   // venue / weekly game this batch is tagged with (for recurring per-venue lists)
   const [batchVenue, setBatchVenue] = useState('')
   // per-recipient name/phone corrections made in the preview
@@ -453,6 +455,32 @@ export function Batches() {
       .then(({ data }) => setScheduledDrafts((data as typeof scheduledDrafts) ?? []))
   }
   useEffect(loadScheduledDrafts, [])
+
+  // Pre-game targeting: which venues run tonight (from the schedules) and the list to
+  // load for each, so you can one-tap "message tonight's venue".
+  useEffect(() => {
+    const dow = new Date().getDay() // 0=Sun..6=Sat, matches Postgres extract(dow)
+    supabase
+      .from('inbox_schedules')
+      .select('name, venue, game_type')
+      .eq('active', true)
+      .eq('day_of_week', dow)
+      .then(async ({ data }) => {
+        const scheds = (data as { name: string; venue: string | null; game_type: string }[]) ?? []
+        const out: { venue: string; name: string; listId: string | null }[] = []
+        for (const s of scheds) {
+          if (!s.venue) continue
+          // Match the venue list leniently (canonical 'Kenwick' -> 'Kenwick FC' etc); biggest first.
+          const { data: ls } = await supabase
+            .from('inbox_lists')
+            .select('id')
+            .ilike('venue', `%${s.venue}%`)
+            .limit(1)
+          out.push({ venue: s.venue, name: s.name, listId: (ls?.[0] as { id: string } | undefined)?.id ?? null })
+        }
+        setTonight(out)
+      })
+  }, [])
 
   // Open an existing batch (e.g. a scheduler draft) straight into the preview phase,
   // reusing the same review + Approve flow as a freshly-built batch.
@@ -914,6 +942,24 @@ export function Batches() {
           Tags this batch so you can browse and rebuild this venue&apos;s weekly list below — and powers
           each player&apos;s &ldquo;last messaged for {'{venue}'}&rdquo; signal.
         </p>
+      )}
+
+      {tonight.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+          <span className="text-xs font-medium text-emerald-800">Tonight:</span>
+          {tonight.map((t) => (
+            <button
+              key={t.venue + t.name}
+              onClick={() => t.listId && void loadVenueList(t.listId)}
+              disabled={!t.listId}
+              title={t.listId ? `Load the ${t.venue} list` : `No list for ${t.venue} yet — create one in the Lists tab`}
+              className={`rounded-full px-3 py-1 text-xs font-medium ${t.listId ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'cursor-not-allowed bg-slate-100 text-slate-400'}`}
+            >
+              {t.venue}{t.listId ? '' : ' (no list)'}
+            </button>
+          ))}
+          <span className="text-[11px] text-slate-500">one tap to load tonight&apos;s venue list</span>
+        </div>
       )}
 
       {scheduledDrafts.length > 0 && (
