@@ -16,6 +16,7 @@ import { mirrorInbound } from './mirror'
 import { processOutbox } from './outbox'
 import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
+import { generateInviteVariants } from './variants'
 import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
 import { syncTdSheets } from './tdsheets'
@@ -29,7 +30,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g25-fb-rematch'
+const SYNC_VERSION = 'g26-variants-whale'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -107,6 +108,8 @@ let lastTdSheets = 0
 let lastAutoLink = 0
 // FB-friend re-match runs on the same slow cadence.
 let lastFbMatch = 0
+// Invite-variant generation runs on a slow (~hourly) cadence.
+let lastVariants = 0
 
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
@@ -379,6 +382,17 @@ async function runOnce(): Promise<void> {
     draftAi = d.ai
     if (d.generated) {
       console.log(`[drafts] generated=${d.generated} skipped=${d.skipped}`)
+    }
+  }
+
+  // Invite variants: pre-write 3 invite options per venue for the Batches picker.
+  if (anthropic && Date.now() - lastVariants > 60 * 60_000) {
+    lastVariants = Date.now()
+    try {
+      const v = await generateInviteVariants(supabaseAdmin, anthropic, env.anthropicModel)
+      if (v.generated) console.log(`[variants] generated ${v.generated} invite(s) across ${v.venues} venue(s)`)
+    } catch (e) {
+      console.error('[variants] error:', e instanceof Error ? e.message : e)
     }
   }
 
