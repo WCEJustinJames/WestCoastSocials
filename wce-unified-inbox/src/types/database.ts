@@ -681,12 +681,87 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_lists: {
+        Row: {
+          id: string
+          name: string
+          event_day: string | null
+          event_time: string | null
+          venue: string | null
+          game_type: string | null
+          notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          event_day?: string | null
+          event_time?: string | null
+          venue?: string | null
+          game_type?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          event_day?: string | null
+          event_time?: string | null
+          venue?: string | null
+          game_type?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      inbox_list_members: {
+        Row: {
+          list_id: string
+          outreach_id: string
+          added_at: string
+          pinned: boolean
+          added_by: string
+        }
+        Insert: {
+          list_id: string
+          outreach_id: string
+          added_at?: string
+          pinned?: boolean
+          added_by?: string
+        }
+        Update: {
+          list_id?: string
+          outreach_id?: string
+          added_at?: string
+          pinned?: boolean
+          added_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'inbox_list_members_list_id_fkey'
+            columns: ['list_id']
+            isOneToOne: false
+            referencedRelation: 'inbox_lists'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'inbox_list_members_outreach_id_fkey'
+            columns: ['outreach_id']
+            isOneToOne: false
+            referencedRelation: 'inbox_outreach'
+            referencedColumns: ['id']
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      seed_tourney_list: {
+        Args: { p_list_id: string; p_days?: number; p_min?: number }
+        Returns: number
+      }
     }
     Enums: {
       inbox_adapter: 'beeper' | 'letspoker'
