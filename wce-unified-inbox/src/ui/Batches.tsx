@@ -286,7 +286,10 @@ export function Batches() {
           // "Jack" — and they're DIFFERENT Jacks, each with their own number.
           // Show phone + venue so identical first names are tellable apart and
           // you can confirm the right person before sending.
-          sub: [o.phone, (o.venues ?? [])[0] ?? o.region].filter(Boolean).join(' · ') || '—',
+          sub: [
+            o.snooze_until && o.snooze_until >= new Date().toISOString().slice(0, 10) ? '❄ on ice' : null,
+            o.phone, (o.venues ?? [])[0] ?? o.region,
+          ].filter(Boolean).join(' · ') || '—',
           sendable,
           guard: newSms,
           guardReason: !sendable

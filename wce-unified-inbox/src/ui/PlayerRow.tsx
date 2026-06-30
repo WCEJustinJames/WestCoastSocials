@@ -81,12 +81,17 @@ export function PlayerCard({
   // so the latest import reads at a glance; the newest (≤14d) are emphasised.
   const added = addedLabel(r.added_at)
   const addedFresh = (addedDaysAgo(r.added_at) ?? 99) <= 14
+  // "On ice" = snoozed to a future date — shade the card rose wherever it appears
+  // (matches the Who's-out panel + Lists), so parked players read at a glance.
+  const onIce = !!r.snooze_until && r.snooze_until >= new Date().toISOString().slice(0, 10)
   return (
     <li
       className={`rounded-lg border p-2 ${r.hidden ? 'opacity-60 ' : ''}${
         isReviewed
           ? 'border-emerald-300 border-l-4 border-l-emerald-500 bg-emerald-50/60 shadow-sm'
-          : 'border-slate-200 bg-white'
+          : onIce
+            ? 'border-rose-200 bg-rose-50'
+            : 'border-slate-200 bg-white'
       }`}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -152,6 +157,9 @@ export function PlayerCard({
         >
           {sourceLabel(r)}
         </span>
+        {onIce && (
+          <span title={`On ice until ${r.snooze_until}`} className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] text-rose-700">❄ on ice</span>
+        )}
         {added && (
           <span
             title={`Added to the CRM on ${r.added_at?.slice(0, 10)}`}
