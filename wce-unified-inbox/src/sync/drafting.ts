@@ -43,11 +43,20 @@ export async function generateDrafts(
   // Most recently active conversations are the ones most likely to need a reply.
   const { data: convs, error } = await db
     .from('inbox_conversations')
-    .select('id, title')
+    .select('id, title, external_chat_id')
     .order('last_activity', { ascending: false, nullsFirst: false })
     .limit(40)
   if (error) throw error
   if (!convs || convs.length === 0) return { generated: 0, skipped: 0 }
+
+  // Whale (priority) players get a warmer, higher-touch draft. Look up their linked
+  // threads once so we can flag the relevant conversations below.
+  const { data: whales } = await db
+    .from('inbox_outreach')
+    .select('beeper_chat_id')
+    .eq('whale', true)
+    .not('beeper_chat_id', 'is', null)
+  const whaleChats = new Set((whales ?? []).map((w) => w.beeper_chat_id))
 
   let generated = 0
   let skipped = 0
@@ -98,7 +107,11 @@ export async function generateDrafts(
         messages: [
           {
             role: 'user',
-            content: `Conversation${conv.title ? ` with ${conv.title}` : ''}:\n\n${transcript}\n\nDraft the reply to send next.`,
+            content: `Conversation${conv.title ? ` with ${conv.title}` : ''}:\n\n${transcript}\n\n${
+              conv.external_chat_id && whaleChats.has(conv.external_chat_id)
+                ? "This player is a valued regular (VIP). Be a touch warmer and more personal than usual, acknowledge them by name, still in Justin's voice with no hype.\n\n"
+                : ''
+            }Draft the reply to send next.`,
           },
         ],
       })
