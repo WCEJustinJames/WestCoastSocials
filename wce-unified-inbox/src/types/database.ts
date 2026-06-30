@@ -505,6 +505,7 @@ export type Database = {
           synced_at: string
           venues: string[]
           source: string | null
+          added_at: string | null
         }
         Insert: {
           activity?: string | null
@@ -542,6 +543,7 @@ export type Database = {
           synced_at?: string
           venues?: string[]
           source?: string | null
+          added_at?: string | null
         }
         Update: {
           activity?: string | null
@@ -579,6 +581,7 @@ export type Database = {
           synced_at?: string
           venues?: string[]
           source?: string | null
+          added_at?: string | null
         }
         Relationships: []
       }
