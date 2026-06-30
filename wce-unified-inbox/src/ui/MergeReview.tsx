@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { usePlayers, mergeRows, phoneCore, sourceLabel, type PlayerRow as Row } from './usePlayers'
+import { usePlayers, mergeRows, phoneCore, normCore, sourceLabel, type PlayerRow as Row } from './usePlayers'
 import { PlayerCard } from './PlayerRow'
 
 /** Merge & Review tab — dedupe (region values + phone duplicates + manual merge)
@@ -107,6 +107,50 @@ export function MergeReview() {
               Showing first 50 — merge these, then Refresh for the next batch.
             </p>
           )}
+        </details>
+      )}
+
+      {/* Suggested duplicates by name — same person the phone dedup missed */}
+      {p.nameDupGroups.length > 0 && (
+        <details className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            Possible duplicates by name ({p.nameDupGroups.length}) — same name, different / no phone
+          </summary>
+          <p className="my-2 text-xs text-slate-500">
+            Suggested matches the phone dedup misses. Check they&apos;re really the same person, pick the name to keep, then Merge.
+          </p>
+          <ul className="space-y-2">
+            {p.nameDupGroups.slice(0, 40).map((g) => {
+              const key = normCore(g[0].player_name ?? '')
+              const chosen = p.groupKeeper[key] ?? mergeRows(g).primary.id
+              return (
+                <li key={key} className="rounded border border-slate-100 p-2">
+                  <div className="mb-1 text-xs text-slate-400">“{g[0].player_name}”</div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {g.map((r) => (
+                      <label key={r.id} className="flex items-center gap-1 text-sm">
+                        <input
+                          type="radio"
+                          name={`name-${key}`}
+                          checked={chosen === r.id}
+                          onChange={() => p.setGroupKeeper((prev) => ({ ...prev, [key]: r.id }))}
+                        />
+                        {r.player_name ?? '(no name)'}
+                        <span className="text-[10px] text-slate-400">{r.phone ?? 'no phone'} · {tag(r)}</span>
+                      </label>
+                    ))}
+                    <button
+                      onClick={() => void p.mergeNameGroup(g)}
+                      disabled={p.busy}
+                      className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+                    >
+                      Merge
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </details>
       )}
 

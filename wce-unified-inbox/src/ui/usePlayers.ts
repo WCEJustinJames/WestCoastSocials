@@ -367,6 +367,29 @@ export function usePlayers(initialFilter?: string) {
     return [...byPhone.values()].filter((g) => g.length > 1)
   }, [rows])
 
+  // Likely duplicate PEOPLE the phone-dedup misses: records sharing the same cleaned
+  // full name (surname required, so different "Jack"s don't collide) but with
+  // differing or missing phones. Suggestions only — you pick the keeper and merge.
+  const nameDupGroups = useMemo(() => {
+    const byName = new Map<string, PlayerRow[]>()
+    for (const r of rows) {
+      const nm = (r.player_name ?? '').trim()
+      if (r.hidden || !/\s/.test(nm)) continue // full names only (has a surname)
+      const k = normCore(nm)
+      if (k.length < 5) continue
+      ;(byName.get(k) ?? byName.set(k, []).get(k)!).push(r)
+    }
+    return [...byName.values()]
+      .filter((g) => g.length > 1)
+      // drop groups already caught as a single shared phone (those are in dupGroups)
+      .filter((g) => {
+        const phones = new Set(g.map((r) => phoneCore(r.phone)).filter(Boolean))
+        return phones.size >= 2 || g.some((r) => !phoneCore(r.phone))
+      })
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 60)
+  }, [rows])
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     const out = rows.filter((r) => {
@@ -582,6 +605,17 @@ export function usePlayers(initialFilter?: string) {
     load()
   }
 
+  // Merge a name-suggested group (keyed by the cleaned name in groupKeeper).
+  async function mergeNameGroup(group: PlayerRow[]) {
+    const key = normCore(group[0].player_name ?? '')
+    setBusy(true)
+    const { primary, merged, dropIds } = mergeRows(group, groupKeeper[key])
+    await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
+    if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+    setBusy(false)
+    load()
+  }
+
   async function mergeAllDuplicates() {
     setBusy(true)
     setStatus('Merging duplicates…')
@@ -614,8 +648,8 @@ export function usePlayers(initialFilter?: string) {
     firstNameOnly, setFirstNameOnly, firstNameOnlyCount,
     reviewed, unmarkReviewed,
     chatNetworks, chatTitles,
-    load, regionCounts, regions, dupGroups, filtered,
+    load, regionCounts, regions, dupGroups, nameDupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,
-    mergeOneGroup, mergeAllDuplicates,
+    mergeOneGroup, mergeNameGroup, mergeAllDuplicates,
   }
 }
