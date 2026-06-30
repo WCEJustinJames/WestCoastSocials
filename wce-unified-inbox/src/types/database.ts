@@ -812,6 +812,30 @@ export type Database = {
           },
         ]
       }
+      inbox_invite_variants: {
+        Row: {
+          id: string
+          venue: string | null
+          body: string
+          active: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          venue?: string | null
+          body: string
+          active?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          venue?: string | null
+          body?: string
+          active?: boolean
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       inbox_batch_conversion: {
