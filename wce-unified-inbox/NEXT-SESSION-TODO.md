@@ -35,6 +35,39 @@ tool's variation pools (OPENERS/THANKS/WINNER/CLOSERS in `ui/Home.tsx`) are the 
 - Auto-suggest candidates by value: `lp_entries.winnings` / buy-ins + cash-game frequency
   → flag likely whales for Justin to confirm.
 
+## Further ideas — 12 suggestions (Claude, to consider)
+
+6. **Win-back / lapsing-regular panel.** Surface players whose attendance has dropped
+   off a cliff (`lp_churn` view from PR #4 + `player_attendance()`), as a Home panel —
+   re-engage them before they're gone. Highest-ROI retention play.
+7. **Response & conversion analytics.** Per template / venue / batch: sent → yes/no/maybe
+   → conversion %. So Justin sees which wording and venues actually convert. Data is in
+   `inbox_batch_items` + `inbox_messages.reply_intent`.
+8. **Opt-out (STOP) auto-handling.** Classifier detects "stop / don't text me /
+   unsubscribe" and auto-sets `do_not_message`. SMS compliance + goodwill; a new
+   `reply_intent` value + a guard.
+9. **Player 360 profile.** One click → full history in one place: attendance pattern,
+   message thread, venues, rapport, LP winnings, FIFO/whale flags. Today it's scattered.
+10. **Duplicate detection & assisted merge.** Proactive fuzzy-dupe finder (we saw Gary
+    O'Doherty ×3, Sheldon Ingham ×2) — fragments attendance matching + clutters lists.
+    Extend Merge & Review with auto-suggested merges.
+11. **Best-time-to-contact learning.** Learn each player's actual response window from
+    reply timestamps; schedule sends when they're most likely to reply (we already have
+    `contact_day`/`contact_window` fields to populate).
+12. **A/B template testing.** Track which invite wording wins (yes-rate per variant) and
+    promote it. The batch variation machinery already exists.
+13. **New-player onboarding nurture.** First-timers (<N LP games) get a tailored welcome
+    sequence to convert them into regulars rather than one-and-done.
+14. **Pre-game targeting from the live LP calendar.** Auto-know "tonight = MCT" from
+    `lp_events` and pull the right venue list with a one-tap "message tonight's venue".
+15. **Relationship-health / sentiment trend.** Score reply tone over time; flag players
+    going cold or unhappy so Justin can step in personally before they churn.
+16. **Send-health & carrier-safety dashboard.** Volume pacing, daily caps, Beeper bridge
+    status, failed-send alerts — keeps high-volume nights safe and visible. (Pairs with
+    the pre-send bridge health-check offer below.)
+17. **Mobile-friendly action view.** A phone-sized view of the Home action queue +
+    re-invites, so Justin can work the CRM from the venue floor.
+
 ---
 ### Carry-over from this session
 - **Restart needed**: pull `claude/laughing-ritchie-Xmvvk` + restart `run-wce.bat` to
