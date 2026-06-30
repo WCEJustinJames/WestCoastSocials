@@ -129,6 +129,7 @@ interface ContextRow {
   back_on: string | null
   fifo: boolean
   note: string | null
+  snooze_until: string | null
 }
 
 interface PatternInfo {
@@ -184,6 +185,8 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
   const [labelDraft, setLabelDraft] = useState<{ id: string; text: string } | null>(null)
   // Expanded FIFO attendance pattern (which row, loading, computed info).
   const [pattern, setPattern] = useState<{ id: string; loading: boolean; info: PatternInfo | null } | null>(null)
+  // Per-row "added to <list>" confirmations (so add-to-list applies in place).
+  const [added, setAdded] = useState<Record<string, string>>({})
 
   useEffect(() => {
     const v = supabase as unknown as {
@@ -199,7 +202,7 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
     }
     const since = new Date(Date.now() - 45 * 86_400_000).toISOString()
     v.from('inbox_player_context')
-      .select('conversation_id, player_name, outreach_id, reply_intent, reply_note, reply_text, replied_at, back_on, fifo, note')
+      .select('conversation_id, player_name, outreach_id, reply_intent, reply_note, reply_text, replied_at, back_on, fifo, note, snooze_until')
       .gt('replied_at', since)
       .order('replied_at', { ascending: false })
       .limit(40)
@@ -244,13 +247,19 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
     const venues = Array.from(new Set([...(((data?.venues as string[] | null) ?? [])), venue]))
     const patch = type === 'cash' ? { venues, cash: true } : { venues, tournament: true }
     await supabase.from('inbox_outreach').update(patch).eq('id', r.outreach_id)
-    setHandled((s) => new Set(s).add(r.conversation_id))
+    // Apply in place (don't dismiss) — show a running confirmation of what's added.
+    const label = `${venue} ${type === 'cash' ? 'cash' : 'tourney'}`
+    setAdded((a) => ({
+      ...a,
+      [r.conversation_id]: [a[r.conversation_id], label].filter(Boolean).join(', '),
+    }))
   }
   // Park a player from outreach until a date (the send guard skips them till then).
+  // Applies in place + shades the row; "✓ resolved" is what removes the entry.
   async function onIce(r: ContextRow, until: string) {
     if (!r.outreach_id) return
     await supabase.from('inbox_outreach').update({ snooze_until: until }).eq('id', r.outreach_id)
-    setHandled((s) => new Set(s).add(r.conversation_id))
+    setRows((rs) => rs.map((x) => (x.conversation_id === r.conversation_id ? { ...x, snooze_until: until } : x)))
   }
   // Mark this entry resolved — dismiss it for good (until they reply again).
   async function resolve(r: ContextRow) {
@@ -294,17 +303,22 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
       <h3 className="mb-1 text-sm font-semibold text-slate-700">Who&apos;s out — reasons &amp; when they&apos;re back</h3>
       <p className="mb-2 text-xs text-slate-400">
         {visible.length} recently said they can&apos;t make it
-        {readyCount > 0 ? ` · ${readyCount} ready to re-invite` : ''}. Tap a name to open their thread, or
-        re-segment / park them below.
+        {readyCount > 0 ? ` · ${readyCount} ready to re-invite` : ''}. Tap a name to open their thread. Add to a
+        list, set a return date, edit the label — it all applies in place; only ✓ resolved clears the entry.
       </p>
       <ul className="space-y-1">
         {visible.map((r) => {
           const ready = isReady(r)
+          const iced = !!r.snooze_until && r.snooze_until > today
           return (
             <li
               key={r.conversation_id}
               className={`rounded-md border px-3 py-2 ${
-                ready ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white'
+                iced
+                  ? 'border-rose-200 bg-rose-50/70 opacity-80'
+                  : ready
+                    ? 'border-emerald-300 bg-emerald-50/60'
+                    : 'border-slate-200 bg-white'
               }`}
             >
               <div className="flex items-start gap-2">
@@ -343,6 +357,20 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                 </button>
                 <span className="shrink-0 text-xs text-slate-400">{ago(r.replied_at)}</span>
               </div>
+              {(iced || added[r.conversation_id]) && (
+                <div className="mt-1 flex flex-wrap items-center gap-2 pl-1 text-[11px]">
+                  {iced && (
+                    <span className="rounded-full bg-rose-100 px-2 py-0.5 font-medium text-rose-700">
+                      ❄ on ice until {fmtBack(r.snooze_until!)} — off invites till then
+                    </span>
+                  )}
+                  {added[r.conversation_id] && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">
+                      ✓ added to {added[r.conversation_id]}
+                    </span>
+                  )}
+                </div>
+              )}
               {r.outreach_id && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1 text-[11px]">
                   <select
@@ -381,13 +409,18 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                     <option value="60">2 months</option>
                     {r.back_on && <option value="back">until {fmtBack(r.back_on)} (their date)</option>}
                   </select>
-                  <input
-                    type="date"
-                    value=""
-                    onChange={(ev) => ev.target.value && void onIce(r, ev.target.value)}
-                    title="On ice until an exact date"
-                    className="rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600"
-                  />
+                  <label
+                    className="inline-flex items-center gap-1 text-[11px] text-slate-500"
+                    title="On ice until an exact date — held off invites until then"
+                  >
+                    ❄ until
+                    <input
+                      type="date"
+                      value={r.snooze_until ?? ''}
+                      onChange={(ev) => ev.target.value && void onIce(r, ev.target.value)}
+                      className="rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600"
+                    />
+                  </label>
                   {labelDraft?.id === r.conversation_id ? (
                     <span className="inline-flex items-center gap-1">
                       <input
