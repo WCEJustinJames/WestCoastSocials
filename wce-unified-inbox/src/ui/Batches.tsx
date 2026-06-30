@@ -97,6 +97,10 @@ export function Batches() {
   const [venueLists, setVenueLists] = useState<
     { id: string; name: string; venue: string | null; game_type: string | null }[]
   >([])
+  // draft batches the recurring scheduler built, awaiting your approval
+  const [scheduledDrafts, setScheduledDrafts] = useState<
+    { id: string; name: string; venue: string | null; created_at: string }[]
+  >([])
   // venue / weekly game this batch is tagged with (for recurring per-venue lists)
   const [batchVenue, setBatchVenue] = useState('')
   // per-recipient name/phone corrections made in the preview
@@ -433,6 +437,44 @@ export function Batches() {
       .order('name')
       .then(({ data }) => setVenueLists((data as typeof venueLists) ?? []))
   }, [])
+
+  // Draft batches the recurring scheduler built (Schedules tab) and that are waiting
+  // for approval. Loaded into the preview phase so you can review + Approve to send.
+  function loadScheduledDrafts() {
+    supabase
+      .from('inbox_batches')
+      .select('id, name, venue, created_at')
+      .eq('status', 'draft')
+      .eq('created_by', 'scheduler')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setScheduledDrafts((data as typeof scheduledDrafts) ?? []))
+  }
+  useEffect(loadScheduledDrafts, [])
+
+  // Open an existing batch (e.g. a scheduler draft) straight into the preview phase,
+  // reusing the same review + Approve flow as a freshly-built batch.
+  async function openBatch(id: string) {
+    const { data: b } = await supabase.from('inbox_batches').select('*').eq('id', id).single()
+    if (!b) return
+    const batch = b as Database['public']['Tables']['inbox_batches']['Row']
+    setName(batch.name)
+    setTemplate(batch.template_body)
+    setBatchVenue(batch.venue ?? '')
+    const { data: created } = await supabase
+      .from('inbox_batch_items')
+      .select('*')
+      .eq('batch_id', id)
+      .order('guard_flag', { ascending: true })
+    const list = (created as ItemRow[]) ?? []
+    setItems(list)
+    setInclude(Object.fromEntries(list.map((it) => [it.id, !it.guard_flag])))
+    setEdits(Object.fromEntries(list.map((it) => [it.id, it.rendered_text])))
+    setNameEdits(Object.fromEntries(list.map((it) => [it.id, ((it.data as { name?: string } | null)?.name ?? '')])))
+    setPhoneEdits(Object.fromEntries(list.map((it) => [it.id, ((it.data as { phone?: string } | null)?.phone ?? '')])))
+    setBatchId(id)
+    setStatus('Opened scheduled draft — review and Approve to send.')
+    setTimeout(() => setStatus(null), 6000)
+  }
 
   // Load a standing list's members into the CRM recipient selection (same auto-pick
   // path as reusing a past batch). All send guards still apply downstream at build.
@@ -869,6 +911,28 @@ export function Batches() {
           Tags this batch so you can browse and rebuild this venue&apos;s weekly list below — and powers
           each player&apos;s &ldquo;last messaged for {'{venue}'}&rdquo; signal.
         </p>
+      )}
+
+      {scheduledDrafts.length > 0 && (
+        <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+          <p className="mb-1 text-sm font-medium text-amber-800">
+            {scheduledDrafts.length} scheduled draft{scheduledDrafts.length > 1 ? 's' : ''} awaiting approval
+          </p>
+          <ul className="space-y-1">
+            {scheduledDrafts.map((d) => (
+              <li key={d.id} className="flex items-center gap-2 text-sm">
+                <span className="flex-1">
+                  {d.venue ? `${d.venue} · ` : ''}{d.name}
+                  <span className="ml-1 text-[11px] text-slate-500">{new Date(d.created_at).toLocaleDateString()}</span>
+                </span>
+                <button onClick={() => void openBatch(d.id)}
+                  className="rounded-md bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700">
+                  Open to approve
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {venueLists.length > 0 && (

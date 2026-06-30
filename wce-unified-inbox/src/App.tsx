@@ -5,6 +5,7 @@ import { Batches } from './ui/Batches'
 import { Receipts } from './ui/Receipts'
 import { Players } from './ui/Players'
 import { Lists } from './ui/Lists'
+import { Schedules } from './ui/Schedules'
 import { MergeReview } from './ui/MergeReview'
 import { Drafts } from './ui/Drafts'
 import { Confirmed } from './ui/Confirmed'
@@ -13,7 +14,7 @@ import { SendShelf } from './ui/SendShelf'
 import { StopButton, RepliesToggle, RosterToggle } from './ui/StopButton'
 import { SignOut } from './ui/AuthGate'
 
-type View = 'home' | 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts' | 'players' | 'lists' | 'merge'
+type View = 'home' | 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts' | 'players' | 'lists' | 'schedules' | 'merge'
 
 export default function App() {
   const [view, setView] = useState<View>('home')
@@ -62,6 +63,9 @@ export default function App() {
         <TabButton active={view === 'lists'} onClick={() => setView('lists')}>
           Lists
         </TabButton>
+        <TabButton active={view === 'schedules'} onClick={() => setView('schedules')}>
+          Schedules
+        </TabButton>
         <TabButton active={view === 'merge'} onClick={() => setView('merge')}>
           Merge &amp; Review
         </TabButton>
@@ -91,6 +95,8 @@ export default function App() {
           <Players initialFilter={playersFilter} />
         ) : view === 'lists' ? (
           <Lists />
+        ) : view === 'schedules' ? (
+          <Schedules />
         ) : (
           <MergeReview />
         )}
