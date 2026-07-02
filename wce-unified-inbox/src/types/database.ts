@@ -812,6 +812,45 @@ export type Database = {
           },
         ]
       }
+      inbox_emails: {
+        Row: {
+          id: string
+          gmail_id: string
+          thread_id: string | null
+          from_name: string | null
+          from_email: string | null
+          subject: string | null
+          snippet: string | null
+          received_at: string | null
+          resolved: boolean
+          synced_at: string
+        }
+        Insert: {
+          id?: string
+          gmail_id: string
+          thread_id?: string | null
+          from_name?: string | null
+          from_email?: string | null
+          subject?: string | null
+          snippet?: string | null
+          received_at?: string | null
+          resolved?: boolean
+          synced_at?: string
+        }
+        Update: {
+          id?: string
+          gmail_id?: string
+          thread_id?: string | null
+          from_name?: string | null
+          from_email?: string | null
+          subject?: string | null
+          snippet?: string | null
+          received_at?: string | null
+          resolved?: boolean
+          synced_at?: string
+        }
+        Relationships: []
+      }
       inbox_invite_variants: {
         Row: {
           id: string
