@@ -42,20 +42,31 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
   const [busy, setBusy] = useState(false)
 
   async function load() {
+    // Recent items only — the queue is a to-do list, not an archive. Older
+    // escalations were already texted to Justin in the digest at the time.
+    const since = new Date(Date.now() - 14 * 86_400_000).toISOString()
     const { data: ny } = await supabase
       .from('inbox_messages')
       .select('id, conversation_id, sender_name, text')
       .eq('reply_intent', 'other')
       .eq('action_resolved', false)
+      .gte('timestamp', since)
       .order('timestamp', { ascending: false })
       .limit(40)
-    setNeedsYou((ny as NeedsYou[]) ?? [])
+    // Belt-and-braces: rows written by pre-'noise'-tag sync code can still be
+    // system events ("X joined the chat") — drop anything that reads like one.
+    const NOISE = /\b(joined|left|added|removed|created|changed|renamed|set the|started|ended|missed|deleted)\b.*\b(chat|group|call|name|photo|message)\b|^\s*(👍|👎|❤️|reacted)/i
+    setNeedsYou(((ny as NeedsYou[]) ?? []).filter((m) => {
+      const t = snippet(m.text, 400)
+      return t.length > 0 && !NOISE.test(t)
+    }))
 
     const { data: ur } = await supabase
       .from('inbox_conversations')
       .select('id, title, network, unread_count, last_activity, context_resolved_at')
       .gt('unread_count', 0)
       .eq('hidden', false)
+      .gte('last_activity', since)
       .order('last_activity', { ascending: false })
       .limit(40)
     const rows = (ur as (Unread & { last_activity: string | null; context_resolved_at: string | null })[]) ?? []

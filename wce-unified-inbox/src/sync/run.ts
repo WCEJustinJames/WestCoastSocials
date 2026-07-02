@@ -30,7 +30,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g26-variants-whale'
+const SYNC_VERSION = 'g27-queue-noise'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 

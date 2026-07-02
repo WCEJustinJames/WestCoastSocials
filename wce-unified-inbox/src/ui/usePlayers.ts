@@ -185,6 +185,16 @@ export function mergeRows(
     venues: unionArr(ordered.map((r) => r.venues)),
     notes: ordered.map((r) => r.notes).filter(Boolean).join(' | ') || null,
     do_not_message: ordered.some((r) => r.do_not_message),
+    // Flags survive the merge no matter which record they were set on — losing a
+    // ban is dangerous, losing cash/tourney/whale/fifo silently drops the player
+    // from segments and panels.
+    staff: ordered.some((r) => r.staff),
+    tournament: ordered.some((r) => r.tournament),
+    cash: ordered.some((r) => r.cash),
+    fb_friend: ordered.some((r) => r.fb_friend),
+    whale: ordered.some((r) => r.whale),
+    fifo: ordered.some((r) => r.fifo),
+    nickname: firstNonEmpty(ordered.map((r) => r.nickname)),
   }
   return { primary: ordered[0], merged, dropIds: ordered.slice(1).map((r) => r.id) }
 }
@@ -507,11 +517,29 @@ export function usePlayers(initialFilter?: string) {
     })
   }
 
+  // Deleting a duplicate cascades its inbox_list_members rows away — so before a
+  // merge deletes the dropped records, their venue-list memberships are re-pointed
+  // at the keeper (ignore-duplicates keeps existing memberships intact).
+  async function moveListMemberships(dropIds: string[], keeperId: string) {
+    if (dropIds.length === 0) return
+    const { data: mem } = await supabase
+      .from('inbox_list_members')
+      .select('list_id')
+      .in('outreach_id', dropIds)
+    const listIds = [...new Set(((mem ?? []) as { list_id: string }[]).map((m) => m.list_id))]
+    if (listIds.length === 0) return
+    await supabase.from('inbox_list_members').upsert(
+      listIds.map((list_id) => ({ list_id, outreach_id: keeperId })),
+      { onConflict: 'list_id,outreach_id', ignoreDuplicates: true },
+    )
+  }
+
   async function mergeSelected() {
     if (selectedRows.length < 2) return
     setBusy(true)
     const { primary, merged, dropIds } = mergeRows(selectedRows, keeperId ?? undefined)
     await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
+    await moveListMemberships(dropIds, primary.id)
     if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
     setBusy(false)
     setSel(new Set())
@@ -600,6 +628,7 @@ export function usePlayers(initialFilter?: string) {
     setBusy(true)
     const { primary, merged, dropIds } = mergeRows(group, groupKeeper[key])
     await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
+    await moveListMemberships(dropIds, primary.id)
     if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
     setBusy(false)
     load()
@@ -611,6 +640,7 @@ export function usePlayers(initialFilter?: string) {
     setBusy(true)
     const { primary, merged, dropIds } = mergeRows(group, groupKeeper[key])
     await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
+    await moveListMemberships(dropIds, primary.id)
     if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
     setBusy(false)
     load()
@@ -622,6 +652,7 @@ export function usePlayers(initialFilter?: string) {
     for (const g of dupGroups) {
       const { primary, merged, dropIds } = mergeRows(g)
       await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
+      await moveListMemberships(dropIds, primary.id)
       if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
     }
     setBusy(false)
