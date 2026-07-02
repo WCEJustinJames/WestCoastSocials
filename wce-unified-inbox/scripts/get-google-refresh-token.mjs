@@ -22,10 +22,12 @@ const redirectUri = `http://localhost:${PORT}`
 // contacts.readonly       — the People API contacts sync
 // drive.metadata.readonly — find tonight's TD sheet by name (metadata only)
 // spreadsheets.readonly   — read the attendee columns out of that sheet
+// gmail.readonly          — unread inbox emails for the Home action queue
 const SCOPE = [
   'https://www.googleapis.com/auth/contacts.readonly',
   'https://www.googleapis.com/auth/drive.metadata.readonly',
   'https://www.googleapis.com/auth/spreadsheets.readonly',
+  'https://www.googleapis.com/auth/gmail.readonly',
 ].join(' ')
 
 if (!clientId || !clientSecret) {

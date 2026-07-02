@@ -2,7 +2,7 @@
 
 **How to use this:** start a FRESH chat and say *"Read wce-unified-inbox/HANDOVER.md and continue."* This doc is the source of truth; long chats get slow. `NEXT-SESSION-TODO.md` = the prioritised roadmap.
 
-_Last updated: 2026-07-02 (Perth). Source of truth is now **Supabase-only** (Airtable retired). Running sync code: `g27-queue-noise` — RESTART `run-wce.bat` to activate (whale draft tone + invite-variant generator + noise-tag fix). Many UI features shipped this session (see Changelog)._
+_Last updated: 2026-07-02 (Perth). Source of truth is now **Supabase-only** (Airtable retired). Running sync code: `g28-email` — RESTART `run-wce.bat` to activate (whale draft tone + invite-variant generator + noise-tag fix + Gmail action-queue pull). Many UI features shipped this session (see Changelog)._
 
 ---
 
@@ -81,18 +81,18 @@ Insert an approved batch the PC drains:
 - **Double auto-reply fixed**; classifier now extracts return-date + absence reason.
 
 ### Roadmap build — Lists / Schedules / Analytics / whale / action queue / variants (2026-06-30, parallel session)
-Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live**; UI on `laughing-ritchie`). Strictly additive; pre-change backups in `bak.inbox_*_20260630`. **Backend needs a `run-wce.bat` restart** (`SYNC_VERSION=g27-queue-noise`) for the whale draft tone + invite-variant generator.
+Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live**; UI on `laughing-ritchie`). Strictly additive; pre-change backups in `bak.inbox_*_20260630`. **Backend needs a `run-wce.bat` restart** (`SYNC_VERSION=g28-email`) for the whale draft tone + invite-variant generator.
 - **Venue lists** (`0039`): adopted the stranded `inbox_lists`/`inbox_list_members` into the repo; `game_type` on lists, `pinned`/`added_by` on members; `canon_venue()`, `inbox_attendance_norm` view, `seed_tourney_list()` (≥2 tourneys/90d at a venue, add-only — cash lists are manual). New **Lists tab**; Batches "Load a venue list".
 - **Recurring schedules** (`0040`): `inbox_schedules` seeded from the locked weekly map; `materialise_due_schedules()` builds the next game's batch the evening before as a DRAFT from the venue list; pg_cron `wce-materialise-schedules` (09:00 UTC = 17:00 Perth). New **Schedules tab**; Batches surfaces scheduler drafts to approve. (Existing 5 lists untouched — link/re-key them in the Lists/Schedules tabs.)
 - **Conversion analytics** (`0041`): `inbox_batch_conversion` view (sent→reply/yes per batch + by venue, 7-day attribution). New **Analytics tab**.
 - **Whale flag** (`0042`): `inbox_outreach.whale` (manual), card toggle + finished the previously-missing fifo card toggle; whale players get a warmer AI reply draft. _(Follow-ups: whale-first ordering in Batches + auto-reply tone in `notify.ts`.)_
-- **Home action queue** (`0043`): top-of-Home panel (needs-you replies via new `inbox_messages.action_resolved` + unread threads via `context_resolved_at`); hides when empty. **Email source NOT wired** — needs a Gmail source (the People-API token's scope is contacts/sheets only).
+- **Home action queue** (`0043`, `0046`): top-of-Home panel (needs-you replies via new `inbox_messages.action_resolved` + unread threads via `context_resolved_at`); hides when empty. Tiered: PLAYER threads (CRM-linked) shown, marketing/groups/unknown numbers collapsed behind an expander with clear-all. **Email wired** (`inbox_emails`, `sync/email.ts`, read-only Gmail pull every 10m) — activates once `GOOGLE_REFRESH_TOKEN` is re-minted with the new `gmail.readonly` scope: run `node scripts/get-google-refresh-token.mjs` on the PC, paste the new token into `.env`, restart. Until then the sync logs the missing scope once and skips.
 - **Invite variants** (`0044`): sync pre-writes 3 invite options/venue into `inbox_invite_variants` (refreshed ~daily); pick one in Batches. Populates after the restart.
 - **On-ice shading** carried into the player card + Batches picker. **Assisted dup-merge** (by full name, phone-dedup misses) added to Merge & Review.
 - **Review pass (0045, 2026-07-02)**: action-queue flood fixed (noise is now `reply_intent='noise'`, 329 historical rows backfilled resolved, 14-day window); **merges no longer lose venue-list memberships or cash/tourney/whale/fifo/staff/ban flags** from dropped dupes; scheduler dates now Perth-local; whale follow-ups done (whales sort first + 🐋 in the Batches picker, 🐋 in the reply digest).
 
 ## Open items
-- **Restart `run-wce.bat`** (pull `laughing-ritchie`) to activate the classifier's `reply_back_on`/absence extraction + the whale draft tone + invite-variant generator (`SYNC_VERSION=g27-queue-noise`). Ensure `ANTHROPIC_API_KEY` is set on the PC.
+- **Restart `run-wce.bat`** (pull `laughing-ritchie`) to activate the classifier's `reply_back_on`/absence extraction + the whale draft tone + invite-variant generator (`SYNC_VERSION=g28-email`). Ensure `ANTHROPIC_API_KEY` is set on the PC.
 - Open offers: carry "on ice" shading into Batches picker + Players card; pre-send Beeper bridge health-check (Google Messages bridge can silently swallow sends if the phone connection drops — it shows "Not sent" even when delivered).
 - **Roadmap**: `NEXT-SESSION-TODO.md` — 5 prioritised items + 12 further suggestions.
 

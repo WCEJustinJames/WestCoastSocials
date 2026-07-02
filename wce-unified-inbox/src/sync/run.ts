@@ -19,6 +19,7 @@ import { generateDrafts } from './drafting'
 import { generateInviteVariants } from './variants'
 import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
+import { syncGmail } from './email'
 import { syncTdSheets } from './tdsheets'
 import { autoLink } from './autolink'
 import { matchFbFriends } from './fbmatch'
@@ -30,7 +31,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g27-queue-noise'
+const SYNC_VERSION = 'g28-email'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -92,6 +93,7 @@ if (env.airtableSync && env.airtableKey) {
 if (env.googleRefreshToken) {
   console.log(`[contacts] Google Contacts sync on (every ${env.contactsSyncMinutes}m)`)
   console.log(`[tdsheets] TD-sheet attendee pull on (every ${env.tdSheetsSyncMinutes}m)`)
+  console.log('[email] Gmail inbox pull on (every 10m, needs gmail.readonly on the token)')
 }
 console.log(`[autolink] name-match auto-linker on (every ${env.autoLinkMinutes}m)`)
 if (anthropic && env.autoReply) {
@@ -110,6 +112,8 @@ let lastAutoLink = 0
 let lastFbMatch = 0
 // Invite-variant generation runs on a slow (~hourly) cadence.
 let lastVariants = 0
+// Gmail action-queue pull runs every ~10 minutes.
+let lastEmailSync = 0
 
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
@@ -320,6 +324,19 @@ async function runOnce(): Promise<void> {
       if (gc.created) console.log(`[contacts] ${gc.created} new contact(s) imported (${gc.autoHidden} auto-hidden as non-person, ${gc.scanned} changed)`)
     } catch (e) {
       console.error('[contacts] sync error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Gmail: mirror unread inbox emails for the Home action queue (read-only; the
+  // queue's "done" never touches Gmail). No-op until the refresh token carries the
+  // gmail.readonly scope — the module detects that and logs the fix once.
+  if (env.googleRefreshToken && Date.now() - lastEmailSync > 10 * 60_000) {
+    lastEmailSync = Date.now()
+    try {
+      const em = await syncGmail(supabaseAdmin, env.googleClientId, env.googleClientSecret, env.googleRefreshToken)
+      if (em.inserted) console.log(`[email] ${em.inserted} new unread email(s) mirrored (${em.scanned} unread)`)
+    } catch (e) {
+      console.error('[email] sync error:', e instanceof Error ? e.message : e)
     }
   }
 
