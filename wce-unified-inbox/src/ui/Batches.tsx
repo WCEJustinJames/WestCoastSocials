@@ -25,6 +25,7 @@ interface Recipient {
   hidden: boolean
   personId: string | null
   nickname?: string | null
+  whale?: boolean
   data: Json
 }
 
@@ -291,6 +292,7 @@ export function Batches() {
           // Show phone + venue so identical first names are tellable apart and
           // you can confirm the right person before sending.
           sub: [
+            o.whale ? '🐋' : null,
             o.snooze_until && o.snooze_until >= new Date().toISOString().slice(0, 10) ? '❄ on ice' : null,
             o.phone, (o.venues ?? [])[0] ?? o.region,
           ].filter(Boolean).join(' · ') || '—',
@@ -313,6 +315,7 @@ export function Batches() {
           hidden: o.hidden,
           personId: null,
           nickname: o.nickname,
+          whale: o.whale ?? false,
           data: {
             outreach_id: o.id,
             beeper_chat_id: o.beeper_chat_id,
@@ -340,6 +343,8 @@ export function Batches() {
         if (q && !r.name.toLowerCase().includes(q)) return false
         return true
       })
+      // Whales float to the top of the picker (stable within each group).
+      .sort((a, b) => Number(b.whale ?? false) - Number(a.whale ?? false))
   }, [source, conversations, outreach, network, region, stake, venue, activity, sourceFilter, recipientQuery, channel, cDay, cWindow])
 
   // When a reused list loads, pick its recipients once they appear for the now-

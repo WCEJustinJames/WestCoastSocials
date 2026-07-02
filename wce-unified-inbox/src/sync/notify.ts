@@ -133,7 +133,9 @@ export async function processReplies(
     }
   }
   if (noiseIds.length) {
-    await db.from('inbox_messages').update({ auto_handled: true, reply_intent: 'other' }).in('id', noiseIds)
+    // 'noise', NOT 'other': 'other' means "a real reply that needs Justin" and
+    // feeds the Home action queue — system events must never land there.
+    await db.from('inbox_messages').update({ auto_handled: true, reply_intent: 'noise' }).in('id', noiseIds)
   }
   if (real.length === 0) return { replied: 0, confirmed: 0, escalated: 0 }
 
@@ -241,6 +243,17 @@ export async function processReplies(
   }
   if (jobs.length === 0) return { replied: 0, confirmed: 0, escalated: 0 }
 
+  // Whale (priority) players get a 🐋 in the digest so their replies stand out.
+  const whaleChats = new Set<string>()
+  {
+    const { data: whaleRows } = await db
+      .from('inbox_outreach')
+      .select('beeper_chat_id')
+      .eq('whale', true)
+      .not('beeper_chat_id', 'is', null)
+    for (const w of whaleRows ?? []) if (w.beeper_chat_id) whaleChats.add(w.beeper_chat_id)
+  }
+
   // Classify + draft replies for the whole pass in one call.
   let verdicts: Verdict[]
   try {
@@ -321,9 +334,10 @@ export async function processReplies(
       await sleep(SEND_DELAY_MS)
     }
 
-    if (intent === 'yes') confirmedEntries.push(note ? `${name} (${note})` : name)
-    else if (intent === 'no') declinedNames.push(name)
-    else needYou.push(`${name} ("${job.transcript.slice(0, 60)}")`)
+    const digestName = whaleChats.has(job.chatId) ? `🐋 ${name}` : name
+    if (intent === 'yes') confirmedEntries.push(note ? `${digestName} (${note})` : digestName)
+    else if (intent === 'no') declinedNames.push(digestName)
+    else needYou.push(`${digestName} ("${job.transcript.slice(0, 60)}")`)
   }
 
   // Text Justin a digest — only when there's something he'd want to know (new
