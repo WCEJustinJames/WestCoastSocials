@@ -29,11 +29,12 @@ async function gfetch<T>(url: string, token: string): Promise<T> {
   return (await res.json()) as T
 }
 
-// Today's and yesterday's date in the forms that show up in sheet titles
-// ("25/06 Woodvale") — yesterday too, so a game that ran past midnight still matches.
-function dateNeedles(now: Date): string[] {
+// Sheet-title date forms ("25/06 Woodvale") for the last `lookbackDays` days.
+// The live sync uses 1 (today + yesterday, so a game past midnight still matches);
+// the backfill script passes ~70 to sweep the whole recent season.
+function dateNeedles(now: Date, lookbackDays = 1): string[] {
   const out = new Set<string>()
-  for (const off of [0, 1]) {
+  for (let off = 0; off <= lookbackDays; off++) {
     const d = new Date(now.getTime() - off * 86_400_000)
     const day = d.getDate(), mon = d.getMonth() + 1
     const dd = String(day).padStart(2, '0'), mm = String(mon).padStart(2, '0')
@@ -128,19 +129,27 @@ export async function syncTdSheets(
   clientId: string,
   clientSecret: string,
   refreshToken: string,
+  lookbackDays = 1,
 ): Promise<TdSheetsResult> {
   const now = new Date()
   const token = await accessToken(clientId, clientSecret, refreshToken)
-  const needles = dateNeedles(now)
-  const q =
-    `mimeType='application/vnd.google-apps.spreadsheet' and trashed=false and (` +
-    needles.map((n) => `name contains '${n}'`).join(' or ') +
-    `)`
-  const list = await gfetch<{ files?: { id: string; name: string }[] }>(
-    `${DRIVE_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('files(id,name)')}&pageSize=25`,
-    token,
-  )
-  const sheets = (list.files ?? []).filter((f) => TITLE_RE.test(f.name)).slice(0, 12)
+  const needles = dateNeedles(now, lookbackDays)
+  // Drive query strings have a length cap, so a long lookback is swept in chunks
+  // of needles, merging the matches by file id.
+  const byId = new Map<string, { id: string; name: string }>()
+  for (let i = 0; i < needles.length; i += 24) {
+    const q =
+      `mimeType='application/vnd.google-apps.spreadsheet' and trashed=false and (` +
+      needles.slice(i, i + 24).map((n) => `name contains '${n}'`).join(' or ') +
+      `)`
+    const list = await gfetch<{ files?: { id: string; name: string }[] }>(
+      `${DRIVE_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('files(id,name)')}&pageSize=100`,
+      token,
+    )
+    for (const f of list.files ?? []) byId.set(f.id, f)
+  }
+  const cap = lookbackDays > 1 ? 100 : 12
+  const sheets = [...byId.values()].filter((f) => TITLE_RE.test(f.name)).slice(0, cap)
 
   let attendees = 0
   for (const f of sheets) {

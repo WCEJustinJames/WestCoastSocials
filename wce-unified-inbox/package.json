@@ -16,6 +16,7 @@
     "beeper:startchat": "tsx src/adapters/beeper/startchat.ts",
     "beeper:receipts": "tsx src/adapters/beeper/receipts.ts",
     "receipts": "tsx src/sync/receipts-run.ts",
+    "tdsheets:backfill": "tsx src/sync/tdsheets-backfill.ts",
     "receipts:count": "tsx src/sync/receipts-count.ts"
   },
   "dependencies": {
