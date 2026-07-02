@@ -700,6 +700,9 @@ export function Batches() {
       .from('inbox_batches')
       .update({
         status: 'approved',
+        // Approval time drives the cutoff grandfather: approved inside the window
+        // means the batch keeps draining even after 16:30.
+        approved_at: new Date().toISOString(),
         scheduled_for: scheduleAt ? new Date(scheduleAt).toISOString() : null,
       })
       .eq('id', batchId)
