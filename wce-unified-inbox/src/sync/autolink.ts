@@ -146,6 +146,42 @@ export async function autoLink(db: DB): Promise<AutoLinkResult> {
     }
   }
 
+  // ---- Op C: link a bare-number SMS thread to a player by unique phone match. ----
+  // An SMS thread with no saved contact shows only the number as its title; when
+  // that number belongs to exactly ONE CRM player who has no thread yet, link them.
+  // Same posture as Op A: both sides unique or nothing happens.
+  const BARE_NUMBER = /^[\d\s+()-]{6,}$/
+  const numberThreadByPhone = uniqueByName(
+    convs
+      .filter(
+        (c) =>
+          c.external_chat_id &&
+          c.title &&
+          BARE_NUMBER.test(c.title.trim()) &&
+          !linkedChatIds.has(c.external_chat_id),
+      )
+      .map((c) => [phoneCore(c.title), c.external_chat_id!] as [string, string]),
+  )
+  const noThreadPlayerByPhone = uniqueByName(
+    rows
+      .filter((r) => !r.beeper_chat_id && !r.hidden && phoneCore(r.phone))
+      .map((r) => [phoneCore(r.phone), r] as [string, Row]),
+  )
+  for (const [pc, chatId] of numberThreadByPhone) {
+    const player = noThreadPlayerByPhone.get(pc)
+    if (!player) continue
+    const { error } = await db
+      .from('inbox_outreach')
+      .update({ beeper_chat_id: chatId })
+      .eq('id', player.id)
+      .is('beeper_chat_id', null)
+    if (!error) {
+      threadsLinked++
+      player.beeper_chat_id = chatId
+      linkedChatIds.add(chatId)
+    }
+  }
+
   // ---- Op B: fill a phone for a no-phone player from a uniquely-named record. ----
   const phoneByName = (() => {
     const sets = new Map<string, Set<string>>()
