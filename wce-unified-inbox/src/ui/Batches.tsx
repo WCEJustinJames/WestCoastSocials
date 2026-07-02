@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fileToBase64, type PickedImage } from '../lib/attachment'
-import { sourceLabel } from './usePlayers'
+import { sourceLabel, phoneCore } from './usePlayers'
 import type { Database, Json } from '../types/database'
 
 type ConvRow = Database['public']['Tables']['inbox_conversations']['Row'] & {
@@ -244,14 +244,31 @@ export function Batches() {
   const recipients = useMemo<Recipient[]>(() => {
     const q = recipientQuery.trim().toLowerCase()
     if (source === 'inbox') {
+      // Resolve bare-number thread titles ("0455 612 636") to a real name from the
+      // CRM — by linked thread first, then by matching the number to a player's
+      // phone. Threads nobody can name sink to the bottom of the picker.
+      const BARE_NUMBER = /^[\d\s+()-]{6,}$/
+      const nameByChat = new Map<string, string>()
+      const nameByPhone = new Map<string, string>()
+      for (const o of outreach) {
+        if (!o.player_name) continue
+        if (o.beeper_chat_id) nameByChat.set(o.beeper_chat_id, o.player_name)
+        const pc = phoneCore(o.phone)
+        if (pc) nameByPhone.set(pc, o.player_name)
+      }
       return conversations
         .map<Recipient>((c) => {
-          const nm = c.inbox_people?.display_name ?? c.title ?? c.external_chat_id
+          const raw = c.inbox_people?.display_name ?? c.title ?? c.external_chat_id
+          const resolved = BARE_NUMBER.test(raw)
+            ? nameByChat.get(c.external_chat_id) ?? nameByPhone.get(phoneCore(raw)) ?? null
+            : null
+          const nm = resolved ?? raw
           const guarded = messagedRecently(c.inbox_people?.last_outbound_at ?? null)
           return {
             key: c.id,
             name: nm,
-            sub: c.network,
+            // Keep the number visible as context when we named it from the CRM.
+            sub: resolved ? `${c.network} · ${raw}` : c.network,
             sendable: true,
             guard: guarded,
             guardReason: guarded ? 'Messaged in the last 24h' : null,
@@ -262,10 +279,12 @@ export function Batches() {
           }
         })
         .filter((r) => {
-          if (network !== 'all' && r.sub !== network) return false
-          if (q && !r.name.toLowerCase().includes(q)) return false
+          if (network !== 'all' && !r.sub.startsWith(network)) return false
+          if (q && !(r.name.toLowerCase().includes(q) || r.sub.toLowerCase().includes(q))) return false
           return true
         })
+        // Still-unnamed numbers are last — real names are what the picker is for.
+        .sort((a, b) => Number(BARE_NUMBER.test(a.name)) - Number(BARE_NUMBER.test(b.name)))
     }
     return outreach
       .map<Recipient>((o) => {
