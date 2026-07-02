@@ -30,6 +30,40 @@ function normName(raw: string | null): string {
 const phoneCore = (p: string | null): string =>
   p ? p.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, '') : ''
 
+// Common first-name diminutives, folded to one canonical form so "Josh Dawson"
+// lines up with the "Joshua Dawson" Messenger thread. Only the FIRST word of a
+// name is mapped, and the both-sides-unique rule below still applies — an
+// ambiguous fold (e.g. a Josh Dawson AND a Joshua Dawson in the CRM) collides to
+// one key with two owners and is dropped, never guessed.
+const DIMINUTIVES: Record<string, string> = {
+  josh: 'joshua', rob: 'robert', robbie: 'robert', bob: 'robert', bobby: 'robert',
+  dave: 'david', matt: 'matthew', mike: 'michael', mick: 'michael', tom: 'thomas',
+  tommy: 'thomas', tony: 'anthony', chris: 'christopher', nick: 'nicholas',
+  dan: 'daniel', danny: 'daniel', jim: 'james', jimmy: 'james', jamie: 'james',
+  bill: 'william', billy: 'william', will: 'william', rick: 'richard',
+  ricky: 'richard', dick: 'richard', steve: 'steven', andy: 'andrew',
+  drew: 'andrew', tim: 'timothy', sam: 'samuel', ben: 'benjamin',
+  alex: 'alexander', ed: 'edward', eddie: 'edward', ted: 'edward',
+  greg: 'gregory', jeff: 'jeffrey', ken: 'kenneth', kenny: 'kenneth',
+  pat: 'patrick', paddy: 'patrick', pete: 'peter', ray: 'raymond',
+  ron: 'ronald', ronnie: 'ronald', terry: 'terence', vince: 'vincent',
+  joe: 'joseph', joey: 'joseph', jon: 'jonathan', johnny: 'john',
+  frank: 'francis', frankie: 'francis', gerry: 'gerard', jerry: 'gerard',
+  larry: 'lawrence', laurie: 'lawrence', stu: 'stuart', gaz: 'gary',
+  baz: 'barry', shaz: 'sharon', kev: 'kevin', trev: 'trevor', gav: 'gavin',
+  nath: 'nathan', jono: 'jonathan', davo: 'david', stevo: 'steven',
+}
+
+/** Fold the first name through the diminutive map: "josh dawson" -> "joshua dawson". */
+function canonName(normed: string): string {
+  if (!normed) return normed
+  const sp = normed.indexOf(' ')
+  if (sp < 0) return normed // first-name-only records never fold (too ambiguous)
+  const first = normed.slice(0, sp)
+  const canon = DIMINUTIVES[first]
+  return canon ? `${canon}${normed.slice(sp)}` : normed
+}
+
 type Row = {
   id: string
   player_name: string | null
@@ -90,12 +124,12 @@ export async function autoLink(db: DB): Promise<AutoLinkResult> {
   const unlinkedThreadByName = uniqueByName(
     convs
       .filter((c) => c.external_chat_id && c.title && !linkedChatIds.has(c.external_chat_id))
-      .map((c) => [normName(c.title), c.external_chat_id!] as [string, string]),
+      .map((c) => [canonName(normName(c.title)), c.external_chat_id!] as [string, string]),
   )
   const noThreadPlayerByName = uniqueByName(
     rows
       .filter((r) => !r.beeper_chat_id && !r.hidden && r.player_name)
-      .map((r) => [normName(r.player_name), r] as [string, Row]),
+      .map((r) => [canonName(normName(r.player_name)), r] as [string, Row]),
   )
   for (const [name, chatId] of unlinkedThreadByName) {
     const player = noThreadPlayerByName.get(name)
@@ -117,7 +151,7 @@ export async function autoLink(db: DB): Promise<AutoLinkResult> {
     const sets = new Map<string, Set<string>>()
     for (const r of rows) {
       const pc = phoneCore(r.phone)
-      const k = normName(r.player_name)
+      const k = canonName(normName(r.player_name))
       if (!pc || k.length < 3) continue
       ;(sets.get(k) ?? sets.set(k, new Set()).get(k)!).add(pc)
     }
@@ -128,7 +162,7 @@ export async function autoLink(db: DB): Promise<AutoLinkResult> {
   const noPhonePlayerByName = uniqueByName(
     rows
       .filter((r) => !phoneCore(r.phone) && !r.hidden && r.player_name)
-      .map((r) => [normName(r.player_name), r] as [string, Row]),
+      .map((r) => [canonName(normName(r.player_name)), r] as [string, Row]),
   )
   for (const [name, player] of noPhonePlayerByName) {
     const pc = phoneByName.get(name)
