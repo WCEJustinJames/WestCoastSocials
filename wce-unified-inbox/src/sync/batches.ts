@@ -41,7 +41,7 @@ export function normalizeAuMobile(raw: string): string | null {
 export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<BatchResult> {
   const { data: allBatches, error } = await db
     .from('inbox_batches')
-    .select('id, attachment_data, attachment_name, attachment_mime, scheduled_for, is_outreach')
+    .select('id, attachment_data, attachment_name, attachment_mime, scheduled_for, is_outreach, approved_at')
     .in('status', ['approved', 'sending'])
     .limit(20)
   if (error) throw error
@@ -53,13 +53,24 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
   const localMins = local.getHours() * 60 + local.getMinutes()
   const outreachWindowOpen =
     localMins >= env.outreachStartMins && localMins < env.outreachCutoffMins
+  // Grandfathering, per Justin: a batch APPROVED inside today's window keeps
+  // draining after the 16:30 cutoff (a big list teed up at 4:25 must not strand
+  // half-sent). The cutoff still blocks batches approved late; quiet hours
+  // (21:00, gated upstream) remain the hard stop for everything.
+  const approvedInWindowToday = (iso: string | null): boolean => {
+    if (!iso) return false
+    const d = new Date(iso)
+    if (d.toDateString() !== local.toDateString()) return false
+    const mins = d.getHours() * 60 + d.getMinutes()
+    return mins >= env.outreachStartMins && mins < env.outreachCutoffMins
+  }
   // Hold scheduled batches until their time; send unscheduled ones immediately.
   // (Filtered here, not in the query — a millisecond dot in an ISO timestamp
   // breaks PostgREST's dot-delimited .or() filter.)
   const now = Date.now()
   const batches = (allBatches ?? [])
     .filter((b) => !b.scheduled_for || new Date(b.scheduled_for).getTime() <= now)
-    .filter((b) => b.is_outreach === false || outreachWindowOpen)
+    .filter((b) => b.is_outreach === false || outreachWindowOpen || approvedInWindowToday(b.approved_at))
     .slice(0, 5)
   if (batches.length === 0) return { sent: 0, failed: 0 }
 

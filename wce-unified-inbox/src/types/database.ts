@@ -183,6 +183,7 @@ export type Database = {
           template_body: string
           variation_schema: Json
           scheduled_for: string | null
+          approved_at: string | null
           attachment_data: string | null
           attachment_name: string | null
           attachment_mime: string | null
@@ -198,6 +199,7 @@ export type Database = {
           template_body: string
           variation_schema?: Json
           scheduled_for?: string | null
+          approved_at?: string | null
           attachment_data?: string | null
           attachment_name?: string | null
           attachment_mime?: string | null
@@ -213,6 +215,7 @@ export type Database = {
           template_body?: string
           variation_schema?: Json
           scheduled_for?: string | null
+          approved_at?: string | null
           attachment_data?: string | null
           attachment_name?: string | null
           attachment_mime?: string | null
