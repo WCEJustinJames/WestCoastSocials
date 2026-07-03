@@ -498,6 +498,7 @@ export type Database = {
           snooze_until: string | null
           fifo: boolean
           whale: boolean
+          priority: boolean
           nickname: string | null
           contact_day: string | null
           contact_window: string | null
@@ -537,6 +538,7 @@ export type Database = {
           snooze_until?: string | null
           fifo?: boolean
           whale?: boolean
+          priority?: boolean
           nickname?: string | null
           contact_day?: string | null
           contact_window?: string | null
@@ -576,6 +578,7 @@ export type Database = {
           snooze_until?: string | null
           fifo?: boolean
           whale?: boolean
+          priority?: boolean
           nickname?: string | null
           contact_day?: string | null
           contact_window?: string | null
