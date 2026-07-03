@@ -67,6 +67,7 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
   const [otherUnread, setOtherUnread] = useState<Unread[]>([])
   const [emails, setEmails] = useState<Email[]>([])
   const [awaited, setAwaited] = useState<AwaitedTransfer[]>([])
+  const [bridgeDown, setBridgeDown] = useState(false)
   const [busy, setBusy] = useState(false)
   const [showAllPlayers, setShowAllPlayers] = useState(false)
   const [showAllEmails, setShowAllEmails] = useState(false)
@@ -159,6 +160,16 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
       .order('game_date', { ascending: false })
       .limit(20)
     setAwaited((tf as AwaitedTransfer[]) ?? [])
+
+    const sq = supabase as unknown as {
+      from: (t: string) => {
+        select: (c: string) => {
+          eq: (col: string, v: number) => { maybeSingle: () => Promise<{ data: { sms_bridge_down?: boolean } | null }> }
+        }
+      }
+    }
+    const { data: st } = await sq.from('inbox_settings').select('sms_bridge_down').eq('id', 1).maybeSingle()
+    setBridgeDown(st?.sms_bridge_down ?? false)
   }
   useEffect(() => { void load() }, [])
 
@@ -201,7 +212,7 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
   }
 
   const total = needsYou.length + playerUnread.length + emails.length + awaited.length
-  if (total === 0 && otherUnread.length === 0) return null // nothing needs attention
+  if (total === 0 && otherUnread.length === 0 && !bridgeDown) return null // nothing needs attention
 
   const chip = (text: string, cls: string) => (
     <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${cls}`}>{text}</span>
@@ -218,6 +229,12 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
 
   return (
     <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50/60 p-3">
+      {bridgeDown && (
+        <div className="mb-2 rounded-md border border-rose-400 bg-rose-600 p-2 text-sm font-medium text-white">
+          ⚠ Google Messages bridge is DOWN — SMS sends are held (not failed) until it reconnects.
+          Messenger is unaffected. Fix: Beeper → Google Messages → reconnect (phone paired &amp; online).
+        </div>
+      )}
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-rose-800">Needs you · {total}</h3>
         <button onClick={() => void load()} className="text-xs text-rose-700 hover:underline">Refresh</button>

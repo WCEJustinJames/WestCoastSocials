@@ -31,7 +31,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g34-sheetnames'
+const SYNC_VERSION = 'g35-bridge-breaker'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -173,7 +173,7 @@ async function runOnce(): Promise<void> {
   // sends can be halted instantly from the UI / SQL / cloud without restarting the
   // PC. Gates ALL outbound below, including the quiet-hours-exempt auto-reply and
   // seat-list. Fails open (see getSettings) so a DB blip can't wedge sends.
-  const { sendsPaused, repliesPaused, rosterPaused } = await getSettings(supabaseAdmin)
+  const { sendsPaused, repliesPaused, rosterPaused, smsBridgeDown } = await getSettings(supabaseAdmin)
   if (sendsPaused !== wasPaused) {
     console.log(sendsPaused ? '[paused] sends_paused ON, holding ALL outbound' : '[paused] sends_paused OFF, outbound resumes')
     wasPaused = sendsPaused
@@ -231,7 +231,7 @@ async function runOnce(): Promise<void> {
   }
 
   // Batched variations: send items from any batch the human approved (throttled).
-  const batch = (quiet || sendsPaused) ? { sent: 0, failed: 0 } : await processBatches(supabaseAdmin, adapter)
+  const batch = (quiet || sendsPaused) ? { sent: 0, failed: 0 } : await processBatches(supabaseAdmin, adapter, smsBridgeDown)
   if (batch.sent || batch.failed) {
     console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
   }
