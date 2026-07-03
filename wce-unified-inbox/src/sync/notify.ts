@@ -83,7 +83,7 @@ interface ConvJob {
 
 // Pull the canonical venue out of an invite's wording, for the digest tag.
 const VENUE_WORDS: [RegExp, string][] = [
-  [/market city|\bmct\b/i, 'MCT'], [/woodvale/i, 'Woodvale'],
+  [/market city|\bmct\b/i, 'MCT'], [/woodvale|woody/i, 'Woodvale'],
   [/leederville|leedy/i, 'Leederville'], [/kenwick/i, 'Kenwick'],
   [/kingsley/i, 'Kingsley'], [/bentley/i, 'Bentley'],
   [/stirling/i, 'Stirling'], [/planet royale/i, 'Planet Royale'],

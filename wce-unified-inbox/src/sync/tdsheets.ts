@@ -38,12 +38,16 @@ function dateNeedles(now: Date, lookbackDays = 1): string[] {
     const d = new Date(now.getTime() - off * 86_400_000)
     const day = d.getDate(), mon = d.getMonth() + 1
     const dd = String(day).padStart(2, '0'), mm = String(mon).padStart(2, '0')
-    out.add(`${day}/${mm}`); out.add(`${dd}/${mm}`); out.add(`${day}/${mon}`); out.add(`${dd}/${mon}`)
+    // Both separators are in the wild: "25/06 Woodvale" and "02.07. Woody".
+    for (const sep of ['/', '.']) {
+      out.add(`${day}${sep}${mm}`); out.add(`${dd}${sep}${mm}`)
+      out.add(`${day}${sep}${mon}`); out.add(`${dd}${sep}${mon}`)
+    }
   }
   return [...out]
 }
 
-const TITLE_RE = /^\s*(\d{1,2})\/(\d{1,2})\s+(.+?)\s*$/ // "25/06 Woodvale"
+const TITLE_RE = /^\s*(\d{1,2})[/.](\d{1,2})\.?\s+(.+?)\s*$/ // "25/06 Woodvale", "02.07. Woody"
 
 function isoDate(day: number, mon: number, now: Date): string {
   let year = now.getFullYear()
@@ -367,6 +371,7 @@ export async function syncTdSheets(
     }
     for (const tab of tabs) {
       const lines = extractTransfers(tab.rows)
+      console.log(`[transfers] ${f.name} · "${tab.title}": ${lines.length} transfer line(s)`)
       if (!lines.length) continue
       const { error: tErr } = await tdb.from('inbox_transfers').upsert(
         lines.map((l) => ({
