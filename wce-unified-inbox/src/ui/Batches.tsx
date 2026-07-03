@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fileToBase64, type PickedImage } from '../lib/attachment'
-import { sourceLabel, phoneCore } from './usePlayers'
+import { sourceLabel, phoneCore, normCore } from './usePlayers'
 import type { Database, Json } from '../types/database'
 
 type ConvRow = Database['public']['Tables']['inbox_conversations']['Row'] & {
@@ -9,7 +9,9 @@ type ConvRow = Database['public']['Tables']['inbox_conversations']['Row'] & {
 }
 type OutreachRow = Database['public']['Tables']['inbox_outreach']['Row']
 type ItemRow = Database['public']['Tables']['inbox_batch_items']['Row']
-type Source = 'inbox' | 'crm'
+// 'all' = Everyone: the CRM plus any thread that isn't a known player — the
+// default, so nobody can be missed by picking from the wrong tab.
+type Source = 'all' | 'inbox' | 'crm'
 
 const GUARD_WINDOW_MS = 24 * 60 * 60 * 1000
 
@@ -26,6 +28,10 @@ interface Recipient {
   personId: string | null
   nickname?: string | null
   whale?: boolean
+  /** Last SMS to this number failed — the number may be wrong. */
+  warnFailed?: boolean
+  /** Other numbers on file for the same name (shown when warnFailed). */
+  altNumbers?: string[]
   data: Json
 }
 
@@ -44,7 +50,7 @@ function messagedRecently(iso: string | null): boolean {
 }
 
 export function Batches() {
-  const [source, setSource] = useState<Source>('inbox')
+  const [source, setSource] = useState<Source>('all')
   const [conversations, setConversations] = useState<ConvRow[]>([])
   const [outreach, setOutreach] = useState<OutreachRow[]>([])
   // Per-player send signals (last-messaged date + venue, and the unanswered-
@@ -113,6 +119,10 @@ export function Batches() {
   const [phoneEdits, setPhoneEdits] = useState<Record<string, string>>({})
   const [findText, setFindText] = useState('')
   const [replaceText, setReplaceText] = useState('')
+  // add-a-player to an already-drafted list: CRM search or manual name + number
+  const [addQuery, setAddQuery] = useState('')
+  const [manualName, setManualName] = useState('')
+  const [manualPhone, setManualPhone] = useState('')
   // double-click / right-click inline edit of a CRM recipient's name + number
   const [editKey, setEditKey] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
@@ -177,14 +187,40 @@ export function Batches() {
   }, [])
 
   async function toggleHide(key: string, currentlyHidden: boolean) {
-    const table = source === 'inbox' ? 'inbox_conversations' : 'inbox_outreach'
+    // A row can come from either table now that Everyone mixes them — resolve by key.
+    const isCrmRow = outreach.some((o) => o.id === key)
+    const table = isCrmRow ? 'inbox_outreach' : 'inbox_conversations'
     const next = !currentlyHidden
     await supabase.from(table).update({ hidden: next }).eq('id', key)
     const apply = <T extends { id: string; hidden: boolean }>(arr: T[]): T[] =>
       arr.map((x) => (x.id === key ? { ...x, hidden: next } : x)).filter((x) => showHidden || !x.hidden)
-    if (source === 'inbox') setConversations((p) => apply(p as unknown as { id: string; hidden: boolean }[]) as unknown as ConvRow[])
-    else setOutreach((p) => apply(p))
+    if (isCrmRow) setOutreach((p) => apply(p))
+    else setConversations((p) => apply(p as unknown as { id: string; hidden: boolean }[]) as unknown as ConvRow[])
   }
+
+  // Cheap per-row "is this a CRM player?" check — Everyone mixes both kinds.
+  const outreachIds = useMemo(() => new Set(outreach.map((o) => o.id)), [outreach])
+
+  // SMS sends that FAILED (dead/wrong number), keyed by CRM id — drives the red
+  // glow in the picker. A later successful send clears it (compared via signals).
+  const [failedSms, setFailedSms] = useState<Map<string, { phone: string; at: string }>>(new Map())
+  useEffect(() => {
+    supabase
+      .from('inbox_batch_items')
+      .select('data, created_at')
+      .eq('status', 'failed')
+      .gte('created_at', new Date(Date.now() - 60 * 86_400_000).toISOString())
+      .order('created_at', { ascending: true })
+      .limit(1000)
+      .then(({ data }) => {
+        const m = new Map<string, { phone: string; at: string }>()
+        for (const it of data ?? []) {
+          const d = it.data as { outreach_id?: string; phone?: string } | null
+          if (d?.outreach_id) m.set(d.outreach_id, { phone: d.phone ?? '', at: it.created_at })
+        }
+        setFailedSms(m)
+      })
+  }, [])
 
   // Distinct filter values from the CRM.
   const regions = useMemo(
@@ -243,20 +279,45 @@ export function Batches() {
   // Normalise the active source into a single recipient list, then filter.
   const recipients = useMemo<Recipient[]>(() => {
     const q = recipientQuery.trim().toLowerCase()
-    if (source === 'inbox') {
+    const BARE_NUMBER = /^[\d\s+()-]{6,}$/
+    // Each linked thread's network — the player's LAST-USED channel, highlighted
+    // on their row so it's obvious where a message will land.
+    const networkByChat = new Map<string, string>()
+    for (const c of conversations) {
+      if (c.external_chat_id && c.network) networkByChat.set(c.external_chat_id, c.network)
+    }
+    const shortNet = (n: string): string =>
+      /messenger|facebook|instagram/i.test(n) ? 'Messenger'
+      : /google messages|sms|rcs/i.test(n) ? 'SMS'
+      : /whatsapp/i.test(n) ? 'WhatsApp'
+      : n
+
+    const buildThreads = (excludeCrmLinked: boolean): Recipient[] => {
       // Resolve bare-number thread titles ("0455 612 636") to a real name from the
       // CRM — by linked thread first, then by matching the number to a player's
       // phone. Threads nobody can name sink to the bottom of the picker.
-      const BARE_NUMBER = /^[\d\s+()-]{6,}$/
       const nameByChat = new Map<string, string>()
       const nameByPhone = new Map<string, string>()
+      const crmChats = new Set<string>()
+      const crmPhones = new Set<string>()
       for (const o of outreach) {
+        if (o.beeper_chat_id) crmChats.add(o.beeper_chat_id)
+        const pc = phoneCore(o.phone)
+        if (pc) crmPhones.add(pc)
         if (!o.player_name) continue
         if (o.beeper_chat_id) nameByChat.set(o.beeper_chat_id, o.player_name)
-        const pc = phoneCore(o.phone)
         if (pc) nameByPhone.set(pc, o.player_name)
       }
       return conversations
+        .filter((c) => {
+          if (!excludeCrmLinked) return true
+          // Everyone view: threads that ARE a known player already appear as their
+          // CRM row — only the unknowns are added, so nobody shows up twice.
+          if (c.external_chat_id && crmChats.has(c.external_chat_id)) return false
+          const raw = c.title ?? ''
+          if (BARE_NUMBER.test(raw) && crmPhones.has(phoneCore(raw))) return false
+          return true
+        })
         .map<Recipient>((c) => {
           const raw = c.inbox_people?.display_name ?? c.title ?? c.external_chat_id
           const resolved = BARE_NUMBER.test(raw)
@@ -286,9 +347,30 @@ export function Batches() {
         // Still-unnamed numbers are last — real names are what the picker is for.
         .sort((a, b) => Number(BARE_NUMBER.test(a.name)) - Number(BARE_NUMBER.test(b.name)))
     }
-    return outreach
+
+    // All numbers on file per cleaned name — when a send to one number failed,
+    // a sister record's different number is worth surfacing.
+    const phonesByName = new Map<string, Set<string>>()
+    for (const o of outreach) {
+      const k = normCore(o.player_name ?? '')
+      const p = (o.phone ?? '').trim()
+      if (k.length < 5 || !p) continue
+      ;(phonesByName.get(k) ?? phonesByName.set(k, new Set()).get(k)!).add(p)
+    }
+
+    const buildCrm = (): Recipient[] => outreach
       .map<Recipient>((o) => {
         const nm = o.player_name || [o.first_name, o.last_name].filter(Boolean).join(' ') || '—'
+        // Red-glow: the last SMS to this number failed and nothing has been
+        // successfully sent since (a later success clears the warning).
+        const fail = failedSms.get(o.id)
+        const sigRow = signals.get(o.id)
+        const warnFailed = !!fail && !(sigRow?.last_sent_at && sigRow.last_sent_at > fail.at)
+        const altNumbers = warnFailed
+          ? [...(phonesByName.get(normCore(o.player_name ?? '')) ?? [])].filter(
+              (p) => phoneCore(p) !== phoneCore(o.phone),
+            )
+          : []
         const hasThread = !!o.beeper_chat_id
         const hasPhone = !!o.phone
         // Resolve which channel this batch will use for this player. In "auto"
@@ -330,11 +412,15 @@ export function Batches() {
             ? 'unavailable'
             : newSms
               ? 'new SMS'
-              : channels || null,
+              : o.beeper_chat_id && networkByChat.has(o.beeper_chat_id)
+                ? `last: ${shortNet(networkByChat.get(o.beeper_chat_id)!)}`
+                : channels || null,
           hidden: o.hidden,
           personId: null,
           nickname: o.nickname,
           whale: o.whale ?? false,
+          warnFailed,
+          altNumbers,
           data: {
             outreach_id: o.id,
             beeper_chat_id: o.beeper_chat_id,
@@ -364,7 +450,20 @@ export function Batches() {
       })
       // Whales float to the top of the picker (stable within each group).
       .sort((a, b) => Number(b.whale ?? false) - Number(a.whale ?? false))
-  }, [source, conversations, outreach, network, region, stake, venue, activity, sourceFilter, recipientQuery, channel, cDay, cWindow])
+
+    if (source === 'inbox') return buildThreads(false)
+    if (source === 'crm') return buildCrm()
+    // Everyone: the whole CRM plus threads that aren't a known player. A CRM
+    // attribute filter (region/stakes/venue/...) can't match an unknown thread,
+    // so those drop the extras rather than pretending to filter them.
+    const crmAttributeFilterOn =
+      region !== 'all' || stake !== 'all' || venue !== 'all' || activity !== 'all' ||
+      sourceFilter !== 'all' || cDay !== 'all' || cWindow !== 'all'
+    const extras = crmAttributeFilterOn
+      ? []
+      : buildThreads(true).map((r) => ({ ...r, sub: `${r.sub} · not in CRM` }))
+    return [...buildCrm(), ...extras]
+  }, [source, conversations, outreach, network, region, stake, venue, activity, sourceFilter, recipientQuery, channel, cDay, cWindow, failedSms, signals])
 
   // When a reused list loads, pick its recipients once they appear for the now-
   // active source — so the picks survive the source switch (multi-source lists).
@@ -392,7 +491,7 @@ export function Batches() {
   // Inline edit (double-click / right-click) of a CRM recipient's name + number,
   // so a wrong or missing detail can be fixed without leaving the batch builder.
   function startEdit(r: Recipient) {
-    if (source !== 'crm') return
+    if (!outreachIds.has(r.key)) return // inline edit is a CRM-record operation
     const o = outreach.find((x) => x.id === r.key)
     setEditKey(r.key)
     setEditName(o?.player_name ?? r.name)
@@ -419,7 +518,7 @@ export function Batches() {
   // Ban a CRM recipient straight from the picker: flag do-not-message and drop
   // them from the list (and any current selection) so they can never be batched.
   async function banPlayer(r: Recipient) {
-    if (source !== 'crm') return
+    if (!outreachIds.has(r.key)) return // only CRM players carry the ban flag
     if (!window.confirm(`Ban ${r.name}? Flags do-not-message and drops them from every list.`)) return
     await supabase.from('inbox_outreach').update({ do_not_message: true }).eq('id', r.key)
     setOutreach((prev) => prev.filter((o) => o.id !== r.key))
@@ -454,7 +553,9 @@ export function Batches() {
         keys.add(d.conversation_id)
       }
     }
-    setSource(isCrm ? 'crm' : 'inbox')
+    // CRM keys exist in the Everyone view too; conversation keys only appear on
+    // the Inbox tab (linked threads fold into their CRM row under Everyone).
+    setSource(isCrm ? 'all' : 'inbox')
     setPendingKeys(keys)
     setStatus(`Loaded ${keys.size} recipients from that list — edit the template and Build preview.`)
     setTimeout(() => setStatus(null), 6000)
@@ -554,7 +655,7 @@ export function Batches() {
     const keys = new Set<string>((data ?? []).map((m) => (m as { outreach_id: string }).outreach_id))
     const l = venueLists.find((x) => x.id === id)
     if (l?.venue && !batchVenue.trim()) setBatchVenue(l.venue)
-    setSource('crm')
+    setSource('all')
     setPendingKeys(keys)
     setStatus(`Loaded ${keys.size} from “${l?.name ?? 'list'}” — edit the template and Build preview.`)
     setTimeout(() => setStatus(null), 6000)
@@ -645,6 +746,51 @@ export function Batches() {
     setBatchId(batch.id)
     setBusy(false)
     setStatus(null)
+  }
+
+  // Append one more recipient to the drafted list — a CRM player (by search) or a
+  // manual name + number for someone not on file. Renders from the current
+  // template; the item joins the preview ticked and goes through the same guards.
+  async function addItemToDraft(payload: { o?: OutreachRow; name?: string; phone?: string }) {
+    if (!batchId) return
+    const o = payload.o
+    const nm = (o?.player_name || payload.name || '').trim()
+    if (!nm) return
+    const useThread = !!o?.beeper_chat_id && o?.preferred_channel !== 'sms'
+    const phone = (o?.phone ?? payload.phone ?? '').trim()
+    if (!useThread && !phone) {
+      setStatus('Need a mobile number (or an existing thread) to reach them.')
+      return
+    }
+    const { data: created, error } = await supabase
+      .from('inbox_batch_items')
+      .insert({
+        batch_id: batchId,
+        status: 'pending' as const,
+        rendered_text: fill(template, nm, useNickname ? o?.nickname : undefined),
+        data: o
+          ? {
+              outreach_id: o.id, beeper_chat_id: o.beeper_chat_id, phone: o.phone,
+              account_id: 'gmessages', channel: useThread ? 'thread' : 'sms', name: nm, region: o.region,
+            }
+          : { channel: 'sms', phone, account_id: 'gmessages', name: nm },
+      })
+      .select('*')
+      .single()
+    if (error || !created) {
+      setStatus(`Error: ${error?.message ?? 'could not add'}`)
+      return
+    }
+    const it = created as ItemRow
+    setItems((p) => [...p, it])
+    setInclude((p) => ({ ...p, [it.id]: true }))
+    setEdits((p) => ({ ...p, [it.id]: it.rendered_text }))
+    setNameEdits((p) => ({ ...p, [it.id]: nm }))
+    setPhoneEdits((p) => ({ ...p, [it.id]: (it.data as { phone?: string } | null)?.phone ?? '' }))
+    setAddQuery('')
+    setManualName('')
+    setManualPhone('')
+    setStatus(`${nm} added to the list.`)
   }
 
   const sendableItem = (it: ItemRow) => {
@@ -845,6 +991,68 @@ export function Batches() {
             Replace in all
           </button>
           <span className="text-xs text-slate-400">— edits apply to every message; your selection stays.</span>
+        </div>
+
+        {/* Add a player to this drafted list — CRM lookup or manual name + number */}
+        <div className="mb-3 rounded-lg border border-slate-200 bg-white p-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">Add a player:</span>
+            <input
+              value={addQuery}
+              onChange={(e) => setAddQuery(e.target.value)}
+              placeholder="Search the CRM…"
+              className="w-48 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+            />
+            <span className="text-xs text-slate-400">or manual:</span>
+            <input
+              value={manualName}
+              onChange={(e) => setManualName(e.target.value)}
+              placeholder="name"
+              className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+            />
+            <input
+              value={manualPhone}
+              onChange={(e) => setManualPhone(e.target.value)}
+              placeholder="mobile"
+              className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+            />
+            <button
+              onClick={() => void addItemToDraft({ name: manualName, phone: manualPhone })}
+              disabled={busy || !manualName.trim() || !manualPhone.trim()}
+              className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+            >
+              Add manual
+            </button>
+          </div>
+          {addQuery.trim().length >= 2 && (() => {
+            const inBatch = new Set(
+              items.map((it) => (it.data as { outreach_id?: string } | null)?.outreach_id).filter(Boolean),
+            )
+            const q2 = addQuery.trim().toLowerCase()
+            const hits = outreach
+              .filter((o) => !inBatch.has(o.id) && (o.player_name ?? '').toLowerCase().includes(q2))
+              .slice(0, 8)
+            return (
+              <ul className="mt-1 max-h-40 overflow-y-auto">
+                {hits.map((o) => (
+                  <li key={o.id}>
+                    <button
+                      onClick={() => void addItemToDraft({ o })}
+                      className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-emerald-50"
+                    >
+                      <span>{o.player_name}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {o.phone ?? (o.beeper_chat_id ? 'thread' : 'no contact')}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+                {hits.length === 0 && (
+                  <li className="px-2 py-1 text-xs text-slate-400">No CRM match — use the manual fields.</li>
+                )}
+              </ul>
+            )
+          })()}
         </div>
 
         <label className="mb-2 flex items-center gap-2 text-sm font-medium">
@@ -1164,6 +1372,13 @@ export function Batches() {
       <div className="mb-2 flex items-center gap-2">
         <span className="text-sm font-medium">Recipients from:</span>
         <button
+          onClick={() => switchSource('all')}
+          title="Every CRM player plus any conversation that isn't a known player — nobody missed"
+          className={`rounded-full px-3 py-0.5 text-xs ${source === 'all' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}
+        >
+          Everyone
+        </button>
+        <button
           onClick={() => switchSource('inbox')}
           className={`rounded-full px-3 py-0.5 text-xs ${source === 'inbox' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}
         >
@@ -1281,7 +1496,7 @@ export function Batches() {
               clear all
             </button>
           </div>
-          <div className="flex max-h-28 flex-wrap gap-1 overflow-y-auto">
+          <div className="flex max-h-72 flex-wrap gap-1 overflow-y-auto">
             {Array.from(picked.values()).map((r) => (
               <span
                 key={r.key}
@@ -1352,9 +1567,21 @@ export function Batches() {
               <>
                 <label className="flex flex-1 cursor-pointer items-center gap-2">
                   <input type="checkbox" checked={picked.has(r.key)} onChange={() => toggle(r)} />
-                  <span className="flex-1">{r.name}</span>
+                  <span className={`flex-1 ${r.warnFailed ? 'font-medium text-rose-600' : ''}`}>{r.name}</span>
+                  {r.warnFailed && (
+                    <span
+                      className="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700"
+                      title="The last SMS to this number failed — the number may be wrong"
+                    >⚠ SMS failed</span>
+                  )}
+                  {r.warnFailed && (r.altNumbers?.length ?? 0) > 0 && (
+                    <span
+                      className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700"
+                      title={`Another number on file for this name: ${r.altNumbers!.join(', ')} — double-click the row to switch numbers`}
+                    >alt #: {r.altNumbers![0]}</span>
+                  )}
                   {(() => {
-                    const sig = source === 'crm' ? signals.get(r.key) : undefined
+                    const sig = signals.get(r.key)
                     if (!sig?.last_sent_at) return null
                     const d = Math.max(
                       0,
@@ -1385,7 +1612,7 @@ export function Batches() {
                     </span>
                   )}
                 </label>
-                {source === 'crm' && (
+                {outreachIds.has(r.key) && (
                   <button
                     onClick={() => startEdit(r)}
                     title="Edit name / number (or double-click the row)"
@@ -1394,7 +1621,7 @@ export function Batches() {
                     edit
                   </button>
                 )}
-                {source === 'crm' && (
+                {outreachIds.has(r.key) && (
                   <button
                     onClick={() => void banPlayer(r)}
                     title="Ban — never message this player"
