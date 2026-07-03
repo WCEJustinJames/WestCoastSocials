@@ -116,7 +116,7 @@ Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live*
 - **Re-mint the Google token** (`node scripts/get-google-refresh-token.mjs`) — the current one lacks the read-write `spreadsheets` scope, so JL/receipt write-back to the TD sheets holds until then.
 - **Add `POSTIZ_API_KEY`** (and `POSTIZ_API_URL` if self-hosted) to the PC `.env` → Social posts start publishing. **Add `KLAVIYO_API_KEY`** → queued blasts build their Klaviyo lists.
 - **Un-pause replies** (`inbox_settings.replies_paused=false` / Replies toggle) after game night, if still off.
-- **Run `npm run tdsheets:backfill`** on the PC (parked per Justin).
+- **Run `npm run tdsheets:backfill -- --all`** on the PC — sweeps the ENTIRE TD-sheet history (all years; titles carry no year so 366 days of needles match everything, file createdTime anchors each year). Sheets older than 5 weeks contribute attendance only (no transfer lines → the EFTPOS auto-JL rule can't edit historical sheets). Throttled + 429-retrying; expect a long run. Plain `npm run tdsheets:backfill` still does just the last 10 weeks.
 - **Google Messages bridge**: parked by Justin (unresolved on desktop). The circuit-breaker holds SMS meanwhile; fix the bridge in Beeper desktop when ready — the canary will clear the flag automatically.
 - **Roadmap remainder**: LP Cash automations dashboard (#14, needs Justin's stakes/buyin/roster inputs), NEXT-SESSION-TODO #11–#17 leftovers + retire the dead `weekly` flag.
 
