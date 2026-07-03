@@ -6,7 +6,10 @@ import type { Database } from '../types/database'
 type Post = Database['public']['Tables']['social_posts']['Row']
 type Push = Database['public']['Tables']['klaviyo_pushes']['Row']
 
-const PLATFORMS = ['instagram', 'facebook', 'tiktok', 'threads', 'linkedin', 'x'] as const
+// 'lp-banner' is a pseudo-channel: the post's artwork also becomes the live
+// LetsPoker club cover (what players see in the app) at publish time.
+const PLATFORMS = ['instagram', 'facebook', 'tiktok', 'threads', 'linkedin', 'x', 'lp-banner'] as const
+const platformLabel = (p: string): string => (p === 'lp-banner' ? '📱 LP banner' : p)
 const REPEATS = ['none', 'daily', 'weekly', 'fortnightly', 'monthly'] as const
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -107,6 +110,7 @@ export function Social() {
     if (!cTitle.trim()) return flash('Give the post a title.')
     if (!asDraft && !cDate) return flash('Pick a date to schedule (or save as draft).')
     if (!asDraft && cPlatforms.length === 0) return flash('Pick at least one platform.')
+    if (cPlatforms.includes('lp-banner') && !cAsset.trim()) return flash('LP banner needs an artwork link (direct .png/.jpg URL).')
     const when = cDate ? new Date(`${cDate}T${cTime || '18:00'}`) : null
     setBusy(true)
     const { error } = await supabase.from('social_posts').insert({
@@ -246,9 +250,10 @@ export function Social() {
             const on = cPlatforms.includes(pl)
             return (
               <button key={pl}
+                title={pl === 'lp-banner' ? 'Also set this post’s artwork as the live LetsPoker app club cover' : undefined}
                 onClick={() => setCPlatforms((prev) => on ? prev.filter((x) => x !== pl) : [...prev, pl])}
                 className={`chip border ${on ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-500 hover:border-emerald-400'}`}>
-                {pl}
+                {platformLabel(pl)}
               </button>
             )
           })}
@@ -304,7 +309,7 @@ export function Social() {
               <span className="text-sm font-medium">{p.title}</span>
               {p.source === 'autopilot' && <span className="chip bg-indigo-100 text-indigo-700" title="drafted automatically from your game Schedules">auto</span>}
               {p.repeat_rule !== 'none' && <span className="chip bg-slate-100 text-slate-500">🔁 {p.repeat_rule}{p.repeat_until ? ` → ${p.repeat_until}` : ''}</span>}
-              {p.platforms.map((pl) => <span key={pl} className="chip bg-slate-100 text-slate-500">{pl}</span>)}
+              {p.platforms.map((pl) => <span key={pl} className="chip bg-slate-100 text-slate-500">{platformLabel(pl)}</span>)}
               {p.scheduled_at && (
                 <span className="text-xs text-slate-400">
                   {new Date(p.scheduled_at).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}

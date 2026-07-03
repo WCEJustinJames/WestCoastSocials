@@ -1,8 +1,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
+import { env } from '../lib/env'
 
 type DB = SupabaseClient<Database>
 type Post = Database['public']['Tables']['social_posts']['Row']
+
+// Pseudo-channel: a post carrying this chip also pushes its artwork into
+// LetsPoker as the live CLUB COVER (what players see in the app), via the
+// letspoker-cover edge function (admin cookie + TOTP live server-side).
+export const LP_BANNER = 'lp-banner'
 
 export interface SocialResult {
   published: number
@@ -79,6 +85,35 @@ async function uploadAsset(base: string, apiKey: string, url: string): Promise<R
   }
 }
 
+/**
+ * Push artwork into LetsPoker as the live club cover: fetch the direct image
+ * link, re-encode as a data URL, and hand it to the letspoker-cover edge
+ * function (which uploads to the club library and activates it — the same
+ * two-step flow as the admin UI).
+ */
+async function pushLpBanner(assetUrl: string): Promise<void> {
+  const src = await fetch(assetUrl, { signal: AbortSignal.timeout(30_000) })
+  if (!src.ok) throw new Error(`artwork fetch ${src.status}`)
+  const mime = (src.headers.get('content-type') ?? '').split(';')[0] || 'image/jpeg'
+  if (!mime.startsWith('image/')) throw new Error(`artwork is ${mime} — needs a DIRECT image link (.png/.jpg)`)
+  const buf = new Uint8Array(await src.arrayBuffer())
+  if (buf.length > 8_000_000) throw new Error('artwork over 8MB — export a smaller banner')
+  let bin = ''
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000))
+  const fileDataUrl = `data:${mime};base64,${btoa(bin)}`
+
+  const res = await fetch(`${env.supabaseUrl}/functions/v1/letspoker-cover`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.supabaseServiceKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ mode: 'cover', fileDataUrl }),
+    signal: AbortSignal.timeout(60_000),
+  })
+  const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; step?: string; body?: string }
+  if (!res.ok || !j.ok) {
+    throw new Error(`LP cover update failed (${j.error ?? j.step ?? res.status}) ${String(j.body ?? '').slice(0, 120)}`)
+  }
+}
+
 /** The next occurrence for a repeat rule, or null when the rule ends. */
 function nextOccurrence(post: Post): string | null {
   if (!post.scheduled_at || post.repeat_rule === 'none') return null
@@ -129,43 +164,78 @@ export async function publishSocialPosts(db: DB, apiUrl: string, apiKey: string)
   let rolled = 0
   for (const p of posts) {
     try {
-      const all = await getIntegrations(apiUrl, apiKey)
-      if (!all.length) throw new Error('no channels connected in Postiz yet — connect Instagram/Facebook/... there first')
-      const targets = matchIntegrations(all, p.platforms)
-      if (!targets.length) {
-        throw new Error(`no connected channel matches [${p.platforms.join(', ')}] — connected: ${all.map((i) => i.identifier ?? i.name).join(', ')}`)
+      // Two legs: the LP club banner (when its chip is on) and the Postiz
+      // social channels (any other chips; NO chips = all connected channels).
+      // A leg that succeeds is never re-run — one failed leg marks the post
+      // 'posted' with a warning rather than risking a double social post.
+      const wantsLp = p.platforms.includes(LP_BANNER)
+      const socialPlatforms = p.platforms.filter((x) => x !== LP_BANNER)
+      const wantsSocial = socialPlatforms.length > 0 || p.platforms.length === 0
+      const legs: string[] = []
+      const errs: string[] = []
+      let firstId = ''
+
+      if (wantsLp) {
+        try {
+          if (!p.asset_url) throw new Error('LP banner needs an artwork link (direct image URL)')
+          await pushLpBanner(p.asset_url)
+          legs.push('LP banner')
+        } catch (e) {
+          errs.push(`LP banner: ${e instanceof Error ? e.message : String(e)}`)
+        }
       }
 
-      const media = p.asset_url ? await uploadAsset(apiUrl, apiKey, p.asset_url) : null
-      // The caption is what gets posted; the title is just the calendar label
-      // (and the fallback when no caption was written).
-      let content = (p.body ?? '').trim() || p.title
-      if (p.asset_url && !media) content += `\n\n${p.asset_url}`
+      if (wantsSocial) {
+        try {
+          const all = await getIntegrations(apiUrl, apiKey)
+          if (!all.length) throw new Error('no channels connected in Postiz yet — connect Instagram/Facebook/... there first')
+          const targets = matchIntegrations(all, socialPlatforms)
+          if (!targets.length) {
+            throw new Error(`no connected channel matches [${socialPlatforms.join(', ')}] — connected: ${all.map((i) => i.identifier ?? i.name).join(', ')}`)
+          }
 
-      const body = {
-        type: 'now',
-        date: new Date().toISOString(),
-        shortLink: false,
-        tags: [],
-        posts: targets.map((i) => ({
-          integration: { id: i.id },
-          value: [{ content, image: media ? [media] : [] }],
-          settings: { __type: i.identifier ?? 'x' },
-        })),
+          const media = p.asset_url ? await uploadAsset(apiUrl, apiKey, p.asset_url) : null
+          // The caption is what gets posted; the title is just the calendar label
+          // (and the fallback when no caption was written).
+          let content = (p.body ?? '').trim() || p.title
+          if (p.asset_url && !media) content += `\n\n${p.asset_url}`
+
+          const body = {
+            type: 'now',
+            date: new Date().toISOString(),
+            shortLink: false,
+            tags: [],
+            posts: targets.map((i) => ({
+              integration: { id: i.id },
+              value: [{ content, image: media ? [media] : [] }],
+              settings: { __type: i.identifier ?? 'x' },
+            })),
+          }
+          const j = await pfetch<unknown>(apiUrl, '/posts', apiKey, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+          firstId = Array.isArray(j)
+            ? String((j[0] as Record<string, unknown> | undefined)?.postId ?? (j[0] as Record<string, unknown> | undefined)?.id ?? '')
+            : String((j as Record<string, unknown>)?.id ?? '')
+          legs.push(`${targets.length} channel(s): ${targets.map((i) => i.identifier ?? i.name).join(', ')}`)
+        } catch (e) {
+          errs.push(e instanceof Error ? e.message : String(e))
+        }
       }
-      const j = await pfetch<unknown>(apiUrl, '/posts', apiKey, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      const firstId = Array.isArray(j)
-        ? String((j[0] as Record<string, unknown> | undefined)?.postId ?? (j[0] as Record<string, unknown> | undefined)?.id ?? '')
-        : String((j as Record<string, unknown>)?.id ?? '')
+
+      if (!legs.length) throw new Error(errs.join(' · ') || 'nothing to publish')
       await db
         .from('social_posts')
-        .update({ status: 'posted', posted_at: new Date().toISOString(), postiz_id: firstId || null, post_error: null })
+        .update({
+          status: 'posted',
+          posted_at: new Date().toISOString(),
+          postiz_id: firstId || null,
+          post_error: errs.length ? `partial: ${errs.join(' · ')}` : null,
+        })
         .eq('id', p.id)
-      console.log(`[social] "${p.title}" published to ${targets.length} channel(s): ${targets.map((i) => i.identifier ?? i.name).join(', ')}`)
+      console.log(`[social] "${p.title}" published — ${legs.join(' + ')}${errs.length ? ` (partial: ${errs.join(' · ')})` : ''}`)
       published++
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
