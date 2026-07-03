@@ -195,6 +195,19 @@ export function Inbox({
 
   const active = conversations.find((c) => c.id === activeId) ?? null
 
+  // "Done" from inside the thread — same effect as the Home queue's done button,
+  // so triage doesn't require bouncing back to Home: clears the unread tier
+  // (context_resolved_at) and any needs-you reply items for this conversation.
+  const [doneFor, setDoneFor] = useState<string | null>(null)
+  async function markDone(id: string) {
+    await supabase.from('inbox_conversations').update({ context_resolved_at: new Date().toISOString() }).eq('id', id)
+    await supabase.from('inbox_messages').update({ action_resolved: true })
+      .eq('conversation_id', id).eq('action_resolved', false)
+    await markRead(id)
+    setDoneFor(id)
+    setTimeout(() => setDoneFor((prev) => (prev === id ? null : prev)), 3000)
+  }
+
   async function sendReply() {
     if (!active || (!replyText.trim() && !attachImg)) return
     setReplyStatus('Queuing…')
@@ -349,11 +362,33 @@ export function Inbox({
       <main className="flex flex-1 flex-col">
         {active ? (
           <>
-            <header className="border-b border-slate-200 bg-white px-6 py-3">
-              <h2 className="font-medium">{nameOf(active)}</h2>
-              <p className="text-xs text-slate-500">
-                {active.network} · {active.type}
-              </p>
+            <header className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-6 py-3">
+              <div className="min-w-0">
+                <h2 className="truncate font-medium">{nameOf(active)}</h2>
+                <p className="text-xs text-slate-500">
+                  {active.network} · {active.type}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => void markDone(active.id)}
+                  title="Handled — clears this thread from the Home queue (it comes back on new activity)"
+                  className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
+                    doneFor === active.id
+                      ? 'border-emerald-600 bg-emerald-600 text-white'
+                      : 'border-emerald-600 text-emerald-700 hover:bg-emerald-50'
+                  }`}
+                >
+                  {doneFor === active.id ? '✓ cleared' : '✓ done'}
+                </button>
+                <button
+                  onClick={() => void dismiss(active.id)}
+                  title="Dismiss — archive this thread out of the inbox (recoverable via show dismissed)"
+                  className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-500 hover:border-rose-400 hover:text-rose-600"
+                >
+                  dismiss
+                </button>
+              </div>
             </header>
             <div ref={threadRef} className="flex-1 space-y-2 overflow-y-auto p-6">
               {messages.map((m) => (
