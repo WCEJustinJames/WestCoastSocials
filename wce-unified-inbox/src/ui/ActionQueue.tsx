@@ -35,6 +35,13 @@ interface Email {
   subject: string | null
   snippet: string | null
 }
+interface AwaitedTransfer {
+  id: string
+  name: string | null
+  amount: string | null
+  venue: string | null
+  game_date: string | null
+}
 
 // Rows shown per section before the "show all" expander kicks in — keeps the
 // landing page a to-do list, not a wall.
@@ -55,6 +62,7 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
   const [playerUnread, setPlayerUnread] = useState<Unread[]>([])
   const [otherUnread, setOtherUnread] = useState<Unread[]>([])
   const [emails, setEmails] = useState<Email[]>([])
+  const [awaited, setAwaited] = useState<AwaitedTransfer[]>([])
   const [busy, setBusy] = useState(false)
   const [showAllPlayers, setShowAllPlayers] = useState(false)
   const [showAllEmails, setShowAllEmails] = useState(false)
@@ -114,8 +122,23 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
       .order('received_at', { ascending: false })
       .limit(40)
     setEmails((em as Email[]) ?? [])
+
+    const { data: tf } = await supabase
+      .from('inbox_transfers')
+      .select('id, name, amount, venue, game_date')
+      .eq('pending', true)
+      .order('game_date', { ascending: false })
+      .limit(20)
+    setAwaited((tf as AwaitedTransfer[]) ?? [])
   }
   useEffect(() => { void load() }, [])
+
+  async function resolveAwaited(id: string) {
+    setBusy(true)
+    await supabase.from('inbox_transfers').update({ pending: false }).eq('id', id)
+    setAwaited((prev) => prev.filter((t) => t.id !== id))
+    setBusy(false)
+  }
 
   async function resolveReply(id: string) {
     setBusy(true)
@@ -148,7 +171,7 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
     setBusy(false)
   }
 
-  const total = needsYou.length + playerUnread.length + emails.length
+  const total = needsYou.length + playerUnread.length + emails.length + awaited.length
   if (total === 0 && otherUnread.length === 0) return null // nothing needs attention
 
   const chip = (text: string, cls: string) => (
@@ -185,6 +208,25 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
             </li>
           ))}
         </ul>
+      )}
+
+      {awaited.length > 0 && (
+        <>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Transfers awaited · {awaited.length}</p>
+          <ul className="mb-2 space-y-1">
+            {awaited.map((t) => (
+              <li key={t.id} className="flex items-center gap-2 rounded border border-rose-100 bg-white p-1.5 text-sm">
+                {chip('⏳ transfer', 'bg-amber-100 text-amber-700')}
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium">{t.name ?? '(no name)'}</span>
+                  <span className="text-slate-500"> {t.amount ?? ''}</span>
+                  <span className="text-[11px] text-slate-400"> · {t.venue ?? ''} {t.game_date ?? ''}</span>
+                </span>
+                {doneBtn(() => void resolveAwaited(t.id))}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {playerUnread.length > 0 && (

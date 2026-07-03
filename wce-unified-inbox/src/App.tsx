@@ -7,6 +7,7 @@ import { Players } from './ui/Players'
 import { Lists } from './ui/Lists'
 import { Schedules } from './ui/Schedules'
 import { Analytics } from './ui/Analytics'
+import { Transfers } from './ui/Transfers'
 import { MergeReview } from './ui/MergeReview'
 import { Drafts } from './ui/Drafts'
 import { Confirmed } from './ui/Confirmed'
@@ -15,7 +16,7 @@ import { SendShelf } from './ui/SendShelf'
 import { StopButton, RepliesToggle, RosterToggle } from './ui/StopButton'
 import { SignOut } from './ui/AuthGate'
 
-type View = 'home' | 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts' | 'players' | 'lists' | 'schedules' | 'analytics' | 'merge'
+type View = 'home' | 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts' | 'players' | 'lists' | 'schedules' | 'analytics' | 'transfers' | 'merge'
 
 export default function App() {
   const [view, setView] = useState<View>('home')
@@ -70,6 +71,9 @@ export default function App() {
         <TabButton active={view === 'analytics'} onClick={() => setView('analytics')}>
           Analytics
         </TabButton>
+        <TabButton active={view === 'transfers'} onClick={() => setView('transfers')}>
+          Transfers
+        </TabButton>
         <TabButton active={view === 'merge'} onClick={() => setView('merge')}>
           Merge &amp; Review
         </TabButton>
@@ -103,6 +107,8 @@ export default function App() {
           <Schedules />
         ) : view === 'analytics' ? (
           <Analytics />
+        ) : view === 'transfers' ? (
+          <Transfers />
         ) : (
           <MergeReview />
         )}

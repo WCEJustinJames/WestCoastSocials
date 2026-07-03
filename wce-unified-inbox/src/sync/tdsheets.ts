@@ -119,10 +119,184 @@ function extractAttendees(tabs: string[][][]): Attendee[] {
   return [...found.values()]
 }
 
+/** 0-based column index -> A1 letter ("0"->A, "26"->AA). */
+function colLetter(i: number): string {
+  let s = ''
+  let n = i
+  do {
+    s = String.fromCharCode(65 + (n % 26)) + s
+    n = Math.floor(n / 26) - 1
+  } while (n >= 0)
+  return s
+}
+
+export interface TransferLine {
+  kind: 'transfer_in' | 'transfer_out' | 'winner_payout'
+  direction: 'in' | 'out'
+  row_num: number // 1-based sheet row
+  name: string
+  amount: string | null
+  receipt: string | null
+  wcp_verified: string | null
+  time_stamp: string | null
+  pay_method: string | null
+  notes: string | null
+  office_confirm: string
+  confirm_col: string
+  receipt_col: string | null
+}
+
+/**
+ * Pull the bank-transfer lines out of one tab, with cell coordinates so the
+ * dashboard's JL confirmation can be written back to the exact Office Confirm
+ * cell. Sections are found by their header rows (two can share one row — cash
+ * IN on the left, cash OUT on the right):
+ *  - "Player Full Name | ... Receipt # | WCP Verified | Time | Office Confirm"  (cash in)
+ *  - "Player Full Name | Amount | ... Receipt # (Last 4) | Office Confirm"      (cash out)
+ *  - "Name | Amount | Receipt # (last 4 dig) | WCP Verify | Time | Office Confirm" (tourney in)
+ *  - "Placing | Player | Prize | Pay Method | Office Confirm"                   (winner payouts)
+ * Direction: winners and no-timestamp sections are money OUT; the rest are IN.
+ */
+export function extractTransfers(rows: string[][]): TransferLine[] {
+  const out: TransferLine[] = []
+  for (let ri = 0; ri < rows.length; ri++) {
+    const lc = (rows[ri] ?? []).map((c) => (c ?? '').toString().trim().toLowerCase())
+    // A header row can hold several sections side by side — find each name-column.
+    const starts: number[] = []
+    for (let ci = 0; ci < lc.length; ci++) {
+      if (lc[ci] === 'player full name' || lc[ci] === 'placing' || (lc[ci] === 'name' && lc.some((c) => c.includes('office confirm')))) {
+        starts.push(ci)
+      }
+    }
+    for (let s = 0; s < starts.length; s++) {
+      const from = starts[s]
+      const to = s + 1 < starts.length ? starts[s + 1] : lc.length
+      const seg = lc.slice(from, to)
+      const at = (pred: (c: string) => boolean): number => {
+        const i = seg.findIndex(pred)
+        return i < 0 ? -1 : from + i
+      }
+      const confirmIdx = at((c) => c.includes('office confirm'))
+      if (confirmIdx < 0) continue // not a transfer section (e.g. bare winners grid)
+      const isWinners = lc[from] === 'placing'
+      const nameIdx = isWinners ? at((c) => c === 'player') : from
+      if (nameIdx < 0) continue
+      const amountIdx = at((c) => c === 'amount' || c === 'prize')
+      const receiptIdx = at((c) => c.includes('receipt'))
+      const verifyIdx = at((c) => c.includes('wcp'))
+      const timeIdx = at((c) => c.includes('time'))
+      const payIdx = at((c) => c.includes('pay method'))
+      const accountIdx = at((c) => c === 'account')
+      const notesIdx = at((c) => c === 'notes')
+      const kind: TransferLine['kind'] = isWinners
+        ? 'winner_payout'
+        : verifyIdx >= 0 || timeIdx >= 0
+          ? 'transfer_in'
+          : 'transfer_out'
+
+      for (let r = ri + 1; r < Math.min(rows.length, ri + 80); r++) {
+        const cells = (rows[r] ?? []).map((c) => (c ?? '').toString().trim())
+        const nm = cells[nameIdx] ?? ''
+        if (!nm) break // a blank name ends the section
+        if (/^(player full name|name|player|total)$/i.test(nm)) break
+        out.push({
+          kind,
+          direction: kind === 'transfer_in' ? 'in' : 'out',
+          row_num: r + 1, // values arrays start at sheet row 1
+          name: nm,
+          amount: amountIdx >= 0 ? cells[amountIdx] || null : null,
+          receipt: receiptIdx >= 0 ? cells[receiptIdx] || null : null,
+          wcp_verified: verifyIdx >= 0 ? cells[verifyIdx] || null : null,
+          time_stamp: timeIdx >= 0 ? cells[timeIdx] || null : null,
+          // pay method for winners; the Account channel (AC1/NAB/EFTPOS) for ins.
+          pay_method: payIdx >= 0 ? cells[payIdx] || null : accountIdx >= 0 ? cells[accountIdx] || null : null,
+          notes: notesIdx >= 0 ? cells[notesIdx] || null : null,
+          office_confirm: (cells[confirmIdx] ?? '').trim(),
+          confirm_col: colLetter(confirmIdx),
+          receipt_col: receiptIdx >= 0 ? colLetter(receiptIdx) : null,
+        })
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Write queued JL confirmations back into the sheets: 'JL' into the Office
+ * Confirm cell, and (for outgoing money) the last-4 receipt ref into the
+ * receipt cell when it's still empty. Requires the read-write spreadsheets
+ * scope — a read-only token 403s, which is logged once and left queued.
+ */
+let sheetsWriteScopeMissing = false
+export async function processTransferConfirms(
+  db: DB,
+  clientId: string,
+  clientSecret: string,
+  refreshToken: string,
+): Promise<{ written: number }> {
+  if (sheetsWriteScopeMissing) return { written: 0 }
+  const q = db as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, v: string) => {
+          limit: (n: number) => Promise<{ data: Record<string, unknown>[] | null }>
+        }
+      }
+    }
+  }
+  const { data: queued } = await q.from('inbox_transfers').select('*').eq('confirm_state', 'queued').limit(20)
+  if (!queued || queued.length === 0) return { written: 0 }
+
+  const token = await accessToken(clientId, clientSecret, refreshToken)
+  let written = 0
+  for (const t of queued) {
+    const tab = String(t.tab_title).replace(/'/g, "''")
+    const put = async (col: string, value: string) => {
+      const range = encodeURIComponent(`'${tab}'!${col}${t.row_num}`)
+      const res = await fetch(
+        `${SHEETS_URL}/${t.sheet_id}/values/${range}?valueInputOption=USER_ENTERED`,
+        {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ values: [[value]] }),
+          signal: AbortSignal.timeout(20_000),
+        },
+      )
+      if (res.status === 403) {
+        sheetsWriteScopeMissing = true
+        console.warn('[transfers] Sheets WRITE scope missing — re-run scripts/get-google-refresh-token.mjs (now read-write) and update GOOGLE_REFRESH_TOKEN')
+        throw new Error('scope')
+      }
+      if (!res.ok) throw new Error(`Sheets write ${res.status}`)
+    }
+    try {
+      await put(String(t.confirm_col), 'JL')
+      // Write the ref where the sheet lacks one: outgoing last-4s, and the
+      // EFTPOS auto-rule's "1111" over the bare 'e' marker.
+      const rec = String(t.receipt ?? '').trim()
+      if (t.confirm_ref && t.receipt_col && (rec === '' || /^e$/i.test(rec))) {
+        await put(String(t.receipt_col), String(t.confirm_ref))
+      }
+      await (db as unknown as {
+        from: (t: string) => { update: (v: unknown) => { eq: (c: string, v: unknown) => Promise<unknown> } }
+      })
+        .from('inbox_transfers')
+        .update({ confirm_state: 'written', office_confirm: 'JL' })
+        .eq('id', t.id)
+      written++
+    } catch (e) {
+      if ((e as Error).message === 'scope') break
+      console.error('[transfers] write-back error:', e instanceof Error ? e.message : e)
+    }
+  }
+  return { written }
+}
+
 /**
  * Find tonight's (and last night's) "DD/MM Venue" Google Sheets, read the
  * player-bearing sections out of each, and upsert the names into
- * inbox_td_attendees for the post-game tool to load. Read-only on Drive/Sheets.
+ * inbox_td_attendees for the post-game tool to load. Also mirrors the sheets'
+ * bank-transfer lines into inbox_transfers for the reconciliation tab.
  */
 export async function syncTdSheets(
   db: DB,
@@ -163,18 +337,65 @@ export async function syncTdSheets(
       token,
     )
     const titles = (meta.sheets ?? []).map((s) => s.properties?.title).filter(Boolean) as string[]
-    const tabs: string[][][] = []
+    const tabs: { title: string; rows: string[][] }[] = []
     for (const t of titles) {
       try {
         const range = encodeURIComponent(`'${t.replace(/'/g, "''")}'`)
         const v = await gfetch<{ values?: string[][] }>(`${SHEETS_URL}/${f.id}/values/${range}`, token)
-        if (v.values?.length) tabs.push(v.values)
+        if (v.values?.length) tabs.push({ title: t, rows: v.values })
       } catch {
         /* skip an unreadable tab */
       }
     }
 
-    const people = extractAttendees(tabs)
+    // Mirror the bank-transfer lines (with cell coordinates) for reconciliation.
+    // The upsert only carries sheet-derived columns, so a queued/written
+    // confirmation state on an existing row is never clobbered by a re-sync.
+    const tdb = db as unknown as {
+      from: (t: string) => {
+        upsert: (v: unknown, o: unknown) => Promise<{ error: { message?: string } | null }>
+        update: (v: unknown) => {
+          eq: (c: string, v2: unknown) => {
+            eq: (c: string, v2: unknown) => {
+              eq: (c: string, v2: unknown) => {
+                or: (f: string) => Promise<{ error: { message?: string } | null }>
+              }
+            }
+          }
+        }
+      }
+    }
+    for (const tab of tabs) {
+      const lines = extractTransfers(tab.rows)
+      if (!lines.length) continue
+      const { error: tErr } = await tdb.from('inbox_transfers').upsert(
+        lines.map((l) => ({
+          sheet_id: f.id,
+          sheet_title: f.name,
+          tab_title: tab.title,
+          game_date: gameDate,
+          venue,
+          ...l,
+        })),
+        { onConflict: 'sheet_id,tab_title,kind,row_num' },
+      )
+      if (tErr) console.error('[transfers] mirror error:', tErr.message)
+    }
+    // Standing rule, per Justin: EFTPOS transfer-in lines auto-confirm — receipt
+    // ref "1111" + JL initials — no manual tick needed.
+    try {
+      await tdb
+        .from('inbox_transfers')
+        .update({ confirm_state: 'queued', confirm_ref: '1111' })
+        .eq('confirm_state', 'unconfirmed')
+        .eq('kind', 'transfer_in')
+        .eq('office_confirm', '')
+        .or('pay_method.ilike.%eftpos%,name.ilike.%eftpos%,receipt.ilike.e')
+    } catch (e) {
+      console.error('[transfers] eftpos auto-rule error:', e instanceof Error ? e.message : e)
+    }
+
+    const people = extractAttendees(tabs.map((t) => t.rows))
     if (!people.length) continue
     const rows = people.map((p) => ({
       sheet_id: f.id,

@@ -815,6 +815,84 @@ export type Database = {
           },
         ]
       }
+      inbox_transfers: {
+        Row: {
+          id: string
+          sheet_id: string
+          sheet_title: string | null
+          tab_title: string
+          game_date: string | null
+          venue: string | null
+          kind: string
+          direction: string
+          row_num: number
+          name: string | null
+          amount: string | null
+          receipt: string | null
+          wcp_verified: string | null
+          time_stamp: string | null
+          pay_method: string | null
+          notes: string | null
+          office_confirm: string
+          confirm_col: string
+          receipt_col: string | null
+          confirm_state: string
+          confirm_ref: string | null
+          pending: boolean
+          synced_at: string
+        }
+        Insert: {
+          id?: string
+          sheet_id: string
+          sheet_title?: string | null
+          tab_title: string
+          game_date?: string | null
+          venue?: string | null
+          kind: string
+          direction: string
+          row_num: number
+          name?: string | null
+          amount?: string | null
+          receipt?: string | null
+          wcp_verified?: string | null
+          time_stamp?: string | null
+          pay_method?: string | null
+          notes?: string | null
+          office_confirm?: string
+          confirm_col: string
+          receipt_col?: string | null
+          confirm_state?: string
+          confirm_ref?: string | null
+          pending?: boolean
+          synced_at?: string
+        }
+        Update: {
+          id?: string
+          sheet_id?: string
+          sheet_title?: string | null
+          tab_title?: string
+          game_date?: string | null
+          venue?: string | null
+          kind?: string
+          direction?: string
+          row_num?: number
+          name?: string | null
+          amount?: string | null
+          receipt?: string | null
+          wcp_verified?: string | null
+          time_stamp?: string | null
+          pay_method?: string | null
+          notes?: string | null
+          office_confirm?: string
+          confirm_col?: string
+          receipt_col?: string | null
+          confirm_state?: string
+          confirm_ref?: string | null
+          pending?: boolean
+          synced_at?: string
+        }
+        Relationships: []
+      }
       inbox_emails: {
         Row: {
           id: string

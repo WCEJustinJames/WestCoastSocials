@@ -20,7 +20,7 @@ import { generateInviteVariants } from './variants'
 import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
 import { syncGmail } from './email'
-import { syncTdSheets } from './tdsheets'
+import { syncTdSheets, processTransferConfirms } from './tdsheets'
 import { autoLink } from './autolink'
 import { matchFbFriends } from './fbmatch'
 import { processReplies } from './notify'
@@ -31,7 +31,7 @@ import { processOptOuts } from './optout'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g32-reply-context'
+const SYNC_VERSION = 'g33-transfers'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -359,6 +359,19 @@ async function runOnce(): Promise<void> {
         .upsert({ id: 2, last_run: new Date().toISOString(), host: os.hostname(), note: `tdsheets ${td.sheets}/${td.attendees}` })
     } catch (e) {
       console.error('[tdsheets] sync error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Transfer confirmations: write queued JL initials (+ receipt refs) back into
+  // the TD sheets. Cheap when nothing is queued; a read-only token logs once.
+  if (env.googleRefreshToken) {
+    try {
+      const tw = await processTransferConfirms(
+        supabaseAdmin, env.googleClientId, env.googleClientSecret, env.googleRefreshToken,
+      )
+      if (tw.written) console.log(`[transfers] wrote ${tw.written} JL confirmation(s) back to the sheets`)
+    } catch (e) {
+      console.error('[transfers] write-back error:', e instanceof Error ? e.message : e)
     }
   }
 
