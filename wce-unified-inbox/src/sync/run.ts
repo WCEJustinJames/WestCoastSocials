@@ -28,10 +28,12 @@ import { postSeatList } from './roster'
 import { newAiHealth, trackAiHealth, worstOutcome, type AiOutcome } from './alert'
 import { getSettings } from './settings'
 import { processOptOuts } from './optout'
+import { publishSocialPosts } from './social'
+import { processKlaviyoPushes } from './klaviyo'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g35-bridge-breaker'
+const SYNC_VERSION = 'g36-marketing'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -96,6 +98,16 @@ if (env.googleRefreshToken) {
   console.log('[email] Gmail inbox pull on (every 10m, needs gmail.readonly on the token)')
 }
 console.log(`[autolink] name-match auto-linker on (every ${env.autoLinkMinutes}m)`)
+console.log(
+  env.postizKey
+    ? `[social] Postiz publishing on (${env.postizUrl})`
+    : '[social] Postiz key not set — Social-tab posts hold as scheduled until POSTIZ_API_KEY lands in .env',
+)
+console.log(
+  env.klaviyoKey
+    ? '[klaviyo] Klaviyo blast prep on'
+    : '[klaviyo] Klaviyo key not set — queued blasts hold until KLAVIYO_API_KEY lands in .env',
+)
 if (anthropic && env.autoReply) {
   console.log(`[reply] auto-reply on — digest texts to ${env.notifyPhone}`)
 }
@@ -114,6 +126,9 @@ let lastFbMatch = 0
 let lastVariants = 0
 // Gmail action-queue pull runs every ~10 minutes.
 let lastEmailSync = 0
+// Social publishing + Klaviyo blast prep check every ~2 minutes (both are a
+// single cheap select when nothing is due/queued).
+let lastMarketing = 0
 
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
@@ -423,6 +438,26 @@ async function runOnce(): Promise<void> {
       if (v.generated) console.log(`[variants] generated ${v.generated} invite(s) across ${v.venues} venue(s)`)
     } catch (e) {
       console.error('[variants] error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Marketing rail: publish due Social-tab posts through Postiz and build
+  // Klaviyo lists for queued blasts. Not player DMs, so quiet hours and the
+  // outreach window don't apply — but the master STOP still holds them, since
+  // "stop everything" should mean everything outbound.
+  if (!sendsPaused && Date.now() - lastMarketing > 2 * 60_000) {
+    lastMarketing = Date.now()
+    try {
+      const sp = await publishSocialPosts(supabaseAdmin, env.postizUrl, env.postizKey)
+      if (sp.published || sp.rolled) console.log(`[social] published=${sp.published} rolled=${sp.rolled}`)
+    } catch (e) {
+      console.error('[social] error:', e instanceof Error ? e.message : e)
+    }
+    try {
+      const kp = await processKlaviyoPushes(supabaseAdmin, env.klaviyoKey)
+      if (kp.prepared) console.log(`[klaviyo] prepared=${kp.prepared} blast list(s)`)
+    } catch (e) {
+      console.error('[klaviyo] error:', e instanceof Error ? e.message : e)
     }
   }
 

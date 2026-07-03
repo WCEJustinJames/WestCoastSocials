@@ -959,6 +959,93 @@ export type Database = {
         }
         Relationships: []
       }
+      social_posts: {
+        Row: {
+          id: string
+          title: string
+          body: string | null
+          asset_url: string | null
+          platforms: string[]
+          scheduled_at: string | null
+          repeat_rule: string
+          repeat_until: string | null
+          status: string
+          postiz_id: string | null
+          post_error: string | null
+          posted_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          title: string
+          body?: string | null
+          asset_url?: string | null
+          platforms?: string[]
+          scheduled_at?: string | null
+          repeat_rule?: string
+          repeat_until?: string | null
+          status?: string
+          postiz_id?: string | null
+          post_error?: string | null
+          posted_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          title?: string
+          body?: string | null
+          asset_url?: string | null
+          platforms?: string[]
+          scheduled_at?: string | null
+          repeat_rule?: string
+          repeat_until?: string | null
+          status?: string
+          postiz_id?: string | null
+          post_error?: string | null
+          posted_at?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      klaviyo_pushes: {
+        Row: {
+          id: string
+          name: string
+          subject: string | null
+          body: string | null
+          segment: string
+          status: string
+          stats: { emails?: number; list_id?: string } | null
+          push_error: string | null
+          created_at: string
+          sent_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          subject?: string | null
+          body?: string | null
+          segment?: string
+          status?: string
+          stats?: { emails?: number; list_id?: string } | null
+          push_error?: string | null
+          created_at?: string
+          sent_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          subject?: string | null
+          body?: string | null
+          segment?: string
+          status?: string
+          stats?: { emails?: number; list_id?: string } | null
+          push_error?: string | null
+          created_at?: string
+          sent_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       inbox_batch_conversion: {
