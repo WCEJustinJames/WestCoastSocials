@@ -17,6 +17,9 @@ export interface BatchResult {
 // drains across multiple passes rather than firing all at once.
 const SEND_DELAY_MS = 1500
 const MAX_PER_PASS = 20
+// A thread with activity this recent is a LIVE conversation — a blast must not
+// land in the middle of it (the invite-mid-chat incident).
+const ACTIVE_CONVO_MS = 60 * 60_000
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -183,6 +186,28 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
         await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
         failed++
         continue
+      }
+
+      // Never drop a proactive blast into a LIVE conversation — any activity in
+      // the thread within the last hour (Justin typing by hand, or the player
+      // mid-chat) skips this recipient. Approved one-off replies (is_outreach
+      // false) still go: those are deliberate messages INTO a conversation.
+      if (chatId && batch.is_outreach === true) {
+        const { data: convRows } = await db
+          .from('inbox_conversations')
+          .select('last_activity')
+          .eq('adapter', adapter.id)
+          .eq('external_chat_id', chatId)
+          .limit(1)
+        const la = convRows?.[0]?.last_activity
+        if (la && Date.now() - new Date(la).getTime() < ACTIVE_CONVO_MS) {
+          await db
+            .from('inbox_batch_items')
+            .update({ status: 'skipped', guard_flag: true, guard_reason: 'Live conversation, not blasted' })
+            .eq('id', item.id)
+          console.log(`[batch] skipped item ${item.id}: live conversation`)
+          continue
+        }
       }
 
       // In-pass dedupe: never reach the same recipient twice in one pass.

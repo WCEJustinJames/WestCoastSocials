@@ -36,7 +36,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const SYSTEM_NOISE =
   /\b(joined|left|added|removed|created|changed|renamed|set the|started|ended|missed|deleted)\b.*\b(chat|group|call|name|photo|message)\b|^\s*(👍|👎|❤️|reacted)/i
 
-const SYSTEM_PROMPT = `You triage inbound SMS replies to a poker game invite. Justin runs West Coast Poker (WCP) and texted players inviting them to a game TONIGHT. Players are now replying. For each reply, decide how Justin should respond.
+const SYSTEM_PROMPT = `You triage inbound SMS replies to a poker game invite. Justin runs West Coast Poker (WCP) and texted players game invites. Players are now replying. For each reply, decide how Justin should respond.
+
+Each numbered line may quote, in [invited Nh ago: "..."], the EXACT invite that player is replying to and how long ago it was sent. That quote is the ground truth for WHICH game they mean (venue, stakes, day) — never assume a different game:
+- An invite for "tonight" means the day it was sent.
+- An invite for "tomorrow" sent yesterday means the game is TODAY; sent today it means TOMORROW — a yes to that is "Sweet, see you tomorrow night", never "see you tonight".
+- Keep any venue/stakes wording consistent with the quoted invite; never substitute another venue.
 
 Return intent:
 - "yes"   = they're coming / confirming / keen. This INCLUDES a confirmation that also states a preference or condition — a table, stakes (e.g. $2/5 vs $2/5/10), a seat, or an arrival time. "I'll be there but prefer 2/5" is a YES, not a decline; put the preference in the note. A stated game/table/stakes preference is NEVER a "no".
@@ -72,6 +77,20 @@ interface ConvJob {
   name: string
   transcript: string
   messageIds: string[]
+  /** The exact invite this thread is replying to, from the send ledger. */
+  invite?: { text: string; sentAt: string }
+}
+
+// Pull the canonical venue out of an invite's wording, for the digest tag.
+const VENUE_WORDS: [RegExp, string][] = [
+  [/market city|\bmct\b/i, 'MCT'], [/woodvale/i, 'Woodvale'],
+  [/leederville|leedy/i, 'Leederville'], [/kenwick/i, 'Kenwick'],
+  [/kingsley/i, 'Kingsley'], [/bentley/i, 'Bentley'],
+  [/stirling/i, 'Stirling'], [/planet royale/i, 'Planet Royale'],
+]
+function venueFromText(t: string): string | null {
+  for (const [re, v] of VENUE_WORDS) if (re.test(t)) return v
+  return null
 }
 
 interface Verdict {
@@ -163,7 +182,11 @@ export async function processReplies(
     const conv = ms[0].conversation as unknown as { external_chat_id?: string } | null
     if (conv?.external_chat_id) chatIdByConv.set(cid, conv.external_chat_id)
   }
+  // The ledger also carries WHAT we sent each chat — the latest invite per thread
+  // is quoted to the classifier as hard context (which game/venue/day the player
+  // is replying about), instead of assuming "a game tonight".
   const invitedChats = new Set<string>()
+  const inviteByChat = new Map<string, { text: string; sentAt: string }>()
   {
     const chatIds = [...new Set(chatIdByConv.values())]
     if (chatIds.length) {
@@ -171,17 +194,27 @@ export async function processReplies(
         from: (t: string) => {
           select: (c: string) => {
             in: (col: string, v: string[]) => {
-              gt: (col: string, v: string) => Promise<{ data: { recipient: string }[] | null }>
+              gt: (col: string, v: string) => {
+                order: (col: string, o: { ascending: boolean }) => Promise<{
+                  data: { recipient: string; rendered_text: string | null; sent_at: string }[] | null
+                }>
+              }
             }
           }
         }
       }
       const { data: sent } = await ledger
         .from('inbox_sent_log')
-        .select('recipient')
+        .select('recipient, rendered_text, sent_at')
         .in('recipient', chatIds)
         .gt('sent_at', new Date(Date.now() - INVITE_LOOKBACK_MS).toISOString())
-      for (const s of sent ?? []) invitedChats.add(s.recipient)
+        .order('sent_at', { ascending: false })
+      for (const s of sent ?? []) {
+        invitedChats.add(s.recipient)
+        if (!inviteByChat.has(s.recipient) && s.rendered_text) {
+          inviteByChat.set(s.recipient, { text: s.rendered_text, sentAt: s.sent_at })
+        }
+      }
     }
   }
 
@@ -235,6 +268,7 @@ export async function processReplies(
       name,
       transcript,
       messageIds: msgs.map((m) => m.id),
+      invite: inviteByChat.get(conv.external_chat_id),
     })
     if (jobs.length >= maxPerPass) break
   }
@@ -265,7 +299,12 @@ export async function processReplies(
         {
           role: 'user',
           content: jobs
-            .map((j, i) => `${i}. ${j.name}: ${j.transcript}`)
+            .map((j, i) => {
+              const inv = j.invite
+                ? ` [invited ${Math.max(1, Math.round((Date.now() - new Date(j.invite.sentAt).getTime()) / 3_600_000))}h ago: "${stripHtml(j.invite.text).slice(0, 160)}"]`
+                : ''
+              return `${i}. ${j.name}${inv}: ${j.transcript}`
+            })
             .join('\n'),
         },
       ],
@@ -334,7 +373,11 @@ export async function processReplies(
       await sleep(SEND_DELAY_MS)
     }
 
-    const digestName = whaleChats.has(job.chatId) ? `🐋 ${name}` : name
+    // Digest entries name the game the player was replying to (from the quoted
+    // invite), so on a two-game day "yes @ Leederville" and "yes @ Kenwick" read apart.
+    const inviteVenue = job.invite ? venueFromText(job.invite.text) : null
+    const digestBase = whaleChats.has(job.chatId) ? `🐋 ${name}` : name
+    const digestName = inviteVenue ? `${digestBase} @ ${inviteVenue}` : digestBase
     if (intent === 'yes') confirmedEntries.push(note ? `${digestName} (${note})` : digestName)
     else if (intent === 'no') declinedNames.push(digestName)
     else needYou.push(`${digestName} ("${job.transcript.slice(0, 60)}")`)
