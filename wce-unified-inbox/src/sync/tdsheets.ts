@@ -240,6 +240,53 @@ export function extractTransfers(rows: string[][]): TransferLine[] {
   return out
 }
 
+// ----- financial harvest (Home dashboard tiles + trend) -----
+const FIN_TAB = /financial|reconcil|invoice/i
+const FIN_LABEL = /profit|rake|drop|buy.?in|total|expense|fee|gst|wage|payout|float|takings|revenue|income|cost|balance|banked|turnover/i
+const MONEY_RE = /^\(?-?\$?\s?-?\d[\d,]*(\.\d+)?\)?$/
+
+export interface FinancialLine {
+  row_num: number
+  label: string
+  norm_label: string
+  value_num: number | null
+  value_raw: string
+}
+
+/**
+ * Pull label:value money lines out of a financial tab. Deliberately generic —
+ * the first texty cell in a row is the label, the first money-looking cell
+ * after it is the value — so layout changes don't need a code change; the
+ * metric mapping lives in the inbox_financial_summary view.
+ */
+export function extractFinancials(rows: string[][]): FinancialLine[] {
+  const out: FinancialLine[] = []
+  for (let ri = 0; ri < Math.min(rows.length, 120); ri++) {
+    const cells = (rows[ri] ?? []).map((c) => (c ?? '').toString().trim())
+    const li = cells.findIndex((c) => /[a-z]/i.test(c) && c.length >= 3 && c.length <= 60)
+    if (li < 0) continue
+    const label = cells[li]
+    if (!FIN_LABEL.test(label)) continue
+    for (let ci = li + 1; ci < cells.length; ci++) {
+      const raw = cells[ci]
+      if (!raw || !MONEY_RE.test(raw)) continue
+      // Bare small integers (headcounts, table numbers) aren't money.
+      if (!/[$,.]/.test(raw) && raw.replace(/\D/g, '').length < 3) break
+      const neg = raw.includes('(') || /-/.test(raw)
+      const num = Number(raw.replace(/[^0-9.]/g, ''))
+      out.push({
+        row_num: ri + 1,
+        label,
+        norm_label: label.toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim(),
+        value_num: Number.isFinite(num) ? (neg ? -num : num) : null,
+        value_raw: raw,
+      })
+      break
+    }
+  }
+  return out
+}
+
 /**
  * Write queued JL confirmations back into the sheets: 'JL' into the Office
  * Confirm cell, and (for outgoing money) the last-4 receipt ref into the
@@ -401,6 +448,19 @@ export async function syncTdSheets(
         }
       }
     }
+    // Financial lines harvest — runs for EVERY sheet (history included, so the
+    // --all backfill fills the Home trend chart), read-only.
+    for (const tab of tabs) {
+      if (!FIN_TAB.test(tab.title)) continue
+      const fins = extractFinancials(tab.rows)
+      if (!fins.length) continue
+      const { error: fErr } = await tdb.from('inbox_game_financials').upsert(
+        fins.map((l) => ({ sheet_id: f.id, sheet_title: f.name, tab_title: tab.title, game_date: gameDate, venue, ...l })),
+        { onConflict: 'sheet_id,tab_title,row_num' },
+      )
+      if (fErr) console.error('[financials] mirror error:', fErr.message)
+    }
+
     for (const tab of tabs) {
       if (gameDate < transferFloor) break // history sweep: attendance only
       const lines = extractTransfers(tab.rows)
