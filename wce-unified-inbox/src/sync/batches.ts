@@ -3,6 +3,7 @@ import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
 import { env } from '../lib/env'
 import { guardSend } from './guards'
+import { setSmsBridge } from './settings'
 import { textHash, alreadySent, recordSent } from './ledger'
 
 type DB = SupabaseClient<Database>
@@ -41,7 +42,14 @@ export function normalizeAuMobile(raw: string): string | null {
  * approved items remain. Nothing sends unless the human approved the batch —
  * same gate as everything else.
  */
-export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<BatchResult> {
+// Trip the Google Messages circuit-breaker after this many SMS failures in a row.
+const SMS_TRIP_AFTER = 3
+
+export async function processBatches(
+  db: DB,
+  adapter: ChannelAdapter,
+  smsBridgeDownAtStart = false,
+): Promise<BatchResult> {
   const { data: allBatches, error } = await db
     .from('inbox_batches')
     .select('id, attachment_data, attachment_name, attachment_mime, scheduled_for, is_outreach, approved_at')
@@ -98,6 +106,14 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
   // Recipients reached this pass — collapse duplicate items so one person never
   // gets the same blast twice (the Andy double-send), keyed by chat-id or phone.
   const sentKeys = new Set<string>()
+  // Google Messages circuit-breaker: while tripped, SMS items are HELD (left
+  // approved for later) instead of burning to 'failed' one after another — the
+  // 19-failure Leederville burn-through. One canary SMS per pass probes for
+  // recovery; three consecutive failures trip it.
+  let bridgeDown = smsBridgeDownAtStart
+  let canaryTried = false
+  let consecSmsFailures = 0
+  let heldSms = 0
 
   for (const batch of batches) {
     if (sent + failed >= MAX_PER_PASS) break
@@ -234,6 +250,21 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
         continue
       }
 
+      // SMS path + tripped breaker: hold the item (back to approved, no burn),
+      // except one canary per pass that probes whether the bridge is back.
+      const isSmsPath = !chatId && !!phone
+      if (isSmsPath && bridgeDown) {
+        if (canaryTried) {
+          await db
+            .from('inbox_batch_items')
+            .update({ status: 'approved', claimed_at: null })
+            .eq('id', item.id)
+          heldSms++
+          continue
+        }
+        canaryTried = true // this one attempts below; its outcome decides the flag
+      }
+
       try {
         const r = chatId
           ? await adapter.sendMessage!(chatId, item.rendered_text, { attachment })
@@ -243,6 +274,14 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
               item.rendered_text,
               { attachment },
             )
+        if (r.ok && isSmsPath) {
+          consecSmsFailures = 0
+          if (bridgeDown) {
+            bridgeDown = false
+            await setSmsBridge(db, false)
+            console.log('[bridge] Google Messages bridge RECOVERED — SMS sends resume')
+          }
+        }
         if (r.ok) {
           await db.from('inbox_batch_items').update({ status: 'sent' }).eq('id', item.id)
           // Stamp last_contacted so the per-player frequency cap is enforced.
@@ -276,19 +315,44 @@ export async function processBatches(db: DB, adapter: ChannelAdapter): Promise<B
           }
           sent++
         } else {
-          await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
-          failed++
+          if (isSmsPath && bridgeDown) {
+            // The canary failed — bridge still down: hold, don't burn.
+            await db.from('inbox_batch_items').update({ status: 'approved', claimed_at: null }).eq('id', item.id)
+            heldSms++
+          } else {
+            await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
+            failed++
+          }
           console.error(`[batch] send rejected for item ${item.id}: ${r.error ?? 'unknown'}`)
+          if (isSmsPath && !bridgeDown && ++consecSmsFailures >= SMS_TRIP_AFTER) {
+            bridgeDown = true
+            await setSmsBridge(db, true)
+            console.warn(`[bridge] ${SMS_TRIP_AFTER} SMS failures in a row — Google Messages bridge marked DOWN, holding further SMS`)
+          }
         }
       } catch (e) {
-        await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
-        failed++
+        if (isSmsPath && bridgeDown) {
+          await db.from('inbox_batch_items').update({ status: 'approved', claimed_at: null }).eq('id', item.id)
+          heldSms++
+        } else {
+          await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
+          failed++
+        }
         console.error(`[batch] error sending item ${item.id}:`, e instanceof Error ? e.message : e)
+        if (isSmsPath && !bridgeDown && ++consecSmsFailures >= SMS_TRIP_AFTER) {
+          bridgeDown = true
+          await setSmsBridge(db, true)
+          console.warn(`[bridge] ${SMS_TRIP_AFTER} SMS failures in a row — Google Messages bridge marked DOWN, holding further SMS`)
+        }
       }
 
       await sleep(SEND_DELAY_MS)
     }
 
+    if (heldSms) {
+      console.log(`[bridge] held ${heldSms} SMS item(s) this pass — bridge down, they stay queued`)
+      heldSms = 0
+    }
     // Flip the batch to `sent` only once nothing is left to drain — no
     // `approved` items waiting and none still mid-send (`sending`).
     const { data: stillPending } = await db
