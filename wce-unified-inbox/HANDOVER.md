@@ -109,6 +109,7 @@ Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live*
 - **Social tab** (`0053`, `ui/Social.tsx`, `sync/social.ts`): month calendar of posts + composer (title/caption/platform chips/date/time/**repeat rules** daily·weekly·fortnightly·monthly with optional end date/Canva asset link). Due posts publish through **Postiz** (`POST {POSTIZ_API_URL}/public/v1/posts`, cloud default) which fans out to the connected socials; repeating posts roll themselves forward even if one occurrence fails. **Holds safely until `POSTIZ_API_KEY` is in the PC `.env`** (logged once). Artwork stays a Canva link — design there, paste the export URL.
 - **Klaviyo blast bones** (`0053`, `sync/klaviyo.ts`): create a blast in the Social tab (name/segment: everyone | cash | tourney | venue:X), Queue it → the sync gathers the segment's CRM emails (excludes banned/hidden/staff), creates Klaviyo list `WCP push: <name>` and bulk-subscribes the profiles, then marks it `ready`. **The campaign itself is fired from Klaviyo** against that list (deliberate — keeps the send button + unsubscribe compliance on Klaviyo's side). Holds until `KLAVIYO_API_KEY` is in the PC `.env`.
 - Marketing rail runs every ~2 min inside the sync pass, is exempt from quiet hours/outreach window (not player DMs) but **is held by the master STOP**.
+- **Venues tab** (`ui/Venues.tsx`, Players group): one sub-tab per venue — STANDING (venue-list members, remove with ✕ on the list chip), RECOMMENDED (played there in the last 10 weeks by `inbox_attendance_norm`, not listed yet, one-tap add to the venue's lists), ON ICE (snoozed players tied to the venue, un-ice button), NEW CONTACTS (added <45d, seen at the venue) + a collapsed "new & unplaced" pool for contacts with no venue anywhere. UI-only — no migration.
 
 ## Open items
 - **Restart `run-wce.bat`** (pull `laughing-ritchie`) — the PC is on `g33-transfers`; the restart activates the SMS circuit-breaker (g35) + marketing rail (`SYNC_VERSION=g36-marketing`). Confirm via heartbeat note.
@@ -117,7 +118,7 @@ Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live*
 - **Un-pause replies** (`inbox_settings.replies_paused=false` / Replies toggle) after game night, if still off.
 - **Run `npm run tdsheets:backfill`** on the PC (parked per Justin).
 - **Google Messages bridge**: parked by Justin (unresolved on desktop). The circuit-breaker holds SMS meanwhile; fix the bridge in Beeper desktop when ready — the canary will clear the flag automatically.
-- **Roadmap remainder**: LP Cash automations dashboard (#14, needs Justin's stakes/buyin/roster inputs), venue sub-tabs standing/recommended/iced/new (#16), NEXT-SESSION-TODO #11–#17 leftovers + retire the dead `weekly` flag.
+- **Roadmap remainder**: LP Cash automations dashboard (#14, needs Justin's stakes/buyin/roster inputs), NEXT-SESSION-TODO #11–#17 leftovers + retire the dead `weekly` flag.
 
 ## Useful IDs
 - Supabase project: `dexdftcmcixppbuucjfd` · LP club id: `8f025bf9ecfa14c8`

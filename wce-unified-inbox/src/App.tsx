@@ -13,13 +13,14 @@ import { Drafts } from './ui/Drafts'
 import { Confirmed } from './ui/Confirmed'
 import { Recent } from './ui/Recent'
 import { Social } from './ui/Social'
+import { Venues } from './ui/Venues'
 import { SendShelf } from './ui/SendShelf'
 import { StopButton, RepliesToggle, RosterToggle } from './ui/StopButton'
 import { SignOut } from './ui/AuthGate'
 
 type View =
   | 'home' | 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts'
-  | 'players' | 'lists' | 'schedules' | 'analytics' | 'transfers' | 'merge' | 'social'
+  | 'players' | 'lists' | 'venues' | 'schedules' | 'analytics' | 'transfers' | 'merge' | 'social'
 
 // Grouped navigation: the sidebar (desktop) and drawer (phone) render from this.
 const NAV: { group: string; items: { view: View; label: string; icon: string }[] }[] = [
@@ -40,6 +41,7 @@ const NAV: { group: string; items: { view: View; label: string; icon: string }[]
     items: [
       { view: 'players', label: 'Players', icon: '👥' },
       { view: 'lists', label: 'Lists', icon: '📋' },
+      { view: 'venues', label: 'Venues', icon: '📍' },
       { view: 'merge', label: 'Merge & Review', icon: '🔀' },
     ],
   },
@@ -177,6 +179,8 @@ export default function App() {
             <Players initialFilter={playersFilter} />
           ) : view === 'lists' ? (
             <Lists />
+          ) : view === 'venues' ? (
+            <Venues />
           ) : view === 'schedules' ? (
             <Schedules />
           ) : view === 'analytics' ? (

@@ -1048,6 +1048,15 @@ export type Database = {
       }
     }
     Views: {
+      inbox_attendance_norm: {
+        Row: {
+          norm: string | null
+          venue: string | null
+          fmt: string
+          d: string | null
+        }
+        Relationships: []
+      }
       inbox_batch_conversion: {
         Row: {
           batch_id: string
