@@ -33,7 +33,7 @@ import { processKlaviyoPushes } from './klaviyo'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g36-marketing'
+const SYNC_VERSION = 'g37-postiz-live'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 

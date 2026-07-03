@@ -10,7 +10,7 @@ export interface KlaviyoResult {
 }
 
 const KLAVIYO = 'https://a.klaviyo.com/api'
-const REVISION = '2024-10-15'
+const REVISION = '2026-04-15' // current stable per developers.klaviyo.com
 
 let klaviyoDisabled = false
 
