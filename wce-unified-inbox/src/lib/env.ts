@@ -102,6 +102,14 @@ export const env = {
   letspokerSendPath: process.env.LETSPOKER_SEND_PATH ?? '/api/app-chats/{chatId}/messages',
   letspokerEntrantsPath:
     process.env.LETSPOKER_ENTRANTS_PATH ?? '/api/tournaments/{tournamentId}/players',
+  // Postiz (social scheduling) — the Social tab's posts publish through it once
+  // an API key is set. Cloud default; point POSTIZ_API_URL at a self-hosted
+  // instance instead if one is stood up later.
+  postizUrl: process.env.POSTIZ_API_URL ?? 'https://api.postiz.com',
+  postizKey: process.env.POSTIZ_API_KEY ?? '',
+  // Klaviyo (email blasts) — the Social tab's blast pushes build a Klaviyo list
+  // from the CRM segment once this key is set.
+  klaviyoKey: process.env.KLAVIYO_API_KEY ?? '',
   // Receipt guardrail: the recipient/operator signs every slip, so their name
   // and number must never be extracted as a *player*. Comma-separated.
   receiptBlockNames: (process.env.RECEIPT_BLOCK_NAMES ?? 'justin lewis,jj lewis,j j lewis,lewis,justin')
