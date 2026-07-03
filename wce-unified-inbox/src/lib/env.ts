@@ -105,7 +105,8 @@ export const env = {
   // Postiz (social scheduling) — the Social tab's posts publish through it once
   // an API key is set. Cloud default; point POSTIZ_API_URL at a self-hosted
   // instance instead if one is stood up later.
-  postizUrl: process.env.POSTIZ_API_URL ?? 'https://api.postiz.com',
+  // `||` not `??`: a blank POSTIZ_API_URL= line in .env must still mean cloud.
+  postizUrl: process.env.POSTIZ_API_URL || 'https://api.postiz.com',
   postizKey: process.env.POSTIZ_API_KEY ?? '',
   // Klaviyo (email blasts) — the Social tab's blast pushes build a Klaviyo list
   // from the CRM segment once this key is set.
