@@ -34,7 +34,7 @@ import { generateSocialPromos } from './socialauto'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g38-social-autopilot'
+const SYNC_VERSION = 'g39-time-aware'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 

@@ -5,6 +5,7 @@ import type { ChannelAdapter } from '../adapters/types'
 import { VOICE } from './voice'
 import { classifyAiError, type AiOutcome } from './alert'
 import { flaggedConversationIds } from './roster'
+import { gamesContext } from './drafting'
 
 type DB = SupabaseClient<Database>
 
@@ -288,13 +289,19 @@ export async function processReplies(
     for (const w of whaleRows ?? []) if (w.beeper_chat_id) whaleChats.add(w.beeper_chat_id)
   }
 
-  // Classify + draft replies for the whole pass in one call.
+  // Classify + draft replies for the whole pass in one call. Grounded in the
+  // real clock and today's actual games, so a reply can never confirm a seat
+  // "tonight" on a night with nothing on.
+  let games = ''
+  try {
+    games = await gamesContext(db, new Date())
+  } catch { /* context is best-effort */ }
   let verdicts: Verdict[]
   try {
     const resp = await anthropic.messages.create({
       model,
       max_tokens: 2000,
-      system: `${SYSTEM_PROMPT}\n\nToday is ${new Date().toISOString().slice(0, 10)}.`,
+      system: `${SYSTEM_PROMPT}\n\n${games || `Today is ${new Date().toISOString().slice(0, 10)}.`}`,
       messages: [
         {
           role: 'user',

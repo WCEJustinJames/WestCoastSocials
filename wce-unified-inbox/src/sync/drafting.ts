@@ -29,10 +29,50 @@ Write the reply Justin would send next, given the conversation so far.
 
 ${VOICE}
 
+TIME AWARENESS (critical — stale offers have burned us):
+- You are given the CURRENT date/time and each message's timestamp. Reason about elapsed time: an invite that said "tomorrow" two days ago is about a game that has PASSED.
+- You are given which WCP games are ON today and what's next this week. NEVER offer a seat, say "tonight", or confirm attendance for a game that is not actually on. If a game IS on today but it's already evening (past its start), treat it as underway/passed, not offerable.
+- If the player is replying about a game that has passed, acknowledge naturally (no apology theatre) and, if a next game is listed, pivot to that. Otherwise leave it open ("I'll flick you the next one").
+
 Rules:
 - Do NOT invent specifics you can't see, no made-up event names, dates, times, venues, prices, or promises. If a detail is needed but unknown, keep it general or ask.
 - This is only a suggestion a human will review and edit, so aim for a sensible default, not a hedge.
 - Respond with ONLY the message text to send. No preamble, no quotes, no explanation, no notes about your reasoning.`
+
+const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+/** "Fri 3/7 6:47pm" — Perth-local, compact, unambiguous for the model. */
+export function stamp(d: Date): string {
+  const h = d.getHours() % 12 || 12
+  const ap = d.getHours() < 12 ? 'am' : 'pm'
+  return `${DOW[d.getDay()].slice(0, 3)} ${d.getDate()}/${d.getMonth() + 1} ${h}:${String(d.getMinutes()).padStart(2, '0')}${ap}`
+}
+
+/** Today's games + the next few this week, from the active schedules. Shared by
+ * the inbox draft suggester and the auto-reply rail, so neither can offer a
+ * seat at a game that isn't on. */
+export async function gamesContext(db: DB, now: Date): Promise<string> {
+  const { data } = await db
+    .from('inbox_schedules')
+    .select('name, venue, game_type, day_of_week, event_time')
+    .eq('active', true)
+  const scheds = data ?? []
+  const line = (s: (typeof scheds)[number]) =>
+    `${s.name} (${s.game_type ?? 'game'}${s.venue ? ` at ${s.venue}` : ''}${s.event_time ? `, ${s.event_time}` : ''})`
+  const today = scheds.filter((s) => s.day_of_week === now.getDay())
+  const upcoming: string[] = []
+  for (let off = 1; off <= 6 && upcoming.length < 3; off++) {
+    const dow = (now.getDay() + off) % 7
+    for (const s of scheds.filter((x) => x.day_of_week === dow)) {
+      upcoming.push(`${DOW[dow]}: ${line(s)}`)
+    }
+  }
+  return (
+    `CURRENT TIME: ${stamp(now)} (Perth).\n` +
+    (today.length ? `Games ON today: ${today.map(line).join('; ')}.\n` : 'NO WCP game is on today.\n') +
+    (upcoming.length ? `Next this week: ${upcoming.join(' · ')}.` : 'Nothing else scheduled this week.')
+  )
+}
 
 export async function generateDrafts(
   db: DB,
@@ -40,6 +80,17 @@ export async function generateDrafts(
   model: string,
   maxPerPass: number,
 ): Promise<DraftingResult> {
+  // A suggestion drafted hours ago describes a different world ("save you a seat
+  // tonight" after the game). Retire stale pending AI drafts (status 'rejected' —
+  // the enum has no 'expired'); if the thread still ends inbound it gets a fresh
+  // draft below, grounded in the current time. Human-typed drafts are untouched.
+  await db
+    .from('inbox_drafts')
+    .update({ status: 'rejected' })
+    .eq('status', 'pending')
+    .eq('generated_by', 'ai')
+    .lt('created_at', new Date(Date.now() - 6 * 60 * 60_000).toISOString())
+
   // Most recently active conversations are the ones most likely to need a reply.
   const { data: convs, error } = await db
     .from('inbox_conversations')
@@ -48,6 +99,9 @@ export async function generateDrafts(
     .limit(40)
   if (error) throw error
   if (!convs || convs.length === 0) return { generated: 0, skipped: 0 }
+
+  const now = new Date()
+  const games = await gamesContext(db, now)
 
   // Whale (priority) players get a warmer, higher-touch draft. Look up their linked
   // threads once so we can flag the relevant conversations below.
@@ -94,7 +148,8 @@ export async function generateDrafts(
       .reverse()
       .map((m) => {
         const who = m.direction === 'outbound' ? 'Us' : (m.sender_name ?? 'Them')
-        return `${who}: ${stripHtml(m.text)}`
+        const when = m.timestamp ? ` [${stamp(new Date(m.timestamp))}]` : ''
+        return `${who}${when}: ${stripHtml(m.text)}`
       })
       .join('\n')
 
@@ -107,7 +162,7 @@ export async function generateDrafts(
         messages: [
           {
             role: 'user',
-            content: `Conversation${conv.title ? ` with ${conv.title}` : ''}:\n\n${transcript}\n\n${
+            content: `${games}\n\nConversation${conv.title ? ` with ${conv.title}` : ''}:\n\n${transcript}\n\n${
               conv.external_chat_id && whaleChats.has(conv.external_chat_id)
                 ? "This player is a valued regular (VIP). Be a touch warmer and more personal than usual, acknowledge them by name, still in Justin's voice with no hype.\n\n"
                 : ''

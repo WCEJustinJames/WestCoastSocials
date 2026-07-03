@@ -67,6 +67,8 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
   const [otherUnread, setOtherUnread] = useState<Unread[]>([])
   const [emails, setEmails] = useState<Email[]>([])
   const [awaited, setAwaited] = useState<AwaitedTransfer[]>([])
+  // conversation_id -> last inbound message text, for triage-at-a-glance rows.
+  const [lastMsg, setLastMsg] = useState<Map<string, string>>(new Map())
   const [bridgeDown, setBridgeDown] = useState(false)
   const [busy, setBusy] = useState(false)
   const [showAllPlayers, setShowAllPlayers] = useState(false)
@@ -108,6 +110,25 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
     })[]) ?? []
     // "Done" on a thread sets context_resolved_at; it reappears only on newer activity.
     const open = rows.filter((c) => !c.context_resolved_at || (c.last_activity ?? '') > c.context_resolved_at)
+
+    // Last inbound message per open thread, so a row can be triaged (done /
+    // deprioritise) without opening it.
+    if (open.length) {
+      const { data: lm } = await supabase
+        .from('inbox_messages')
+        .select('conversation_id, text, timestamp')
+        .in('conversation_id', open.map((c) => c.id))
+        .eq('direction', 'inbound')
+        .order('timestamp', { ascending: false })
+        .limit(400)
+      const firstPer = new Map<string, string>()
+      for (const m of (lm ?? []) as { conversation_id: string; text: string | null }[]) {
+        if (!firstPer.has(m.conversation_id) && m.text) firstPer.set(m.conversation_id, m.text)
+      }
+      setLastMsg(firstPer)
+    } else {
+      setLastMsg(new Map())
+    }
 
     // A thread is a PLAYER'S when it's linked to a CRM record (by thread id or a
     // phone-number title match). Everything else — marketing SMS, group rooms,
@@ -288,9 +309,14 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
               >
                 {c.priority && <span title="Priority contact" className="shrink-0 text-amber-500">★</span>}
                 {chip(`${c.unread_count} unread`, 'bg-amber-100 text-amber-700')}
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-medium">{c.title ?? 'Conversation'}</span>
-                  <span className="text-[11px] text-slate-400"> · {c.network}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">
+                    <span className="font-medium">{c.title ?? 'Conversation'}</span>
+                    <span className="text-[11px] text-slate-400"> · {c.network}</span>
+                  </span>
+                  {lastMsg.has(c.id) && (
+                    <span className="block text-xs text-slate-500">{snippet(lastMsg.get(c.id) ?? '', 160)}</span>
+                  )}
                 </span>
                 {openBtn(() => onOpen(c.id))}
                 {doneBtn(() => void resolveThread(c.id))}
@@ -351,9 +377,14 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
             {otherUnread.map((c) => (
               <li key={c.id} className="flex items-center gap-2 rounded border border-slate-100 bg-white/70 p-1.5 text-sm">
                 {chip(`${c.unread_count}`, 'bg-slate-100 text-slate-500')}
-                <span className="min-w-0 flex-1 truncate text-slate-600">
-                  {c.title ?? 'Conversation'}
-                  <span className="text-[11px] text-slate-400"> · {c.network}</span>
+                <span className="min-w-0 flex-1 text-slate-600">
+                  <span className="block truncate">
+                    {c.title ?? 'Conversation'}
+                    <span className="text-[11px] text-slate-400"> · {c.network}</span>
+                  </span>
+                  {lastMsg.has(c.id) && (
+                    <span className="block truncate text-xs text-slate-400">{snippet(lastMsg.get(c.id) ?? '', 120)}</span>
+                  )}
                 </span>
                 {openBtn(() => onOpen(c.id))}
                 {doneBtn(() => void resolveThread(c.id))}
