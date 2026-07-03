@@ -974,6 +974,8 @@ export type Database = {
           post_error: string | null
           posted_at: string | null
           created_at: string
+          source: string | null
+          source_key: string | null
         }
         Insert: {
           id?: string
@@ -989,6 +991,8 @@ export type Database = {
           post_error?: string | null
           posted_at?: string | null
           created_at?: string
+          source?: string | null
+          source_key?: string | null
         }
         Update: {
           id?: string
@@ -1004,6 +1008,8 @@ export type Database = {
           post_error?: string | null
           posted_at?: string | null
           created_at?: string
+          source?: string | null
+          source_key?: string | null
         }
         Relationships: []
       }
