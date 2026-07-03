@@ -1052,8 +1052,65 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_game_financials: {
+        Row: {
+          id: string
+          sheet_id: string
+          sheet_title: string | null
+          tab_title: string
+          game_date: string | null
+          venue: string | null
+          row_num: number
+          label: string
+          norm_label: string
+          value_num: number | null
+          value_raw: string | null
+          synced_at: string
+        }
+        Insert: {
+          id?: string
+          sheet_id: string
+          sheet_title?: string | null
+          tab_title: string
+          game_date?: string | null
+          venue?: string | null
+          row_num: number
+          label: string
+          norm_label: string
+          value_num?: number | null
+          value_raw?: string | null
+          synced_at?: string
+        }
+        Update: {
+          id?: string
+          sheet_id?: string
+          sheet_title?: string | null
+          tab_title?: string
+          game_date?: string | null
+          venue?: string | null
+          row_num?: number
+          label?: string
+          norm_label?: string
+          value_num?: number | null
+          value_raw?: string | null
+          synced_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
+      inbox_financial_summary: {
+        Row: {
+          sheet_id: string
+          game_date: string | null
+          venue: string | null
+          net_profit_actual: number | null
+          net_profit_calc: number | null
+          gross_buyins: number | null
+          cash_rake: number | null
+        }
+        Relationships: []
+      }
       inbox_attendance_norm: {
         Row: {
           norm: string | null
