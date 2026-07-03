@@ -44,6 +44,9 @@ interface PlayerCardProps {
   // The linked thread's saved title (the contact's full name in Messenger / the
   // phone) — surfaced as context when the bare player_name is missing a surname.
   threadName?: string | null
+  // Attendance scoring (full LP+TD history) + frequency rank when ranked.
+  att?: { games: number; tourney_games: number; cash_games: number; last_seen: string | null } | null
+  rank?: number | null
 }
 
 /** One editable player record. Shared by the Players list and the review queue. */
@@ -52,6 +55,7 @@ export function PlayerCard({
   onSave, onToggleHide, onUnmarkReviewed,
   showSelect = false, selected = false, onToggleSel,
   threadNetwork = null, threadName = null,
+  att = null, rank = null,
 }: PlayerCardProps) {
   const stakeArr = e.stakes.split(',').map((s) => s.trim()).filter(Boolean)
   const venueArr = e.venues.split(',').map((s) => s.trim()).filter(Boolean)
@@ -115,6 +119,20 @@ export function PlayerCard({
           placeholder={!e.phone.trim() && r.beeper_chat_id ? 'no mobile' : 'Phone'}
           className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
         />
+        {rank != null && (
+          <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-semibold text-white" title="frequency rank in this view">
+            #{rank}
+          </span>
+        )}
+        {att && (
+          <span
+            className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700"
+            title={`${att.games} game night(s) all-time — ${att.tourney_games} tourney / ${att.cash_games} cash — last seen ${att.last_seen ?? '?'}`}
+          >
+            🎟 {att.games} · {att.tourney_games}T/{att.cash_games}C
+            {att.last_seen ? ` · ${new Date(att.last_seen).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` : ''}
+          </span>
+        )}
         {/* Channels this player is reachable on. Both shown as chips; the
             preferred one is highlighted. Default to Messenger/FB (some players
             only have FB, no number yet) — toggle to SMS once they share a

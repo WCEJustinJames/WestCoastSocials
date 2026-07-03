@@ -1057,6 +1057,19 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_attendance_stats: {
+        Row: {
+          norm: string
+          games: number
+          tourney_games: number
+          cash_games: number
+          games_10w: number
+          first_seen: string | null
+          last_seen: string | null
+          venues: string[] | null
+        }
+        Relationships: []
+      }
       inbox_batch_conversion: {
         Row: {
           batch_id: string

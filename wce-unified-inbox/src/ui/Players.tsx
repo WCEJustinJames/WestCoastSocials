@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { usePlayers } from './usePlayers'
+import { usePlayers, attKey, VENUES } from './usePlayers'
 import { PlayerCard } from './PlayerRow'
 
 /** Players tab — the full contact list + per-player settings (browse / edit).
@@ -43,6 +43,25 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
           {p.regions.map((r) => (<option key={r} value={r} />))}
         </datalist>
         <select
+          value={p.venueFilter}
+          onChange={(e) => p.setVenueFilter(e.target.value)}
+          title="Players who have actually played this venue (LP + TD attendance) or are tagged to it"
+          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+        >
+          <option value="all">All venues</option>
+          {VENUES.map((v) => (<option key={v} value={v}>{v}</option>))}
+        </select>
+        <select
+          value={p.sortMode}
+          onChange={(e) => p.setSortMode(e.target.value as 'attention' | 'games' | 'recent')}
+          title="Order: review workflow, most games played (all-time LP+TD), or most recently seen at a game"
+          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+        >
+          <option value="attention">Needs attention</option>
+          <option value="games">Most games</option>
+          <option value="recent">Recently seen</option>
+        </select>
+        <select
           value={p.sourceFilter}
           onChange={(e) => p.setSourceFilter(e.target.value)}
           title="Filter by where the contact came from"
@@ -81,7 +100,7 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
       <p className="mb-2 text-xs text-slate-400">{p.filtered.length} shown</p>
 
       <ul className="space-y-2">
-        {p.filtered.slice(0, 300).map((r) => {
+        {p.filtered.slice(0, 300).map((r, i) => {
           const e = p.edits[r.id]
           if (!e) return null
           return (
@@ -97,6 +116,8 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
               onUnmarkReviewed={p.unmarkReviewed}
               threadNetwork={p.chatNetworks.get(r.beeper_chat_id ?? '') ?? null}
               threadName={p.chatTitles.get(r.beeper_chat_id ?? '') ?? null}
+              att={p.att.get(attKey(r.player_name)) ?? null}
+              rank={p.sortMode === 'games' ? i + 1 : null}
             />
           )
         })}
