@@ -19,22 +19,32 @@ const DRIVE_URL = 'https://www.googleapis.com/drive/v3/files'
 const SHEETS_URL = 'https://sheets.googleapis.com/v4/spreadsheets'
 
 async function gfetch<T>(url: string, token: string): Promise<T> {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(20_000),
-  })
-  if (!res.ok) {
-    throw new Error(`Google ${res.status} ${url.split('?')[0]}: ${(await res.text().catch(() => '')).slice(0, 200)}`)
+  // The full-history backfill reads hundreds of sheets, so quota 429s (and the
+  // occasional 5xx) get a couple of patient retries instead of failing the run.
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+      await new Promise((r) => setTimeout(r, res.status === 429 ? 20_000 : 3_000))
+      continue
+    }
+    if (!res.ok) {
+      throw new Error(`Google ${res.status} ${url.split('?')[0]}: ${(await res.text().catch(() => '')).slice(0, 200)}`)
+    }
+    return (await res.json()) as T
   }
-  return (await res.json()) as T
 }
 
 // Sheet-title date forms ("25/06 Woodvale") for the last `lookbackDays` days.
 // The live sync uses 1 (today + yesterday, so a game past midnight still matches);
-// the backfill script passes ~70 to sweep the whole recent season.
+// the backfill script passes ~70 to sweep the recent season. Titles carry no
+// year, so 366 days of needles covers every possible DD/MM — i.e. a lookback of
+// 366+ matches EVERY TD sheet ever named, whatever year it's from.
 function dateNeedles(now: Date, lookbackDays = 1): string[] {
   const out = new Set<string>()
-  for (let off = 0; off <= lookbackDays; off++) {
+  for (let off = 0; off <= Math.min(lookbackDays, 366); off++) {
     const d = new Date(now.getTime() - off * 86_400_000)
     const day = d.getDate(), mon = d.getMonth() + 1
     const dd = String(day).padStart(2, '0'), mm = String(mon).padStart(2, '0')
@@ -49,10 +59,15 @@ function dateNeedles(now: Date, lookbackDays = 1): string[] {
 
 const TITLE_RE = /^\s*(\d{1,2})[/.](\d{1,2})\.?\s+(.+?)\s*$/ // "25/06 Woodvale", "02.07. Woody"
 
-function isoDate(day: number, mon: number, now: Date): string {
-  let year = now.getFullYear()
-  // A month far ahead of "now" means the sheet is from last year (Dec/Jan wrap).
-  if (mon - (now.getMonth() + 1) > 6) year -= 1
+// Titles carry no year, so it's inferred: from the file's Drive createdTime when
+// we have it (TD sheets are made on/near game day — right across years of
+// history), else from "now" (the live sync's today/yesterday case). Either
+// anchor gets the Dec/Jan wrap adjustment.
+function isoDate(day: number, mon: number, anchor: Date): string {
+  let year = anchor.getFullYear()
+  const anchorMon = anchor.getMonth() + 1
+  if (mon - anchorMon > 6) year -= 1 // "28/12" file created in January
+  if (anchorMon - mon > 6) year += 1 // "02/01" file created in December
   return `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
@@ -313,28 +328,45 @@ export async function syncTdSheets(
   const token = await accessToken(clientId, clientSecret, refreshToken)
   const needles = dateNeedles(now, lookbackDays)
   // Drive query strings have a length cap, so a long lookback is swept in chunks
-  // of needles, merging the matches by file id.
-  const byId = new Map<string, { id: string; name: string }>()
+  // of needles, merging the matches by file id. createdTime anchors the year for
+  // history sweeps (titles have none). pageToken paging matters once the needle
+  // set covers the whole calendar — a chunk can match >100 files across years.
+  const byId = new Map<string, { id: string; name: string; createdTime?: string }>()
   for (let i = 0; i < needles.length; i += 24) {
     const q =
       `mimeType='application/vnd.google-apps.spreadsheet' and trashed=false and (` +
       needles.slice(i, i + 24).map((n) => `name contains '${n}'`).join(' or ') +
       `)`
-    const list = await gfetch<{ files?: { id: string; name: string }[] }>(
-      `${DRIVE_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('files(id,name)')}&pageSize=100`,
-      token,
-    )
-    for (const f of list.files ?? []) byId.set(f.id, f)
+    let pageToken: string | undefined
+    do {
+      const list = await gfetch<{ files?: { id: string; name: string; createdTime?: string }[]; nextPageToken?: string }>(
+        `${DRIVE_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('nextPageToken,files(id,name,createdTime)')}&pageSize=100` +
+          (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''),
+        token,
+      )
+      for (const f of list.files ?? []) byId.set(f.id, f)
+      pageToken = list.nextPageToken
+    } while (pageToken)
   }
-  const cap = lookbackDays > 1 ? 100 : 12
+  const cap = lookbackDays > 90 ? 2000 : lookbackDays > 1 ? 100 : 12
   const sheets = [...byId.values()].filter((f) => TITLE_RE.test(f.name)).slice(0, cap)
 
+  // Transfer reconciliation stays a rolling ~5-week window: mirroring years of
+  // transfer lines would put the EFTPOS auto-JL rule to work editing historical
+  // sheets, which nobody wants. Older sheets contribute attendance only.
+  const transferFloor = new Date(now.getTime() - 35 * 86_400_000).toISOString().slice(0, 10)
+
   let attendees = 0
+  let sheetN = 0
   for (const f of sheets) {
     const m = f.name.match(TITLE_RE)
     if (!m) continue
     const venue = m[3].trim()
-    const gameDate = isoDate(Number(m[1]), Number(m[2]), now)
+    const created = f.createdTime ? new Date(f.createdTime) : null
+    const gameDate = isoDate(Number(m[1]), Number(m[2]), created && !isNaN(created.getTime()) ? created : now)
+    // Gentle pacing on long sweeps so hundreds of sheets don't trip quota.
+    if (sheets.length > 30 && sheetN++ > 0) await new Promise((r) => setTimeout(r, 400))
+    if (sheets.length > 30) console.log(`[tdsheets] ${sheetN}/${sheets.length} ${f.name} -> ${gameDate}`)
 
     const meta = await gfetch<{ sheets?: { properties?: { title?: string } }[] }>(
       `${SHEETS_URL}/${f.id}?fields=${encodeURIComponent('sheets(properties(title))')}`,
@@ -370,6 +402,7 @@ export async function syncTdSheets(
       }
     }
     for (const tab of tabs) {
+      if (gameDate < transferFloor) break // history sweep: attendance only
       const lines = extractTransfers(tab.rows)
       console.log(`[transfers] ${f.name} · "${tab.title}": ${lines.length} transfer line(s)`)
       if (!lines.length) continue
@@ -387,17 +420,20 @@ export async function syncTdSheets(
       if (tErr) console.error('[transfers] mirror error:', tErr.message)
     }
     // Standing rule, per Justin: EFTPOS transfer-in lines auto-confirm — receipt
-    // ref "1111" + JL initials — no manual tick needed.
-    try {
-      await tdb
-        .from('inbox_transfers')
-        .update({ confirm_state: 'queued', confirm_ref: '1111' })
-        .eq('confirm_state', 'unconfirmed')
-        .eq('kind', 'transfer_in')
-        .eq('office_confirm', '')
-        .or('pay_method.ilike.%eftpos%,name.ilike.%eftpos%,receipt.ilike.e')
-    } catch (e) {
-      console.error('[transfers] eftpos auto-rule error:', e instanceof Error ? e.message : e)
+    // ref "1111" + JL initials — no manual tick needed. (Recent window only —
+    // the mirror above never ingests older lines, so this can't touch history.)
+    if (gameDate >= transferFloor) {
+      try {
+        await tdb
+          .from('inbox_transfers')
+          .update({ confirm_state: 'queued', confirm_ref: '1111' })
+          .eq('confirm_state', 'unconfirmed')
+          .eq('kind', 'transfer_in')
+          .eq('office_confirm', '')
+          .or('pay_method.ilike.%eftpos%,name.ilike.%eftpos%,receipt.ilike.e')
+      } catch (e) {
+        console.error('[transfers] eftpos auto-rule error:', e instanceof Error ? e.message : e)
+      }
     }
 
     const people = extractAttendees(tabs.map((t) => t.rows))
