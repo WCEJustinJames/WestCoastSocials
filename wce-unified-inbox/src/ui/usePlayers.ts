@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import type { Database } from '../types/database'
 
 export type PlayerRow = Database['public']['Tables']['inbox_outreach']['Row']
+export type AttStats = Database['public']['Views']['inbox_attendance_stats']['Row']
 
 export const phoneCore = (p: string | null): string =>
   p ? p.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, '') : ''
@@ -78,6 +79,9 @@ export const normFull = (raw: string): string =>
   raw.toLowerCase().replace(/\$\s*\d[\d/]*/g, ' ').replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim()
 export const normCore = (raw: string): string =>
   normFull(raw).replace(NAME_NOISE, ' ').replace(/\s+/g, ' ').trim()
+// Attendance rows are keyed by the SQL norm_full_name() (letters only, no
+// spaces); normCore runs first so operator name-noise doesn't break the join.
+export const attKey = (name: string | null): string => normCore(name ?? '').replace(/\s+/g, '')
 
 function dedupeNames(ns: string[]): string[] {
   const seen = new Set<string>()
@@ -246,6 +250,11 @@ const toEdit = (r: PlayerRow): Edit => ({
 export function usePlayers(initialFilter?: string) {
   const [rows, setRows] = useState<PlayerRow[]>([])
   const [edits, setEdits] = useState<Record<string, Edit>>({})
+  // Per-player attendance scoring (full LP+TD history; live view, keyed by the
+  // SQL name-norm). Powers the games count/rank, venue filter and sort modes.
+  const [att, setAtt] = useState<Map<string, AttStats>>(new Map())
+  const [venueFilter, setVenueFilter] = useState('all')
+  const [sortMode, setSortMode] = useState<'attention' | 'games' | 'recent'>('attention')
   // external_chat_id -> network ('Google Messages', 'Facebook/Messenger', …) so a
   // card can show the thread's REAL channel instead of assuming Messenger.
   const [chatNetworks, setChatNetworks] = useState<Map<string, string>>(new Map())
@@ -355,6 +364,20 @@ export function usePlayers(initialFilter?: string) {
     }
     const { data: vfb } = await fbView.from('inbox_fb_dm_verified').select('id')
     setVerifiedFbIds(new Set((vfb ?? []).map((x) => x.id)))
+
+    // Attendance scoring: page through the stats view (~2k norms and growing).
+    const stats = new Map<string, AttStats>()
+    for (let from = 0; ; from += PAGE) {
+      const { data: st } = await supabase
+        .from('inbox_attendance_stats')
+        .select('*')
+        .order('norm')
+        .range(from, from + PAGE - 1)
+      const page = (st as AttStats[]) ?? []
+      for (const s of page) stats.set(s.norm, s)
+      if (page.length < PAGE) break
+    }
+    setAtt(stats)
   }
   useEffect(() => {
     void load()
@@ -417,6 +440,14 @@ export function usePlayers(initialFilter?: string) {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
       }
+      if (venueFilter !== 'all') {
+        // Venue = where they've actually PLAYED (LP+TD attendance) or the CRM
+        // venues field — either counts.
+        const v = venueFilter.toLowerCase()
+        const played = (att.get(attKey(r.player_name))?.venues ?? []).some((x) => x.toLowerCase() === v)
+        const tagged = (r.venues ?? []).some((x) => x.toLowerCase().includes(v))
+        if (!played && !tagged) return false
+      }
       if (q) {
         // Search across the fields a person would type, not just name/phone — so
         // e.g. "fb_unreviewed", a region, or "messenger" all filter the list.
@@ -428,6 +459,25 @@ export function usePlayers(initialFilter?: string) {
       }
       return true
     })
+    if (sortMode === 'games') {
+      // Frequency ranking: most games played (full LP+TD history) first.
+      out.sort((a, b) => {
+        const ga = att.get(attKey(a.player_name))?.games ?? 0
+        const gb = att.get(attKey(b.player_name))?.games ?? 0
+        if (ga !== gb) return gb - ga
+        return (a.player_name ?? '').localeCompare(b.player_name ?? '')
+      })
+      return out
+    }
+    if (sortMode === 'recent') {
+      out.sort((a, b) => {
+        const la = att.get(attKey(a.player_name))?.last_seen ?? ''
+        const lb = att.get(attKey(b.player_name))?.last_seen ?? ''
+        if (la !== lb) return la < lb ? 1 : -1
+        return (a.player_name ?? '').localeCompare(b.player_name ?? '')
+      })
+      return out
+    }
     // Surface the rows still needing attention: unreviewed first, then freshly
     // added contacts (newest contact-list import at the very top), then most
     // recently synced, then alphabetical. Reviewed rows sink to the bottom.
@@ -446,7 +496,7 @@ export function usePlayers(initialFilter?: string) {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, firstNameOnly, verifiedFbIds, reviewed])
+  }, [rows, query, regionFilter, venueFilter, sortMode, att, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, firstNameOnly, verifiedFbIds, reviewed])
 
   // Distinct sources present, with counts, for the Merge & Review source filter.
   const sources = useMemo(() => {
@@ -665,6 +715,7 @@ export function usePlayers(initialFilter?: string) {
     setEdits((p) => ({ ...p, [id]: { ...p[id], ...patch } }))
 
   return {
+    att, venueFilter, setVenueFilter, sortMode, setSortMode,
     rows, edits, setE, query, setQuery, regionFilter, setRegionFilter,
     status, busy, renames, setRenames, sel, toggleSel, setSel, selectedRows,
     keeperId, setKeeperId, showHidden, setShowHidden, groupKeeper, setGroupKeeper,
