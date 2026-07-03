@@ -26,7 +26,11 @@ interface Unread {
   title: string | null
   network: string
   unread_count: number
+  priority?: boolean
 }
+
+const phoneCore = (p: string | null): string =>
+  p ? p.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, '') : ''
 interface Email {
   id: string
   gmail_id: string
@@ -104,16 +108,41 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
     // "Done" on a thread sets context_resolved_at; it reappears only on newer activity.
     const open = rows.filter((c) => !c.context_resolved_at || (c.last_activity ?? '') > c.context_resolved_at)
 
-    // A thread is a PLAYER'S when it's linked to a CRM record. Everything else —
-    // marketing SMS, group rooms, unknown numbers — goes to the collapsed tier.
+    // A thread is a PLAYER'S when it's linked to a CRM record (by thread id or a
+    // phone-number title match). Everything else — marketing SMS, group rooms,
+    // unknown numbers — goes to the collapsed tier. PRIORITY contacts (Carla,
+    // Leon, ...) pin to the top with a star, matched on any of their channels.
     const { data: linked } = await supabase
       .from('inbox_outreach')
-      .select('beeper_chat_id')
-      .not('beeper_chat_id', 'is', null)
-      .eq('hidden', false)
-    const crmChats = new Set((linked ?? []).map((o) => o.beeper_chat_id))
-    setPlayerUnread(open.filter((c) => c.type === 'single' && c.external_chat_id && crmChats.has(c.external_chat_id)))
-    setOtherUnread(open.filter((c) => !(c.type === 'single' && c.external_chat_id && crmChats.has(c.external_chat_id))))
+      .select('beeper_chat_id, phone, priority')
+      .or('beeper_chat_id.not.is.null,phone.not.is.null')
+    const crmChats = new Set<string>()
+    const crmPhones = new Set<string>()
+    const prioChats = new Set<string>()
+    const prioPhones = new Set<string>()
+    for (const o of (linked ?? []) as { beeper_chat_id: string | null; phone: string | null; priority: boolean }[]) {
+      if (o.beeper_chat_id) crmChats.add(o.beeper_chat_id)
+      const pc = phoneCore(o.phone)
+      if (pc) crmPhones.add(pc)
+      if (o.priority) {
+        if (o.beeper_chat_id) prioChats.add(o.beeper_chat_id)
+        if (pc) prioPhones.add(pc)
+      }
+    }
+    const isKnown = (c: (typeof open)[number]) =>
+      c.type === 'single' &&
+      ((c.external_chat_id && crmChats.has(c.external_chat_id)) ||
+        (!!c.title && /^[\d\s+()-]{6,}$/.test(c.title) && crmPhones.has(phoneCore(c.title))))
+    const isPrio = (c: (typeof open)[number]) =>
+      (c.external_chat_id && prioChats.has(c.external_chat_id)) ||
+      (!!c.title && /^[\d\s+()-]{6,}$/.test(c.title) && prioPhones.has(phoneCore(c.title)))
+    setPlayerUnread(
+      open
+        .filter(isKnown)
+        .map((c) => ({ ...c, priority: isPrio(c) }))
+        .sort((a, b) => Number(b.priority) - Number(a.priority)),
+    )
+    setOtherUnread(open.filter((c) => !isKnown(c)))
 
     const { data: em } = await supabase
       .from('inbox_emails')
@@ -234,7 +263,13 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
           <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Players · {playerUnread.length}</p>
           <ul className="mb-1 space-y-1">
             {shownPlayers.map((c) => (
-              <li key={c.id} className="flex items-center gap-2 rounded border border-rose-100 bg-white p-1.5 text-sm">
+              <li
+                key={c.id}
+                className={`flex items-center gap-2 rounded border p-1.5 text-sm ${
+                  c.priority ? 'border-amber-400 bg-amber-50' : 'border-rose-100 bg-white'
+                }`}
+              >
+                {c.priority && <span title="Priority contact" className="shrink-0 text-amber-500">★</span>}
                 {chip(`${c.unread_count} unread`, 'bg-amber-100 text-amber-700')}
                 <span className="min-w-0 flex-1 truncate">
                   <span className="font-medium">{c.title ?? 'Conversation'}</span>
