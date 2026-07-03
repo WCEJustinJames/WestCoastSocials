@@ -91,10 +91,20 @@ Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live*
 - **On-ice shading** carried into the player card + Batches picker. **Assisted dup-merge** (by full name, phone-dedup misses) added to Merge & Review.
 - **Review pass (0045, 2026-07-02)**: action-queue flood fixed (noise is now `reply_intent='noise'`, 329 historical rows backfilled resolved, 14-day window); **merges no longer lose venue-list memberships or cash/tourney/whale/fifo/staff/ban flags** from dropped dupes; scheduler dates now Perth-local; whale follow-ups done (whales sort first + 🐋 in the Batches picker, 🐋 in the reply digest).
 
+### Live-ops session (2026-07-02 evening, Woodvale game night)
+- **Venue×format list grid built + seeded**: per-venue TOURNEY lists auto-seeded from 10 weeks of LP+TD attendance (MCT 23 · Woodvale 37 · Kenwick 19 · Bentley 13 · Leederville 10 · Kingsley 9; Planet Royale 0 — its LP event names don't carry the venue). CASH lists built from batch history (MCT 122 · Woodvale 92 · Kingsley 86). The four historical Woodvale cash batches were retro-tagged `venue='Woodvale'`.
+- **Cutoff grandfather** (`0047`): approval stamps `inbox_batches.approved_at`; an outreach batch approved inside the 10:00–16:30 window keeps draining past 16:30 (quiet hours still the hard stop).
+- **TD-sheet backfill** (`npm run tdsheets:backfill`, PARKED — Justin to run): the live TD pull only reads today+yesterday's sheets, so history has holes and cash sections have matched only once in 10 weeks. The sweep covers 70 days and prints a cash/tourney breakdown; if cash is still thin the parser needs the real cash-tab header (screenshot one).
+- **Auto-linker upgrades**: first-name diminutives (Josh→Joshua etc, both-sides-unique still enforced) + Op C phone-match linking for bare-number SMS threads (81 of 103 current number-titled threads uniquely linkable). Batches picker now names bare-number threads from the CRM and sinks unnamed ones.
+- **Replies rail PAUSED** (`replies_paused=true`) after the Woodvale main filled 9/9 with 44 invites in flight, so a late "yes" can't be auto-🔒'd into a full table. **FLIP IT BACK ON** once the night settles.
+
 ## Open items
-- **Restart `run-wce.bat`** (pull `laughing-ritchie`) to activate the classifier's `reply_back_on`/absence extraction + the whale draft tone + invite-variant generator (`SYNC_VERSION=g28-email`). Ensure `ANTHROPIC_API_KEY` is set on the PC.
-- Open offers: carry "on ice" shading into Batches picker + Players card; pre-send Beeper bridge health-check (Google Messages bridge can silently swallow sends if the phone connection drops — it shows "Not sent" even when delivered).
-- **Roadmap**: `NEXT-SESSION-TODO.md` — 5 prioritised items + 12 further suggestions.
+- **Restart `run-wce.bat`** (pull `laughing-ritchie`) — activates everything backend since g25: classifier `reply_back_on`, whale draft tone, invite-variant generator, noise tag, Gmail pull, cutoff grandfather, diminutive+phone auto-link (`SYNC_VERSION=g31-autolink-phone`). Ensure `ANTHROPIC_API_KEY` is set on the PC.
+- **Un-pause replies** (`inbox_settings.replies_paused=false` / Replies toggle) after game night.
+- **Re-mint the Google token** with the new `gmail.readonly` scope (`node scripts/get-google-refresh-token.mjs`) → email lands in the Home action queue.
+- **Run `npm run tdsheets:backfill`** on the PC (parked per Justin).
+- Open offer: pre-send Beeper bridge health-check (Google Messages bridge can silently swallow sends if the phone connection drops — it shows "Not sent" even when delivered).
+- **Roadmap remainder**: NEXT-SESSION-TODO #11–#17 (best-time-to-contact, A/B templates, onboarding nurture, sentiment trend, send-health dashboard, mobile action view) + retire the dead `weekly` flag.
 
 ## Useful IDs
 - Supabase project: `dexdftcmcixppbuucjfd` · LP club id: `8f025bf9ecfa14c8`
