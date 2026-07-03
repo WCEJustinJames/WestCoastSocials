@@ -131,6 +131,20 @@ export function Social() {
     if (error) return flash(`Error: ${error.message}`)
     await load()
   }
+  /** Approve the week in one sitting: every dated draft goes live on the calendar. */
+  async function scheduleAllDrafts() {
+    const drafts = posts.filter((p) => p.status === 'draft' && p.scheduled_at)
+    if (!drafts.length) return
+    setBusy(true)
+    const { error } = await supabase
+      .from('social_posts')
+      .update({ status: 'scheduled' })
+      .in('id', drafts.map((d) => d.id))
+    setBusy(false)
+    if (error) return flash(`Error: ${error.message}`)
+    flash(`${drafts.length} draft(s) scheduled.`)
+    await load()
+  }
   async function delPost(p: Post) {
     if (!window.confirm(`Delete "${p.title}"?${p.repeat_rule !== 'none' ? ' This stops the repeat series too.' : ''}`)) return
     await supabase.from('social_posts').delete().eq('id', p.id)
@@ -223,7 +237,7 @@ export function Social() {
             <input value={cAsset} onChange={(e) => setCAsset(e.target.value)} placeholder="paste the Canva export or image URL" className="input" />
           </label>
         </div>
-        <label className="field-label mb-2">caption
+        <label className="field-label mb-2">caption (this is what gets posted; the title is just the calendar label)
           <textarea value={cBody} onChange={(e) => setCBody(e.target.value)} rows={3} className="input" placeholder="What goes under the artwork" />
         </label>
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -265,17 +279,30 @@ export function Social() {
 
       {/* ----- upcoming / recent posts ----- */}
       <div className="card mb-6 p-3 sm:p-4">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex items-center justify-between gap-2">
           <p className="text-sm font-semibold">Posts</p>
-          <label className="flex items-center gap-1 text-xs text-slate-500">
-            <input type="checkbox" checked={showPosted} onChange={(e) => setShowPosted(e.target.checked)} /> show posted
-          </label>
+          <span className="flex items-center gap-3">
+            {posts.some((p) => p.status === 'draft' && p.scheduled_at) && (
+              <button
+                onClick={() => void scheduleAllDrafts()}
+                disabled={busy}
+                className="btn-primary px-2.5 py-1 text-xs"
+                title="Approve every dated draft (incl. this week's autopilot promos) in one go"
+              >
+                Schedule all drafts ({posts.filter((p) => p.status === 'draft' && p.scheduled_at).length})
+              </button>
+            )}
+            <label className="flex items-center gap-1 text-xs text-slate-500">
+              <input type="checkbox" checked={showPosted} onChange={(e) => setShowPosted(e.target.checked)} /> show posted
+            </label>
+          </span>
         </div>
         <ul className="space-y-2">
           {upcoming.map((p) => (
             <li key={p.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/50 p-2">
               <span className={`chip ${statusChip(p.status)}`}>{p.status}</span>
               <span className="text-sm font-medium">{p.title}</span>
+              {p.source === 'autopilot' && <span className="chip bg-indigo-100 text-indigo-700" title="drafted automatically from your game Schedules">auto</span>}
               {p.repeat_rule !== 'none' && <span className="chip bg-slate-100 text-slate-500">🔁 {p.repeat_rule}{p.repeat_until ? ` → ${p.repeat_until}` : ''}</span>}
               {p.platforms.map((pl) => <span key={pl} className="chip bg-slate-100 text-slate-500">{pl}</span>)}
               {p.scheduled_at && (
@@ -284,6 +311,11 @@ export function Social() {
                 </span>
               )}
               {p.asset_url && <a href={p.asset_url} target="_blank" rel="noreferrer" className="text-xs text-emerald-700 hover:underline">artwork ↗</a>}
+              {p.body && (
+                <span className="w-full whitespace-pre-wrap text-xs text-slate-500">
+                  {p.status === 'draft' ? p.body : `${p.body.slice(0, 120)}${p.body.length > 120 ? '…' : ''}`}
+                </span>
+              )}
               {p.post_error && <span className="w-full text-xs text-rose-600">⚠ {p.post_error}</span>}
               <span className="ml-auto flex gap-2">
                 {p.status === 'draft' && p.scheduled_at && (

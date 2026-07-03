@@ -137,7 +137,9 @@ export async function publishSocialPosts(db: DB, apiUrl: string, apiKey: string)
       }
 
       const media = p.asset_url ? await uploadAsset(apiUrl, apiKey, p.asset_url) : null
-      let content = [p.title, p.body].filter(Boolean).join('\n\n')
+      // The caption is what gets posted; the title is just the calendar label
+      // (and the fallback when no caption was written).
+      let content = (p.body ?? '').trim() || p.title
       if (p.asset_url && !media) content += `\n\n${p.asset_url}`
 
       const body = {

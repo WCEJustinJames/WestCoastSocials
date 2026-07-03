@@ -30,10 +30,11 @@ import { getSettings } from './settings'
 import { processOptOuts } from './optout'
 import { publishSocialPosts } from './social'
 import { processKlaviyoPushes } from './klaviyo'
+import { generateSocialPromos } from './socialauto'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g37-postiz-live'
+const SYNC_VERSION = 'g38-social-autopilot'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -129,6 +130,8 @@ let lastEmailSync = 0
 // Social publishing + Klaviyo blast prep check every ~2 minutes (both are a
 // single cheap select when nothing is due/queued).
 let lastMarketing = 0
+// Game-week promo generator runs a few times a day (idempotent via source_key).
+let lastSocialAuto = 0
 
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
@@ -427,6 +430,19 @@ async function runOnce(): Promise<void> {
     draftAi = d.ai
     if (d.generated) {
       console.log(`[drafts] generated=${d.generated} skipped=${d.skipped}`)
+    }
+  }
+
+  // Game-week social autopilot: draft the week's promo posts (day-before +
+  // morning-of per scheduled game) onto the Social calendar for approval.
+  // Idempotent, so the 6h cadence just tops up whatever's missing.
+  if (anthropic && Date.now() - lastSocialAuto > 6 * 60 * 60_000) {
+    lastSocialAuto = Date.now()
+    try {
+      const sa = await generateSocialPromos(supabaseAdmin, anthropic, env.anthropicModel)
+      if (sa.created) console.log(`[socialauto] ${sa.created} promo draft(s) added`)
+    } catch (e) {
+      console.error('[socialauto] error:', e instanceof Error ? e.message : e)
     }
   }
 
