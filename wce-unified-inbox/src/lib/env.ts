@@ -37,6 +37,12 @@ export const env = {
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
   googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN ?? '',
+  // Split identity: the WORK account (justin.james@clubwestcoast.com.au) owns
+  // the TD sheets and receives the business email, while the PERSONAL account
+  // holds the phone contacts. When GOOGLE_REFRESH_TOKEN_WORK is set, TD sheets
+  // + Gmail ride it; Contacts stays on GOOGLE_REFRESH_TOKEN. Unset => the main
+  // token does everything, as before.
+  googleRefreshTokenWork: process.env.GOOGLE_REFRESH_TOKEN_WORK || process.env.GOOGLE_REFRESH_TOKEN || '',
   contactsSyncMinutes: Number(process.env.CONTACTS_SYNC_MINUTES ?? 720),
   // TD-sheet attendee pull cadence (minutes). Reads tonight's "DD/MM Venue" Google
   // Sheets via the Google refresh token above (drive.metadata + spreadsheets read).

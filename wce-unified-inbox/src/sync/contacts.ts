@@ -39,9 +39,10 @@ export async function accessToken(clientId: string, clientSecret: string, refres
 }
 
 // The People API sync token is persisted across runs so each sync only fetches
-// contacts that CHANGED since last time. Stored in inbox_contacts_sync(id=1).
-// Cast: the table post-dates the generated Database types.
-async function loadSyncToken(db: DB): Promise<string | null> {
+// contacts that CHANGED since last time. Stored in inbox_contacts_sync, one row
+// per Google account slot (1 = personal, 2 = work) so two accounts can sync
+// independently. Cast: the table post-dates the generated Database types.
+async function loadSyncToken(db: DB, slot: number): Promise<string | null> {
   const q = db as unknown as {
     from: (t: string) => {
       select: (c: string) => {
@@ -51,14 +52,14 @@ async function loadSyncToken(db: DB): Promise<string | null> {
       }
     }
   }
-  const { data } = await q.from('inbox_contacts_sync').select('sync_token').eq('id', 1).maybeSingle()
+  const { data } = await q.from('inbox_contacts_sync').select('sync_token').eq('id', slot).maybeSingle()
   return data?.sync_token ?? null
 }
-async function saveSyncToken(db: DB, token: string | null): Promise<void> {
+async function saveSyncToken(db: DB, slot: number, token: string | null): Promise<void> {
   const q = db as unknown as {
     from: (t: string) => { upsert: (v: unknown) => Promise<{ error: unknown }> }
   }
-  await q.from('inbox_contacts_sync').upsert({ id: 1, sync_token: token, updated_at: new Date().toISOString() })
+  await q.from('inbox_contacts_sync').upsert({ id: slot, sync_token: token, updated_at: new Date().toISOString() })
 }
 
 const pickPhone = (p?: Person['phoneNumbers']): string | null => {
@@ -102,9 +103,10 @@ export async function syncGoogleContacts(
   clientId: string,
   clientSecret: string,
   refreshToken: string,
+  slot = 1,
 ): Promise<ContactsResult> {
   const token = await accessToken(clientId, clientSecret, refreshToken)
-  let syncToken = await loadSyncToken(db)
+  let syncToken = await loadSyncToken(db, slot)
   let scanned = 0
   let created = 0
   let autoHidden = 0
@@ -176,7 +178,7 @@ export async function syncGoogleContacts(
         .upsert(rows, { onConflict: 'airtable_id', ignoreDuplicates: true })
       if (error) throw error
     }
-    await saveSyncToken(db, nextSyncToken)
+    await saveSyncToken(db, slot, nextSyncToken)
     break
   }
 
