@@ -57,7 +57,25 @@ function dateNeedles(now: Date, lookbackDays = 1): string[] {
   return [...out]
 }
 
-const TITLE_RE = /^\s*(\d{1,2})[/.](\d{1,2})\.?\s+(.+?)\s*$/ // "25/06 Woodvale", "02.07. Woody"
+// TD sheet names in the wild: "25/06 Woodvale", "02.07. Woody", and (per the
+// missed 1 July MCT game) venue-first with a year: "mct 1/7/26". Accept
+// date-first or venue-last, either separator, optional 2/4-digit year.
+interface TitleInfo { day: number; mon: number; year: number | null; venue: string }
+export function parseTitle(name: string): TitleInfo | null {
+  const mk = (d: string, mo: string, y: string | undefined, venue: string): TitleInfo | null => {
+    const day = Number(d), mon = Number(mo)
+    if (day < 1 || day > 31 || mon < 1 || mon > 12) return null
+    const v = venue.trim()
+    if (!/[a-z]/i.test(v)) return null
+    const year = y ? (Number(y) < 100 ? 2000 + Number(y) : Number(y)) : null
+    return { day, mon, year, venue: v }
+  }
+  let m = name.match(/^\s*(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\.?\s+(.+?)\s*$/)
+  if (m) return mk(m[1], m[2], m[3], m[4])
+  m = name.match(/^\s*(.+?)\s+(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\.?\s*$/)
+  if (m) return mk(m[2], m[3], m[4], m[1])
+  return null
+}
 
 // Titles carry no year, so it's inferred: from the file's Drive createdTime when
 // we have it (TD sheets are made on/near game day — right across years of
@@ -396,7 +414,7 @@ export async function syncTdSheets(
     } while (pageToken)
   }
   const cap = lookbackDays > 90 ? 2000 : lookbackDays > 1 ? 100 : 12
-  const sheets = [...byId.values()].filter((f) => TITLE_RE.test(f.name)).slice(0, cap)
+  const sheets = [...byId.values()].filter((f) => parseTitle(f.name) != null).slice(0, cap)
 
   // Transfer reconciliation stays a rolling ~5-week window: mirroring years of
   // transfer lines would put the EFTPOS auto-JL rule to work editing historical
@@ -406,11 +424,14 @@ export async function syncTdSheets(
   let attendees = 0
   let sheetN = 0
   for (const f of sheets) {
-    const m = f.name.match(TITLE_RE)
-    if (!m) continue
-    const venue = m[3].trim()
+    const t = parseTitle(f.name)
+    if (!t) continue
+    const venue = t.venue
     const created = f.createdTime ? new Date(f.createdTime) : null
-    const gameDate = isoDate(Number(m[1]), Number(m[2]), created && !isNaN(created.getTime()) ? created : now)
+    // An explicit year in the title beats inference from createdTime.
+    const gameDate = t.year
+      ? `${t.year}-${String(t.mon).padStart(2, '0')}-${String(t.day).padStart(2, '0')}`
+      : isoDate(t.day, t.mon, created && !isNaN(created.getTime()) ? created : now)
     // Gentle pacing on long sweeps so hundreds of sheets don't trip quota.
     if (sheets.length > 30 && sheetN++ > 0) await new Promise((r) => setTimeout(r, 400))
     if (sheets.length > 30) console.log(`[tdsheets] ${sheetN}/${sheets.length} ${f.name} -> ${gameDate}`)
