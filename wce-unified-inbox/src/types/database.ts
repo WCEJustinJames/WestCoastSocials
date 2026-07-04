@@ -1117,6 +1117,14 @@ export type Database = {
       }
     }
     Views: {
+      sync_status: {
+        Row: {
+          integration: string
+          last_run: string | null
+          detail: string | null
+        }
+        Relationships: []
+      }
       inbox_financial_summary: {
         Row: {
           sheet_id: string

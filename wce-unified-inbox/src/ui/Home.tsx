@@ -30,7 +30,6 @@ export function Home({
       <ActionQueue onOpen={onOpenConversation} />
       <Financials />
       <DashboardCards onNavigate={onNavigate} />
-      <SyncStatus />
       <FifoDue onOpen={onOpenConversation} />
       <WinBack onOpen={onOpenConversation} />
       <PlayerContext onOpen={onOpenConversation} />
@@ -754,71 +753,6 @@ function Stat({
 
 // ------------------------------ live sync panel -----------------------------
 
-/** Live freshness of each integration: green = up to date, amber = overdue, red =
- * stale, grey = not run yet. Reads anon-safe timestamps only (heartbeats + the
- * sync_freshness view, which exposes last-run times with no secrets). */
-function SyncStatus() {
-  const [items, setItems] = useState<{ label: string; tone: 'ok' | 'warn' | 'bad' | 'off'; status: string }[]>([])
-  useEffect(() => {
-    void (async () => {
-      const now = Date.now()
-      const secs = (iso?: string | null) => (iso ? Math.floor((now - new Date(iso).getTime()) / 1000) : null)
-      const rel = (s: number) =>
-        s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : s < 172800 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`
-      const grade = (
-        s: number | null,
-        freshSecs: number,
-        okWord = 'up to date',
-      ): { tone: 'ok' | 'warn' | 'bad' | 'off'; status: string } =>
-        s == null
-          ? { tone: 'off', status: 'not run yet' }
-          : s < freshSecs
-            ? { tone: 'ok', status: okWord }
-            : s < freshSecs * 8
-              ? { tone: 'warn', status: `${rel(s)} ago` }
-              : { tone: 'bad', status: `${rel(s)} ago · stale` }
-
-      const { data: hbs } = await supabase.from('inbox_sync_heartbeat').select('id, last_run').in('id', [1, 2])
-      const hb = (id: number) => ((hbs ?? []).find((h) => h.id === id)?.last_run ?? null) as string | null
-      const fresh = supabase as unknown as {
-        from: (t: string) => {
-          select: (c: string) => Promise<{ data: { integration: string; last_run: string | null }[] | null }>
-        }
-      }
-      const fr = await fresh.from('sync_freshness').select('integration, last_run')
-      const frv = (k: string) => (fr.data ?? []).find((r) => r.integration === k)?.last_run ?? null
-
-      setItems([
-        { label: 'Sync engine', ...grade(secs(hb(1)), 120) },
-        { label: 'LetsPoker', ...grade(secs(frv('letspoker')), 2 * 86400, 'synced') },
-        { label: 'Google Contacts', ...grade(secs(frv('contacts')), 26 * 3600, 'synced') },
-        { label: 'TD Sheets', ...grade(secs(hb(2)), 90 * 60) },
-      ])
-    })()
-  }, [])
-
-  const dot = (t: 'ok' | 'warn' | 'bad' | 'off') =>
-    t === 'ok' ? 'bg-emerald-500' : t === 'warn' ? 'bg-amber-500' : t === 'bad' ? 'bg-rose-500' : 'bg-slate-300'
-  const txt = (t: 'ok' | 'warn' | 'bad' | 'off') =>
-    t === 'ok' ? 'text-emerald-600' : t === 'warn' ? 'text-amber-600' : t === 'bad' ? 'text-rose-600' : 'text-slate-400'
-
-  return (
-    <div className="mb-6 rounded-lg border border-slate-200 bg-white p-3">
-      <div className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Live sync</div>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
-        {items.map((it) => (
-          <div key={it.label} className="flex items-center gap-2 text-sm">
-            <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${dot(it.tone)} ${it.tone === 'ok' ? 'animate-pulse' : ''}`} />
-            <span className="min-w-0 flex-1 truncate">
-              <span className="font-medium text-slate-700">{it.label}</span>{' '}
-              <span className={`text-xs ${txt(it.tone)}`}>{it.status}</span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 // ------------------------------ post-game tool ------------------------------
 
