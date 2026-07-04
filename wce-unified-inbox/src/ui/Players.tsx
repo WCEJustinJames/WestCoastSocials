@@ -142,6 +142,10 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
           <input type="checkbox" checked={p.firstNameOnly} onChange={(e) => p.setFirstNameOnly(e.target.checked)} />
           first name only{p.firstNameOnlyCount ? ` (${p.firstNameOnlyCount})` : ''}
         </label>
+        <label className="flex items-center gap-1 text-xs text-rose-700" title="Numbers with the wrong digit count, or whose last SMS failed to send — fix or replace.">
+          <input type="checkbox" checked={p.badNumberOnly} onChange={(e) => p.setBadNumberOnly(e.target.checked)} />
+          ⚠ bad number{p.badNumberCount ? ` (${p.badNumberCount})` : ''}
+        </label>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           <input type="checkbox" checked={p.showHidden} onChange={(e) => p.setShowHidden(e.target.checked)} />
           show hidden
@@ -173,6 +177,7 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
               }
               onLinkThread={p.linkThread}
               onIcePlayer={p.icePlayer}
+              sendFailed={p.failedSends.has(r.id)}
             />
           )
         })}

@@ -1,4 +1,4 @@
-import { REGIONS, VENUES, STAKES, sourceLabel, type Edit, type PlayerRow as Row } from './usePlayers'
+import { REGIONS, VENUES, STAKES, sourceLabel, phoneStatus, phoneStatusLabel, type Edit, type PlayerRow as Row } from './usePlayers'
 
 /** "messaged 3d ago" / "never messaged" from a last_contacted date. */
 function sinceLabel(iso: string | null): string {
@@ -53,6 +53,8 @@ interface PlayerCardProps {
   onLinkThread?: (id: string, chatId: string) => void
   // Put a player on ice (snooze) for N days, or un-ice with days=0.
   onIcePlayer?: (id: string, days: number) => void
+  // The player's last SMS batch send failed (dead/wrong number).
+  sendFailed?: boolean
 }
 
 /** One editable player record. Shared by the Players list and the review queue. */
@@ -63,8 +65,13 @@ export function PlayerCard({
   threadNetwork = null, threadName = null,
   att = null, rank = null,
   threadSuggestions = [], onLinkThread,
-  onIcePlayer,
+  onIcePlayer, sendFailed = false,
 }: PlayerCardProps) {
+  // Bad-number flag: invalid digit count (from the edited value so it updates
+  // as you type) or a failed SMS send on record.
+  const pStatus = phoneStatus(e.phone)
+  const badLen = pStatus === 'short' || pStatus === 'long'
+  const numberFlag = badLen ? phoneStatusLabel[pStatus] : sendFailed ? 'last SMS failed — check the number' : ''
   const stakeArr = e.stakes.split(',').map((s) => s.trim()).filter(Boolean)
   const venueArr = e.venues.split(',').map((s) => s.trim()).filter(Boolean)
   // Captured context the structured fields don't show yet — the thread's saved
@@ -121,12 +128,18 @@ export function PlayerCard({
           placeholder="Name"
           className="min-w-[10rem] flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
         />
-        <input
-          value={e.phone}
-          onChange={(ev) => setE(r.id, { phone: ev.target.value })}
-          placeholder={!e.phone.trim() && r.beeper_chat_id ? 'no mobile' : 'Phone'}
-          className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
-        />
+        <span className="flex flex-col">
+          <input
+            value={e.phone}
+            onChange={(ev) => setE(r.id, { phone: ev.target.value })}
+            placeholder={!e.phone.trim() && r.beeper_chat_id ? 'no mobile' : 'Phone'}
+            title={numberFlag || undefined}
+            className={`w-32 rounded-md border px-2 py-1 text-sm outline-none ${
+              numberFlag ? 'border-rose-400 bg-rose-50 focus:border-rose-500' : 'border-slate-300 focus:border-emerald-500'
+            }`}
+          />
+          {numberFlag && <span className="mt-0.5 text-[10px] font-medium text-rose-600">⚠ {numberFlag}</span>}
+        </span>
         {rank != null && (
           <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-semibold text-white" title="frequency rank in this view">
             #{rank}
