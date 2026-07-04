@@ -74,6 +74,19 @@ export function Financials() {
   const [mode, setMode] = useState<'time' | 'venue'>('time')
   const [hover, setHover] = useState<number | null>(null)
   const [selected, setSelected] = useState<Bucket | null>(null)
+  // "Jump to date": pick any past date -> switch to the covering range and
+  // auto-open that week's games. Resolves after buckets recompute.
+  const [pendingWeek, setPendingWeek] = useState<string | null>(null)
+  function jumpTo(dateStr: string) {
+    if (!dateStr) return
+    const wk = weekStart(new Date(`${dateStr}T12:00:00`))
+    const weeksBack = Math.ceil((Date.now() - new Date(`${wk}T12:00:00`).getTime()) / (7 * 86_400_000)) + 1
+    setMode('time')
+    setPerGame(false)
+    setVenue('all')
+    setRangeW(RANGES.find((r) => r.key >= weeksBack)?.key ?? 999)
+    setPendingWeek(wk)
+  }
 
   useEffect(() => {
     void (async () => {
@@ -154,6 +167,16 @@ export function Financials() {
     }
     return out
   }, [rows, rangeW, venue, perGame, mode, metric])
+
+  // Resolve a pending "jump to date" once the buckets for its range exist.
+  useEffect(() => {
+    if (!pendingWeek) return
+    const b = buckets.find((x) => x.key === pendingWeek)
+    if (b) {
+      setSelected(b)
+      setPendingWeek(null)
+    }
+  }, [buckets, pendingWeek])
 
   const thisWeekKey = weekStart(new Date())
   const thisWeek = buckets.find((b) => !perGame && b.key === thisWeekKey)
@@ -247,12 +270,16 @@ export function Financials() {
               <option value="all">all venues</option>
               {VENUES.map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
-            <label className="ml-auto flex items-center gap-1 text-xs text-slate-500">
+            <label className="flex items-center gap-1 text-xs text-slate-500">
               <input type="checkbox" checked={perGame} onChange={(e) => { setPerGame(e.target.checked); setSelected(null) }} />
               per game
             </label>
           </>
         )}
+        <label className="ml-auto flex items-center gap-1 text-xs text-slate-500" title="Jump straight to any past game night — opens that week's games">
+          find a date
+          <input type="date" onChange={(e) => jumpTo(e.target.value)} className="input px-1.5 py-0.5 text-xs" />
+        </label>
       </div>
 
       {/* chart */}
