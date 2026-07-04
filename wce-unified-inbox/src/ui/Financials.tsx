@@ -145,13 +145,15 @@ export function Financials() {
   }
 
   // ----- geometry (zero-baseline bars) -----
-  const W = 560, H = 150, PAD = 8, LABEL_H = 16
+  const W = 560, H = 170, PAD = 22, LABEL_H = 16
   const vals = buckets.map((b) => b[metric])
   const top = Math.max(...vals, 0)
   const bot = Math.min(...vals, 0)
   const span = top - bot || 1
   const scale = (H - PAD * 2 - LABEL_H) / span
   const y0 = PAD + top * scale
+  // Recessive gridlines at the extremes (and halfway when there's room).
+  const ticks = [...new Set([top, top > 0 ? top / 2 : 0, bot < 0 ? bot : 0])].filter((t) => t !== 0)
   const slot = W / buckets.length
   const barW = Math.max(6, Math.min(36, slot - 8))
   const metricLabel = METRICS.find((m) => m.key === metric)?.label ?? metric
@@ -215,7 +217,16 @@ export function Financials() {
       </p>
       <div className="relative">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={`${metricLabel} bar chart`}>
-          <line x1={0} x2={W} y1={y0} y2={y0} stroke="#e2e8f0" strokeWidth={1} />
+          {ticks.map((t) => {
+            const ty = y0 - t * scale
+            return (
+              <g key={t}>
+                <line x1={0} x2={W} y1={ty} y2={ty} stroke="#f1f5f9" strokeWidth={1} />
+                <text x={2} y={ty - 3} fontSize={8.5} fill="#94a3b8" className="tabular-nums">{fmt(t)}</text>
+              </g>
+            )
+          })}
+          <line x1={0} x2={W} y1={y0} y2={y0} stroke="#cbd5e1" strokeWidth={1} />
           {buckets.map((b, i) => {
             const v = b[metric]
             const h = Math.max(2, Math.abs(v) * scale)
@@ -233,7 +244,7 @@ export function Financials() {
                   opacity={hover != null && hover !== i && !isSel ? 0.45 : 1}
                   stroke={isSel ? '#0f172a' : 'none'} strokeWidth={isSel ? 1.5 : 0} />
                 {(i === buckets.length - 1 || isSel) && (
-                  <text x={x + barW / 2} y={v >= 0 ? y - 4 : y + h + 11} textAnchor="middle"
+                  <text x={x + barW / 2} y={v >= 0 ? Math.max(9, y - 4) : Math.min(H - LABEL_H, y + h + 11)} textAnchor="middle"
                     fontSize={10} fill="#334155" className="tabular-nums">{fmt(v)}</text>
                 )}
                 {(buckets.length <= 14 || i % Math.ceil(buckets.length / 14) === 0) && (
