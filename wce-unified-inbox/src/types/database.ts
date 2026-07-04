@@ -1133,6 +1133,10 @@ export type Database = {
           net_profit_actual: number | null
           net_profit_calc: number | null
           gross_buyins: number | null
+          buyins_cash: number | null
+          buyins_eftpos: number | null
+          buyins_payid: number | null
+          prize_pool: number | null
           cash_rake: number | null
         }
         Relationships: []

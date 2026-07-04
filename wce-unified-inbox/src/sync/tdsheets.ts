@@ -305,6 +305,85 @@ export function extractFinancials(rows: string[][]): FinancialLine[] {
   return out
 }
 
+// The Tournament tab carries the real buy-in numbers — an entries table broken
+// down by payment method (Chips | Cash | EFTPOS | PayID | Total), plus the
+// prize-pool key financials. This is NOT one of the FIN_TAB tabs, so it gets
+// its own extractor.
+const TOURNEY_TAB = /tournament/i
+
+/**
+ * Pull tournament buy-ins (by payment method) + prize-pool figures from the
+ * Tournament tab. The "Total In" row is the money actually collected from
+ * entries; "Gross" is the prize pool after commission. Emits one line per
+ * method so the summary can total them or break them out. Synthetic row_num
+ * (ri*100+ci) keeps every emitted cell unique for the upsert.
+ */
+export function extractTournament(rows: string[][]): FinancialLine[] {
+  const out: FinancialLine[] = []
+  const num = (s?: string): number | null => {
+    const v = Number((s ?? '').replace(/[^0-9.]/g, ''))
+    return Number.isFinite(v) && (s ?? '').trim() !== '' ? v : null
+  }
+
+  // 1) Entries table — locate the header row (has Chips + EFTPOS), map columns.
+  let headerRi = -1
+  const cols: Record<string, number> = {}
+  for (let ri = 0; ri < Math.min(rows.length, 80); ri++) {
+    const lc = (rows[ri] ?? []).map((c) => (c ?? '').toString().trim().toLowerCase())
+    if (lc.includes('chips') && lc.includes('eftpos')) {
+      headerRi = ri
+      lc.forEach((c, ci) => {
+        if (['chips', 'cash', 'eftpos', 'payid', 'total'].includes(c)) cols[c] = ci
+        else if (c === 'in') cols.label = ci
+      })
+      break
+    }
+  }
+  if (headerRi >= 0 && cols.total != null) {
+    const labelCol = cols.label ?? 0
+    for (let ri = headerRi + 1; ri < Math.min(rows.length, headerRi + 24); ri++) {
+      const cells = (rows[ri] ?? []).map((c) => (c ?? '').toString().trim())
+      const label = (cells[labelCol] ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+      const want = label === 'total in' ? 'in' : label === 'gross' ? 'gross' : null
+      if (!want) continue
+      for (const [method, ci] of Object.entries(cols)) {
+        if (method === 'label') continue
+        const v = num(cells[ci])
+        if (v == null) continue
+        out.push({
+          row_num: ri * 100 + ci,
+          label: `Tournament ${want} ${method}`,
+          norm_label: `tournament ${want} ${method}`,
+          value_num: v,
+          value_raw: cells[ci],
+        })
+      }
+    }
+  }
+
+  // 2) Key financials — "Tournament Gross (Prize pool)", "Guarantee", "Overlay":
+  // label cell then the value a couple of cells to the right.
+  for (let ri = 0; ri < Math.min(rows.length, 60); ri++) {
+    const cells = (rows[ri] ?? []).map((c) => (c ?? '').toString().trim())
+    for (let ci = 0; ci < cells.length; ci++) {
+      const l = cells[ci].toLowerCase()
+      const key = /tournament gross|prize pool/.test(l) ? 'tournament prize pool'
+        : /guarantee/.test(l) ? 'tournament guarantee'
+        : /overlay/.test(l) ? 'tournament overlay'
+        : null
+      if (!key) continue
+      for (let cj = ci + 1; cj < Math.min(cells.length, ci + 4); cj++) {
+        if (!/[$0-9]/.test(cells[cj])) continue
+        const v = num(cells[cj])
+        if (v == null) continue
+        out.push({ row_num: 8000 + ri * 100 + ci, label: cells[ci], norm_label: key, value_num: v, value_raw: cells[cj] })
+        break
+      }
+    }
+  }
+  return out
+}
+
 /**
  * Write queued JL confirmations back into the sheets: 'JL' into the Office
  * Confirm cell, and (for outgoing money) the last-4 receipt ref into the
@@ -488,10 +567,12 @@ export async function syncTdSheets(
       }
     }
     // Financial lines harvest — runs for EVERY sheet (history included, so the
-    // --all backfill fills the Home trend chart), read-only.
+    // --all backfill fills the Home trend chart), read-only. The Tournament tab
+    // gets the dedicated buy-in extractor; financial/invoice tabs the generic one.
     for (const tab of tabs) {
-      if (!FIN_TAB.test(tab.title)) continue
-      const fins = extractFinancials(tab.rows)
+      const isTourney = TOURNEY_TAB.test(tab.title)
+      if (!isTourney && !FIN_TAB.test(tab.title)) continue
+      const fins = isTourney ? extractTournament(tab.rows) : extractFinancials(tab.rows)
       if (!fins.length) continue
       const { error: fErr } = await tdb.from('inbox_game_financials').upsert(
         fins.map((l) => ({ sheet_id: f.id, sheet_title: f.name, tab_title: tab.title, game_date: gameDate, venue, ...l })),

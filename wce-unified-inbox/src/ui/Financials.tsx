@@ -51,6 +51,9 @@ interface Game {
   netActual: number | null
   netCalc: number | null
   buyins: number | null
+  buyinsCash: number | null
+  buyinsEftpos: number | null
+  buyinsPayid: number | null
   rake: number | null
 }
 interface Bucket {
@@ -109,6 +112,9 @@ export function Financials() {
         netActual: r.net_profit_actual == null ? null : Number(r.net_profit_actual),
         netCalc: r.net_profit_calc == null ? null : Number(r.net_profit_calc),
         buyins: r.gross_buyins == null ? null : Number(r.gross_buyins),
+        buyinsCash: r.buyins_cash == null ? null : Number(r.buyins_cash),
+        buyinsEftpos: r.buyins_eftpos == null ? null : Number(r.buyins_eftpos),
+        buyinsPayid: r.buyins_payid == null ? null : Number(r.buyins_payid),
         rake: r.cash_rake == null ? null : Number(r.cash_rake),
       })))
       setLoaded(true)
@@ -376,8 +382,10 @@ export function Financials() {
                   <th className="py-1 pr-3 font-medium">date</th>
                   <th className="py-1 pr-3 font-medium">venue</th>
                   <th className="py-1 pr-3 font-medium">net actual</th>
-                  <th className="py-1 pr-3 font-medium">net calc</th>
                   <th className="py-1 pr-3 font-medium">buy-ins</th>
+                  <th className="py-1 pr-3 font-medium" title="tournament buy-ins paid in cash">· cash</th>
+                  <th className="py-1 pr-3 font-medium" title="tournament buy-ins via EFTPOS">· eftpos</th>
+                  <th className="py-1 pr-3 font-medium" title="tournament buy-ins via PayID">· payid</th>
                   <th className="py-1 font-medium">rake</th>
                 </tr>
               </thead>
@@ -387,8 +395,10 @@ export function Financials() {
                     <td className="py-1 pr-3">{dLabel(g.date)}</td>
                     <td className="py-1 pr-3">{g.venue ?? '—'}</td>
                     <td className={`py-1 pr-3 ${g.netActual != null && g.netActual < 0 ? 'text-rose-700' : ''}`}>{fmt(g.netActual)}</td>
-                    <td className="py-1 pr-3">{fmt(g.netCalc)}</td>
-                    <td className="py-1 pr-3">{fmt(g.buyins)}</td>
+                    <td className="py-1 pr-3 font-medium">{fmt(g.buyins)}</td>
+                    <td className="py-1 pr-3 text-slate-500">{g.buyinsCash == null ? '—' : fmt(g.buyinsCash)}</td>
+                    <td className="py-1 pr-3 text-slate-500">{g.buyinsEftpos == null ? '—' : fmt(g.buyinsEftpos)}</td>
+                    <td className="py-1 pr-3 text-slate-500">{g.buyinsPayid == null ? '—' : fmt(g.buyinsPayid)}</td>
                     <td className="py-1">{fmt(g.rake)}</td>
                   </tr>
                 ))}

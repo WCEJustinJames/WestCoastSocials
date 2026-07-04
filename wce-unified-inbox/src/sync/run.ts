@@ -34,7 +34,7 @@ import { generateSocialPromos } from './socialauto'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g45-status'
+const SYNC_VERSION = 'g46-tourney-buyins'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
