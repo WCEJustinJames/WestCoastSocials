@@ -18,6 +18,7 @@ const METRICS = [
   { key: 'rake', label: 'Cash rake' },
   { key: 'outgoings', label: 'Outgoings' },
   { key: 'overlay', label: 'Overlay' },
+  { key: 'wages', label: 'Wages' },
 ] as const
 type MetricKey = (typeof METRICS)[number]['key']
 
@@ -59,6 +60,7 @@ interface Game {
   rake: number | null
   outgoings: number | null
   overlay: number | null
+  wages: number | null
 }
 interface Bucket {
   key: string
@@ -69,6 +71,7 @@ interface Bucket {
   rake: number
   outgoings: number
   overlay: number
+  wages: number
   games: Game[]
 }
 
@@ -124,6 +127,7 @@ export function Financials() {
         rake: r.cash_rake == null ? null : Number(r.cash_rake),
         outgoings: r.outgoings == null ? null : Number(r.outgoings),
         overlay: r.overlay == null ? null : Number(r.overlay),
+        wages: r.wages == null ? null : Number(r.wages),
       })))
       setLoaded(true)
     })()
@@ -138,13 +142,14 @@ export function Financials() {
       const map = new Map<string, Bucket>()
       for (const g of inRange) {
         const k = g.venue ?? '(unknown)'
-        const b = map.get(k) ?? { key: k, label: k, netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, games: [] }
+        const b = map.get(k) ?? { key: k, label: k, netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, wages: 0, games: [] }
         b.netActual += g.netActual ?? g.netCalc ?? 0
         b.netCalc += g.netCalc ?? g.netActual ?? 0
         b.buyins += g.buyins ?? 0
         b.rake += g.rake ?? 0
         b.outgoings += g.outgoings ?? 0
         b.overlay += g.overlay ?? 0
+        b.wages += g.wages ?? 0
         b.games.push(g)
         map.set(k, b)
       }
@@ -160,19 +165,21 @@ export function Financials() {
         rake: g.rake ?? 0,
         outgoings: g.outgoings ?? 0,
         overlay: g.overlay ?? 0,
+        wages: g.wages ?? 0,
         games: [g],
       }))
     }
     const map = new Map<string, Bucket>()
     for (const g of inRange) {
       const k = weekStart(new Date(`${g.date}T12:00:00`))
-      const b = map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, games: [] }
+      const b = map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, wages: 0, games: [] }
       b.netActual += g.netActual ?? g.netCalc ?? 0
       b.netCalc += g.netCalc ?? g.netActual ?? 0
       b.buyins += g.buyins ?? 0
       b.rake += g.rake ?? 0
       b.outgoings += g.outgoings ?? 0
       b.overlay += g.overlay ?? 0
+      b.wages += g.wages ?? 0
       b.games.push(g)
       map.set(k, b)
     }
@@ -187,7 +194,7 @@ export function Financials() {
     const cur = new Date(`${firstKey}T12:00:00`)
     while (out.length < 120) {
       const k = weekStart(cur)
-      out.push(map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, games: [] })
+      out.push(map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, wages: 0, games: [] })
       if (k === nowKey) break
       cur.setDate(cur.getDate() + 7)
     }
@@ -246,6 +253,7 @@ export function Financials() {
     { name: 'Cash rake', now: thisWeek?.rake ?? null, prev: lastWeek?.rake ?? null },
     { name: 'Outgoings', now: thisWeek?.outgoings ?? null, prev: lastWeek?.outgoings ?? null },
     { name: 'Overlay', now: thisWeek?.overlay ?? null, prev: lastWeek?.overlay ?? null },
+    { name: 'Wages', now: thisWeek?.wages ?? null, prev: lastWeek?.wages ?? null },
   ]
 
   const hovered = hover != null ? buckets[hover] : null

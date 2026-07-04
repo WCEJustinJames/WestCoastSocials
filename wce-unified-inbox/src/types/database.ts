@@ -1139,6 +1139,7 @@ export type Database = {
           prize_pool: number | null
           overlay: number | null
           outgoings: number | null
+          wages: number | null
           cash_rake: number | null
         }
         Relationships: []
