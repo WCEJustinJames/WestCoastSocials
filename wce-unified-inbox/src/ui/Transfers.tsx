@@ -152,7 +152,7 @@ export function Transfers() {
   )
 
   return (
-    <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-4 sm:p-6">
+    <div className="mx-auto h-full w-full max-w-6xl overflow-y-auto p-4 sm:p-6">
       <div className="mb-1 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Transfers</h2>
         <button onClick={() => void load()} className="text-sm text-emerald-700 hover:underline">Refresh</button>

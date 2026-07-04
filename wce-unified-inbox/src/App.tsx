@@ -180,6 +180,14 @@ export default function App() {
           >
             ☰
           </button>
+          <button
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="hidden rounded-lg px-2 py-1 text-base leading-none text-slate-500 hover:bg-slate-100 md:block"
+          >
+            {collapsed ? '☰' : '⇤'}
+          </button>
           <h1 className="text-sm font-semibold">{TITLES[view]}</h1>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <RepliesToggle />
