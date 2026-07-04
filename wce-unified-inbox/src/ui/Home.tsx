@@ -658,6 +658,7 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
           .from('inbox_outreach')
           .select('id', head)
           .eq('hidden', false)
+          .eq('do_not_message', false) // banned: no point chasing their number
           .is('phone', null)
           .is('beeper_chat_id', null),
         // FB · DM to open — verified players only (in TD/LP attendance).
@@ -670,6 +671,7 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
           .from('inbox_outreach')
           .select('id', head)
           .eq('hidden', false)
+          .eq('do_not_message', false)
           .not('player_name', 'is', null)
           .neq('player_name', '')
           .not('player_name', 'ilike', '% %')
