@@ -25,7 +25,7 @@ export function Home({
   onOpenConversation: (conversationId: string) => void
 }) {
   return (
-    <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-6">
+    <div className="mx-auto h-full w-full max-w-6xl overflow-y-auto p-6">
       <h2 className="mb-4 text-lg font-semibold">Home</h2>
       <ActionQueue onOpen={onOpenConversation} />
       <Financials />
