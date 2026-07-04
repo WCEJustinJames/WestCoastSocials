@@ -51,6 +51,8 @@ interface PlayerCardProps {
   // the strict auto-linker won't touch) — human confirms with one tap.
   threadSuggestions?: { chatId: string; title: string; network: string }[]
   onLinkThread?: (id: string, chatId: string) => void
+  // Put a player on ice (snooze) for N days, or un-ice with days=0.
+  onIcePlayer?: (id: string, days: number) => void
 }
 
 /** One editable player record. Shared by the Players list and the review queue. */
@@ -61,6 +63,7 @@ export function PlayerCard({
   threadNetwork = null, threadName = null,
   att = null, rank = null,
   threadSuggestions = [], onLinkThread,
+  onIcePlayer,
 }: PlayerCardProps) {
   const stakeArr = e.stakes.split(',').map((s) => s.trim()).filter(Boolean)
   const venueArr = e.venues.split(',').map((s) => s.trim()).filter(Boolean)
@@ -256,6 +259,29 @@ export function PlayerCard({
         >
           Save
         </button>
+        {onIcePlayer && (
+          onIce ? (
+            <button
+              onClick={() => onIcePlayer(r.id, 0)}
+              title={`On ice until ${r.snooze_until?.slice(0, 10)} — click to un-ice`}
+              className="rounded-md bg-rose-100 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-200"
+            >❄ un-ice</button>
+          ) : (
+            <select
+              value=""
+              onChange={(e) => { if (e.target.value) onIcePlayer(r.id, Number(e.target.value)) }}
+              title="Put on ice (pause outreach) for a period"
+              className="rounded-md border border-slate-300 px-1.5 py-1 text-xs text-slate-600 outline-none focus:border-sky-400"
+            >
+              <option value="">❄ ice…</option>
+              <option value="14">2 weeks</option>
+              <option value="30">1 month</option>
+              <option value="60">2 months</option>
+              <option value="90">3 months</option>
+              <option value="180">6 months</option>
+            </select>
+          )
+        )}
         <button
           onClick={() => void onToggleHide(r.id, r.hidden)}
           title={r.hidden ? 'Unhide' : 'Hide from lists'}
