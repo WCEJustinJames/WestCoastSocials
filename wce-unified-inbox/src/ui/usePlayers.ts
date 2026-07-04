@@ -9,6 +9,22 @@ export interface SingleThread { chatId: string; title: string; network: string }
 
 export const phoneCore = (p: string | null): string =>
   p ? p.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, '') : ''
+
+// Phone health for a contact. An AU national number (61/0 stripped) is 9 digits;
+// a mobile starts with 4. Anything else is flagged so bad numbers don't sit
+// silently failing to send.
+export type PhoneStatus = 'empty' | 'ok' | 'landline' | 'short' | 'long'
+export function phoneStatus(p: string | null): PhoneStatus {
+  if (!(p ?? '').replace(/\D/g, '')) return 'empty'
+  const core = phoneCore(p)
+  if (core.length < 9) return 'short'
+  if (core.length > 9) return 'long'
+  return core.startsWith('4') ? 'ok' : 'landline'
+}
+export const phoneStatusLabel: Record<PhoneStatus, string> = {
+  empty: '', ok: '', landline: 'landline (not a mobile)',
+  short: 'too few digits', long: 'too many digits',
+}
 const firstNonEmpty = (vals: (string | null)[]): string | null =>
   vals.find((v) => v != null && String(v).trim() !== '') ?? null
 const unionArr = (arrs: (string[] | null)[]): string[] =>
@@ -268,6 +284,10 @@ export function usePlayers(initialFilter?: string) {
   const [chatTitles, setChatTitles] = useState<Map<string, string>>(new Map())
   // Every 1:1 thread — for suggesting Messenger matches to no-contact players.
   const [singleThreads, setSingleThreads] = useState<SingleThread[]>([])
+  // CRM ids whose last SMS batch send FAILED (dead/wrong number), last 60d.
+  const [failedSends, setFailedSends] = useState<Set<string>>(new Set())
+  // "Bad number" view: invalid-length or send-failed numbers to fix.
+  const [badNumberOnly, setBadNumberOnly] = useState(false)
   const [query, setQuery] = useState('')
   const [regionFilter, setRegionFilter] = useState('all')
   const [status, setStatus] = useState<string | null>(null)
@@ -376,6 +396,21 @@ export function usePlayers(initialFilter?: string) {
     const { data: vfb } = await fbView.from('inbox_fb_dm_verified').select('id')
     setVerifiedFbIds(new Set((vfb ?? []).map((x) => x.id)))
 
+    // SMS batch sends that FAILED in the last 60d, keyed by CRM id — a dead or
+    // wrong number to fix. (A later success would show as a fresh signal; this
+    // list is a starting point, cleared once the number is corrected + re-sent.)
+    const { data: fails } = await supabase
+      .from('inbox_batch_items')
+      .select('data')
+      .eq('status', 'failed')
+      .gte('created_at', new Date(Date.now() - 60 * 86_400_000).toISOString())
+      .limit(2000)
+    const fs = new Set<string>()
+    for (const it of (fails ?? []) as { data: { outreach_id?: string } | null }[]) {
+      if (it.data?.outreach_id) fs.add(it.data.outreach_id)
+    }
+    setFailedSends(fs)
+
     // Attendance scoring: page through the stats view (~2k norms and growing).
     const stats = new Map<string, AttStats>()
     for (let from = 0; ; from += PAGE) {
@@ -449,6 +484,11 @@ export function usePlayers(initialFilter?: string) {
       if (sourceFilter !== 'all' && sourceLabel(r) !== sourceFilter) return false
       if (fbFriendOnly && !verifiedFbIds.has(r.id)) return false
       if (firstNameOnly && !isFirstNameOnly(r)) return false
+      if (badNumberOnly) {
+        const st = phoneStatus(r.phone)
+        const bad = st === 'short' || st === 'long' || failedSends.has(r.id)
+        if (!bad) return false
+      }
       if (regionFilter !== 'all') {
         const rg = (r.region ?? '').toLowerCase()
         if (!rg.includes('all area') && !rg.includes(regionFilter.toLowerCase())) return false
@@ -509,7 +549,13 @@ export function usePlayers(initialFilter?: string) {
       return (a.player_name ?? '').localeCompare(b.player_name ?? '')
     })
     return out
-  }, [rows, query, regionFilter, venueFilter, sortMode, att, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, firstNameOnly, verifiedFbIds, reviewed])
+  }, [rows, query, regionFilter, venueFilter, sortMode, att, showHidden, tournamentOnly, cashOnly, noContactOnly, banOnly, staffOnly, incompleteOnly, sourceFilter, fbFriendOnly, firstNameOnly, badNumberOnly, failedSends, verifiedFbIds, reviewed])
+
+  // How many records have a bad or failed number — for the filter chip count.
+  const badNumberCount = useMemo(
+    () => rows.filter((r) => { const s = phoneStatus(r.phone); return s === 'short' || s === 'long' || failedSends.has(r.id) }).length,
+    [rows, failedSends],
+  )
 
   // Distinct sources present, with counts, for the Merge & Review source filter.
   const sources = useMemo(() => {
@@ -804,6 +850,7 @@ export function usePlayers(initialFilter?: string) {
     sourceFilter, setSourceFilter, sources,
     fbFriendOnly, setFbFriendOnly, fbFriendCount, importFbFriends, clearFbFriends,
     firstNameOnly, setFirstNameOnly, firstNameOnlyCount,
+    badNumberOnly, setBadNumberOnly, badNumberCount, failedSends,
     reviewed, unmarkReviewed,
     chatNetworks, chatTitles,
     load, regionCounts, regions, dupGroups, nameDupGroups, filtered,
