@@ -17,6 +17,7 @@ import { Venues } from './ui/Venues'
 import { SendShelf } from './ui/SendShelf'
 import { StopButton, RepliesToggle, RosterToggle } from './ui/StopButton'
 import { SignOut } from './ui/AuthGate'
+import { SyncStrip } from './ui/SyncStrip'
 
 type View =
   | 'home' | 'inbox' | 'batches' | 'drafts' | 'confirmed' | 'recent' | 'receipts'
@@ -187,6 +188,7 @@ export default function App() {
             <SignOut />
           </div>
         </header>
+        <SyncStrip />
         <div className="min-h-0 flex-1">
           {view === 'home' ? (
             <Home onNavigate={goPlayers} onOpenConversation={goInbox} />

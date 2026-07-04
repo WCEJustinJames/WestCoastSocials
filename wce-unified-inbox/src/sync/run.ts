@@ -34,7 +34,7 @@ import { generateSocialPromos } from './socialauto'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g44-work-token'
+const SYNC_VERSION = 'g45-status'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -162,7 +162,7 @@ async function runOnce(): Promise<void> {
       from: (t: string) => { upsert: (v: unknown) => Promise<{ error?: { message?: string } | null }> }
     })
       .from('inbox_sync_heartbeat')
-      .upsert({ id: 1, last_run: new Date().toISOString(), host: os.hostname(), note: SYNC_VERSION })
+      .upsert({ id: 3, last_run: new Date().toISOString(), host: os.hostname(), note: SYNC_VERSION })
       .then((r) => {
         if (r?.error) console.error('[heartbeat] write failed:', r.error.message ?? r.error)
       })
@@ -392,9 +392,10 @@ async function runOnce(): Promise<void> {
       )
       if (td.attendees) console.log(`[tdsheets] ${td.attendees} attendee(s) from ${td.sheets} sheet(s)`)
       // Heartbeat (id=2) so the dashboard's TD-sheets indicator shows its last run.
-      await supabaseAdmin
+      const { error: hb2Err } = await supabaseAdmin
         .from('inbox_sync_heartbeat')
-        .upsert({ id: 2, last_run: new Date().toISOString(), host: os.hostname(), note: `tdsheets ${td.sheets}/${td.attendees}` })
+        .upsert({ id: 2, last_run: new Date().toISOString(), host: os.hostname(), note: `tdsheets ${td.sheets} sheet(s) / ${td.attendees} attendee(s)` })
+      if (hb2Err) console.error('[tdsheets] heartbeat write failed:', hb2Err.message)
     } catch (e) {
       console.error('[tdsheets] sync error:', e instanceof Error ? e.message : e)
     }
