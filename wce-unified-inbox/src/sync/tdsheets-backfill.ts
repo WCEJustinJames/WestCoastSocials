@@ -18,13 +18,17 @@ import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { syncTdSheets } from './tdsheets'
 
 requireEnv(['supabaseUrl', 'supabaseServiceKey'])
-if (!env.googleRefreshTokenWork) {
-  console.error('[backfill] no Google token — set GOOGLE_REFRESH_TOKEN_WORK (work account, owns the TD sheets) or GOOGLE_REFRESH_TOKEN in .env')
+
+// TD sheets are owned by a MIX of staff accounts (Justin work + personal, Carla,
+// Mike, admin) and shared piecemeal — so no single token sees them all. Sweep
+// EVERY distinct Google token available and merge (upserts are idempotent, so
+// overlaps are harmless). This is why history had bimodal holes.
+const tokens = [...new Set([env.googleRefreshTokenWork, env.googleRefreshToken].filter(Boolean))]
+if (tokens.length === 0) {
+  console.error('[backfill] no Google token — set GOOGLE_REFRESH_TOKEN_WORK and/or GOOGLE_REFRESH_TOKEN in .env')
   process.exit(1)
 }
-console.log(process.env.GOOGLE_REFRESH_TOKEN_WORK
-  ? '[backfill] using the WORK account token'
-  : '[backfill] using the main token — set GOOGLE_REFRESH_TOKEN_WORK to sweep the work account’s Drive')
+console.log(`[backfill] sweeping ${tokens.length} Google account(s) and merging`)
 
 const all = process.argv.includes('--all')
 const LOOKBACK_DAYS = all ? 366 : 70
@@ -33,14 +37,22 @@ async function main(): Promise<void> {
   console.log(all
     ? '[backfill] sweeping the ENTIRE TD-sheet history (all years)…'
     : `[backfill] sweeping TD sheets from the last ${LOOKBACK_DAYS} days…`)
-  const r = await syncTdSheets(
-    supabaseAdmin,
-    env.googleClientId,
-    env.googleClientSecret,
-    env.googleRefreshToken,
-    LOOKBACK_DAYS,
-  )
-  console.log(`[backfill] done: ${r.sheets} sheet(s) read, ${r.attendees} attendee row(s) upserted`)
+  let totalSheets = 0
+  let totalAttendees = 0
+  for (let i = 0; i < tokens.length; i++) {
+    console.log(`[backfill] --- account ${i + 1}/${tokens.length} ---`)
+    const r = await syncTdSheets(
+      supabaseAdmin,
+      env.googleClientId,
+      env.googleClientSecret,
+      tokens[i],
+      LOOKBACK_DAYS,
+    )
+    console.log(`[backfill] account ${i + 1}: ${r.sheets} sheet(s) read, ${r.attendees} attendee row(s) upserted`)
+    totalSheets += r.sheets
+    totalAttendees += r.attendees
+  }
+  console.log(`[backfill] done: ${totalSheets} sheet-read(s) across accounts, ${totalAttendees} attendee row(s) upserted`)
 
   const { data } = await supabaseAdmin
     .from('inbox_td_attendees')

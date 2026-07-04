@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { normFull, normCore, VENUES } from './usePlayers'
 import { ActionQueue } from './ActionQueue'
 import { Financials } from './Financials'
+import { SheetCoverage } from './SheetCoverage'
 
 /** A trimmed CRM row — only what the post-game matcher / router needs. */
 interface CrmRow {
@@ -29,6 +30,7 @@ export function Home({
       <h2 className="mb-4 text-lg font-semibold">Home</h2>
       <ActionQueue onOpen={onOpenConversation} />
       <Financials />
+      <SheetCoverage />
       <DashboardCards onNavigate={onNavigate} />
       <FifoDue onOpen={onOpenConversation} />
       <WinBack onOpen={onOpenConversation} />
