@@ -1052,6 +1052,24 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_email_mutes: {
+        Row: {
+          id: string
+          pattern: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          pattern: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          pattern?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
       inbox_game_financials: {
         Row: {
           id: string

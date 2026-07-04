@@ -66,6 +66,8 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
   const [playerUnread, setPlayerUnread] = useState<Unread[]>([])
   const [otherUnread, setOtherUnread] = useState<Unread[]>([])
   const [emails, setEmails] = useState<Email[]>([])
+  const [mutes, setMutes] = useState<string[]>([])
+  const [showAutomated, setShowAutomated] = useState(false)
   const [awaited, setAwaited] = useState<AwaitedTransfer[]>([])
   // conversation_id -> last inbound message text, for triage-at-a-glance rows.
   const [lastMsg, setLastMsg] = useState<Map<string, string>>(new Map())
@@ -171,8 +173,18 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
       .select('id, gmail_id, from_name, from_email, subject, snippet')
       .eq('resolved', false)
       .order('received_at', { ascending: false })
-      .limit(40)
-    setEmails((em as Email[]) ?? [])
+      .limit(60)
+    const allEmails = (em as Email[]) ?? []
+    // Muted senders: auto-resolve on sight so they never come back.
+    const { data: mu } = await supabase.from('inbox_email_mutes').select('pattern')
+    const mutePatterns = ((mu ?? []) as { pattern: string }[]).map((m) => m.pattern.toLowerCase())
+    setMutes(mutePatterns)
+    const isMuted = (e: Email) => mutePatterns.some((p) => (e.from_email ?? '').toLowerCase().includes(p))
+    const mutedNow = allEmails.filter(isMuted)
+    if (mutedNow.length) {
+      await supabase.from('inbox_emails').update({ resolved: true }).in('id', mutedNow.map((e) => e.id))
+    }
+    setEmails(allEmails.filter((e) => !isMuted(e)))
 
     const { data: tf } = await supabase
       .from('inbox_transfers')
@@ -231,8 +243,36 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
     setEmails((prev) => prev.filter((e) => e.id !== id))
     setBusy(false)
   }
+  /** Mute a sender: resolves everything from them now and forever after. */
+  async function muteSender(e: Email) {
+    const addr = (e.from_email ?? '').toLowerCase().trim()
+    if (!addr) return
+    if (!window.confirm(`Mute ${addr}? Their emails stop appearing here (Gmail itself is untouched).`)) return
+    setBusy(true)
+    await supabase.from('inbox_email_mutes').upsert({ pattern: addr }, { onConflict: 'pattern', ignoreDuplicates: true })
+    const gone = emails.filter((x) => (x.from_email ?? '').toLowerCase().includes(addr))
+    if (gone.length) await supabase.from('inbox_emails').update({ resolved: true }).in('id', gone.map((x) => x.id))
+    setMutes((prev) => [...prev, addr])
+    setEmails((prev) => prev.filter((x) => !(x.from_email ?? '').toLowerCase().includes(addr)))
+    setBusy(false)
+  }
 
-  const total = needsYou.length + playerUnread.length + emails.length + awaited.length
+  // Automated/notification mail is triaged into a collapsed group; humans and
+  // money stay on top. Mutes (above) remove a sender entirely.
+  const NOISE_MAIL = /no-?reply|noreply|do-?not-?reply|notification|mailer|automated|alerts?@|updates?@|newsletter|@txt\.voice|security alert|verification code|receipt from|has been added to your account/i
+  const isAutomated = (e: Email) =>
+    NOISE_MAIL.test(`${e.from_email ?? ''} ${e.subject ?? ''}`)
+  const primaryEmails = emails.filter((e) => !isAutomated(e))
+  const automatedEmails = emails.filter(isAutomated)
+  async function resolveAllAutomated() {
+    if (!automatedEmails.length) return
+    setBusy(true)
+    await supabase.from('inbox_emails').update({ resolved: true }).in('id', automatedEmails.map((e) => e.id))
+    setEmails((prev) => prev.filter((e) => !isAutomated(e)))
+    setBusy(false)
+  }
+
+  const total = needsYou.length + playerUnread.length + primaryEmails.length + awaited.length
   if (total === 0 && otherUnread.length === 0 && !bridgeDown) return null // nothing needs attention
 
   const chip = (text: string, cls: string) => (
@@ -246,7 +286,28 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
   )
 
   const shownPlayers = showAllPlayers ? playerUnread : playerUnread.slice(0, CAP)
-  const shownEmails = showAllEmails ? emails : emails.slice(0, CAP)
+  const shownEmails = showAllEmails ? primaryEmails : primaryEmails.slice(0, CAP)
+
+  const emailRow = (e: Email) => (
+    <li key={e.id} className="flex items-center gap-2 rounded border border-rose-100 bg-white p-1.5 text-sm">
+      {chip('email', 'bg-sky-100 text-sky-700')}
+      <span className="min-w-0 flex-1 truncate">
+        <span className="font-medium">{e.from_name || e.from_email || 'Unknown sender'}</span>
+        {e.subject ? <span className="text-slate-600"> — {e.subject}</span> : null}
+        {e.snippet ? <span className="text-slate-400"> · {snippet(e.snippet, 60)}</span> : null}
+      </span>
+      <a
+        href={`https://mail.google.com/mail/u/0/#inbox/${e.gmail_id}`}
+        target="_blank"
+        rel="noreferrer"
+        className="rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700"
+      >open</a>
+      <button onClick={() => void muteSender(e)} disabled={busy}
+        title={`Never show ${e.from_email ?? 'this sender'} here again`}
+        className="text-xs text-slate-400 hover:text-amber-600 disabled:opacity-40">mute</button>
+      {doneBtn(() => void resolveEmail(e.id))}
+    </li>
+  )
 
   return (
     <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50/60 p-3">
@@ -331,34 +392,32 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
         </>
       )}
 
-      {emails.length > 0 && (
+      {primaryEmails.length > 0 && (
         <>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Email · {emails.length}</p>
-          <ul className="mb-1 space-y-1">
-            {shownEmails.map((e) => (
-              <li key={e.id} className="flex items-center gap-2 rounded border border-rose-100 bg-white p-1.5 text-sm">
-                {chip('email', 'bg-sky-100 text-sky-700')}
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-medium">{e.from_name || e.from_email || 'Unknown sender'}</span>
-                  {e.subject ? <span className="text-slate-600"> — {e.subject}</span> : null}
-                  {e.snippet ? <span className="text-slate-400"> · {snippet(e.snippet, 60)}</span> : null}
-                </span>
-                <a
-                  href={`https://mail.google.com/mail/u/0/#inbox/${e.gmail_id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700"
-                >open</a>
-                {doneBtn(() => void resolveEmail(e.id))}
-              </li>
-            ))}
-          </ul>
-          {emails.length > CAP && (
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Email · {primaryEmails.length}</p>
+          <ul className="mb-1 space-y-1">{shownEmails.map(emailRow)}</ul>
+          {primaryEmails.length > CAP && (
             <button onClick={() => setShowAllEmails((v) => !v)} className="mb-2 text-xs text-slate-500 hover:underline">
-              {showAllEmails ? 'show fewer' : `show all ${emails.length}`}
+              {showAllEmails ? 'show fewer' : `show all ${primaryEmails.length}`}
             </button>
           )}
         </>
+      )}
+
+      {automatedEmails.length > 0 && (
+        <details className="mb-1" open={showAutomated} onToggle={(e) => setShowAutomated((e.target as HTMLDetailsElement).open)}>
+          <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-700">
+            {automatedEmails.length} automated email(s) (alerts, receipts, no-reply){mutes.length ? ` · ${mutes.length} sender(s) muted` : ''}
+          </summary>
+          <button
+            onClick={() => void resolveAllAutomated()}
+            disabled={busy}
+            className="my-1 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+          >
+            ✓ clear all {automatedEmails.length}
+          </button>
+          <ul className="space-y-1">{automatedEmails.map(emailRow)}</ul>
+        </details>
       )}
 
       {otherUnread.length > 0 && (
