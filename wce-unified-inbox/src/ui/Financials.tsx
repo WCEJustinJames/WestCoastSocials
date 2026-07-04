@@ -16,6 +16,8 @@ const METRICS = [
   { key: 'netCalc', label: 'Net (calc)' },
   { key: 'buyins', label: 'Buy-ins' },
   { key: 'rake', label: 'Cash rake' },
+  { key: 'outgoings', label: 'Outgoings' },
+  { key: 'overlay', label: 'Overlay' },
 ] as const
 type MetricKey = (typeof METRICS)[number]['key']
 
@@ -55,6 +57,8 @@ interface Game {
   buyinsEftpos: number | null
   buyinsPayid: number | null
   rake: number | null
+  outgoings: number | null
+  overlay: number | null
 }
 interface Bucket {
   key: string
@@ -63,6 +67,8 @@ interface Bucket {
   netCalc: number
   buyins: number
   rake: number
+  outgoings: number
+  overlay: number
   games: Game[]
 }
 
@@ -116,6 +122,8 @@ export function Financials() {
         buyinsEftpos: r.buyins_eftpos == null ? null : Number(r.buyins_eftpos),
         buyinsPayid: r.buyins_payid == null ? null : Number(r.buyins_payid),
         rake: r.cash_rake == null ? null : Number(r.cash_rake),
+        outgoings: r.outgoings == null ? null : Number(r.outgoings),
+        overlay: r.overlay == null ? null : Number(r.overlay),
       })))
       setLoaded(true)
     })()
@@ -130,11 +138,13 @@ export function Financials() {
       const map = new Map<string, Bucket>()
       for (const g of inRange) {
         const k = g.venue ?? '(unknown)'
-        const b = map.get(k) ?? { key: k, label: k, netActual: 0, netCalc: 0, buyins: 0, rake: 0, games: [] }
+        const b = map.get(k) ?? { key: k, label: k, netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, games: [] }
         b.netActual += g.netActual ?? g.netCalc ?? 0
         b.netCalc += g.netCalc ?? g.netActual ?? 0
         b.buyins += g.buyins ?? 0
         b.rake += g.rake ?? 0
+        b.outgoings += g.outgoings ?? 0
+        b.overlay += g.overlay ?? 0
         b.games.push(g)
         map.set(k, b)
       }
@@ -148,17 +158,21 @@ export function Financials() {
         netCalc: g.netCalc ?? g.netActual ?? 0,
         buyins: g.buyins ?? 0,
         rake: g.rake ?? 0,
+        outgoings: g.outgoings ?? 0,
+        overlay: g.overlay ?? 0,
         games: [g],
       }))
     }
     const map = new Map<string, Bucket>()
     for (const g of inRange) {
       const k = weekStart(new Date(`${g.date}T12:00:00`))
-      const b = map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, games: [] }
+      const b = map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, games: [] }
       b.netActual += g.netActual ?? g.netCalc ?? 0
       b.netCalc += g.netCalc ?? g.netActual ?? 0
       b.buyins += g.buyins ?? 0
       b.rake += g.rake ?? 0
+      b.outgoings += g.outgoings ?? 0
+      b.overlay += g.overlay ?? 0
       b.games.push(g)
       map.set(k, b)
     }
@@ -173,7 +187,7 @@ export function Financials() {
     const cur = new Date(`${firstKey}T12:00:00`)
     while (out.length < 120) {
       const k = weekStart(cur)
-      out.push(map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, games: [] })
+      out.push(map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, games: [] })
       if (k === nowKey) break
       cur.setDate(cur.getDate() + 7)
     }
@@ -230,6 +244,8 @@ export function Financials() {
     { name: 'Net (calc)', now: thisWeek?.netCalc ?? null, prev: lastWeek?.netCalc ?? null },
     { name: 'Buy-ins', now: thisWeek?.buyins ?? null, prev: lastWeek?.buyins ?? null },
     { name: 'Cash rake', now: thisWeek?.rake ?? null, prev: lastWeek?.rake ?? null },
+    { name: 'Outgoings', now: thisWeek?.outgoings ?? null, prev: lastWeek?.outgoings ?? null },
+    { name: 'Overlay', now: thisWeek?.overlay ?? null, prev: lastWeek?.overlay ?? null },
   ]
 
   const hovered = hover != null ? buckets[hover] : null
@@ -242,7 +258,7 @@ export function Financials() {
       </div>
 
       {/* this-week tiles */}
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {tiles.map((t) => (
           <div key={t.name} className="rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-2">
             <p className="text-[11px] text-slate-500">{t.name} · this wk</p>

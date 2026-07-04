@@ -1137,6 +1137,8 @@ export type Database = {
           buyins_eftpos: number | null
           buyins_payid: number | null
           prize_pool: number | null
+          overlay: number | null
+          outgoings: number | null
           cash_rake: number | null
         }
         Relationships: []
