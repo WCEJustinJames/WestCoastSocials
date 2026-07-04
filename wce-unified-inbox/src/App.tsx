@@ -74,6 +74,16 @@ const TITLES: Record<View, string> = Object.fromEntries(
 export default function App() {
   const [view, setView] = useState<View>('home')
   const [drawer, setDrawer] = useState(false)
+  // Desktop sidebar collapse (icon rail). Remembered across reloads.
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('wce_nav_collapsed') === '1' } catch { return false }
+  })
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      try { localStorage.setItem('wce_nav_collapsed', c ? '0' : '1') } catch { /* ignore */ }
+      return !c
+    })
+  }
   // A Home dashboard card can deep-link into the Players tab with a filter
   // pre-applied (e.g. the "No contact" card opens the no-contact list to work through).
   const [playersFilter, setPlayersFilter] = useState<string | null>(null)
@@ -95,50 +105,67 @@ export default function App() {
     setDrawer(false)
   }
 
-  const sidebar = (
+  const sidebar = (mini: boolean) => (
     <>
-      <div className="flex items-center gap-2.5 border-b border-white/10 px-4 py-4">
+      <div className={`flex items-center gap-2.5 border-b border-white/10 py-4 ${mini ? 'justify-center px-2' : 'px-4'}`}>
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500 text-base font-black text-slate-950">W</span>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight text-white">West Coast Poker</p>
-          <p className="text-[10px] text-slate-500">Unified inbox &amp; CRM</p>
-        </div>
+        {!mini && (
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold leading-tight text-white">West Coast Poker</p>
+            <p className="text-[10px] text-slate-500">Unified inbox &amp; CRM</p>
+          </div>
+        )}
       </div>
       <nav className="flex-1 overflow-y-auto px-2 pb-4">
         {NAV.map((g) => (
           <div key={g.group}>
-            <p className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{g.group}</p>
+            {mini ? (
+              <div className="mx-2 mt-3 border-t border-white/10" />
+            ) : (
+              <p className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{g.group}</p>
+            )}
             {g.items.map((i) => (
               <button
                 key={i.view}
                 onClick={() => nav(i.view)}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
+                title={mini ? i.label : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-lg py-2 text-sm transition-colors ${mini ? 'justify-center px-0' : 'px-3'} ${
                   view === i.view
                     ? 'bg-emerald-600 font-medium text-white shadow-sm'
                     : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
                 }`}
               >
                 <span className="w-5 text-center text-base leading-none">{i.icon}</span>
-                {i.label}
+                {!mini && i.label}
               </button>
             ))}
           </div>
         ))}
       </nav>
+      {/* collapse toggle — desktop only (hidden inside the phone drawer) */}
+      <button
+        onClick={toggleCollapsed}
+        title={mini ? 'Expand the sidebar' : 'Collapse to icons'}
+        className="hidden items-center justify-center gap-2 border-t border-white/10 py-2.5 text-xs text-slate-500 hover:bg-white/5 hover:text-slate-200 md:flex"
+      >
+        {mini ? '»' : '« collapse'}
+      </button>
     </>
   )
 
   return (
     <div className="flex h-screen bg-slate-100 text-slate-900">
       {/* desktop sidebar */}
-      <aside className="hidden w-56 shrink-0 flex-col bg-slate-950 md:flex">{sidebar}</aside>
+      <aside className={`hidden shrink-0 flex-col bg-slate-950 transition-[width] duration-150 md:flex ${collapsed ? 'w-16' : 'w-56'}`}>
+        {sidebar(collapsed)}
+      </aside>
 
-      {/* phone drawer */}
+      {/* phone drawer — always full-width labels */}
       {drawer && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-slate-950/60" onClick={() => setDrawer(false)} />
           <aside className="absolute inset-y-0 left-0 flex w-64 max-w-[80vw] flex-col bg-slate-950 shadow-2xl">
-            {sidebar}
+            {sidebar(false)}
           </aside>
         </div>
       )}
