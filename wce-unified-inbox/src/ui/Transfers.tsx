@@ -20,8 +20,15 @@ export function Transfers() {
   // per-row last-4 ref inputs for outgoing confirmations
   const [refs, setRefs] = useState<Record<string, string>>({})
   const [showConfirmed, setShowConfirmed] = useState(false)
+  // Received (money IN) vs Sent (payouts + money OUT).
+  const [dir, setDir] = useState<'all' | 'in' | 'out'>('all')
 
   const flash = (m: string) => { setStatus(m); setTimeout(() => setStatus(null), 4000) }
+
+  const dirOf = (t: Transfer): 'in' | 'out' => (t.direction === 'in' ? 'in' : 'out')
+  const inDir = (t: Transfer): boolean => dir === 'all' || dirOf(t) === dir
+  const amountNum = (a: string | null): number => Number((a ?? '').replace(/[^0-9.]/g, '')) || 0
+  const money = (n: number): string => `$${Math.round(n).toLocaleString()}`
 
   async function load() {
     const since = new Date(Date.now() - WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10)
@@ -37,16 +44,27 @@ export function Transfers() {
   }
   useEffect(() => { void load() }, [])
 
+  const shown = useMemo(() => rows.filter(inDir), [rows, dir])
   const unconfirmed = useMemo(
-    () => rows.filter((r) => r.confirm_state === 'unconfirmed' && !(r.office_confirm ?? '').trim()),
-    [rows],
+    () => shown.filter((r) => r.confirm_state === 'unconfirmed' && !(r.office_confirm ?? '').trim()),
+    [shown],
   )
-  const inFlight = useMemo(() => rows.filter((r) => r.confirm_state === 'queued'), [rows])
-  const pendingFlagged = useMemo(() => rows.filter((r) => r.pending), [rows])
+  const inFlight = useMemo(() => shown.filter((r) => r.confirm_state === 'queued'), [shown])
+  const pendingFlagged = useMemo(() => shown.filter((r) => r.pending), [shown])
   const confirmed = useMemo(
-    () => rows.filter((r) => (r.office_confirm ?? '').trim() || r.confirm_state === 'written'),
-    [rows],
+    () => shown.filter((r) => (r.office_confirm ?? '').trim() || r.confirm_state === 'written'),
+    [shown],
   )
+
+  // Direction totals across the whole window (for the filter chips + summary).
+  const totals = useMemo(() => {
+    let inSum = 0, outSum = 0, inN = 0, outN = 0
+    for (const r of rows) {
+      if (dirOf(r) === 'in') { inSum += amountNum(r.amount); inN++ }
+      else { outSum += amountNum(r.amount); outN++ }
+    }
+    return { inSum, outSum, inN, outN }
+  }, [rows])
 
   async function confirmLine(t: Transfer) {
     const isOut = t.direction === 'out'
@@ -144,6 +162,33 @@ export function Transfers() {
         Ticking writes JL (and the ref) back into the sheet. EFTPOS ins auto-confirm as ref 1111.
       </p>
       {status && <p className="mb-3 text-sm text-emerald-700">{status}</p>}
+
+      {/* received / sent filter + running totals */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => setDir('all')}
+          className={`rounded-full border px-3 py-1 text-xs font-medium ${dir === 'all' ? 'border-slate-700 bg-slate-800 text-white' : 'border-slate-300 bg-white text-slate-600 hover:border-slate-500'}`}
+        >
+          All · {rows.length}
+        </button>
+        <button
+          onClick={() => setDir('in')}
+          title="Money received into the club"
+          className={`rounded-full border px-3 py-1 text-xs font-medium ${dir === 'in' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50'}`}
+        >
+          ↓ Received · {money(totals.inSum)} <span className="opacity-60">({totals.inN})</span>
+        </button>
+        <button
+          onClick={() => setDir('out')}
+          title="Payouts and money sent out"
+          className={`rounded-full border px-3 py-1 text-xs font-medium ${dir === 'out' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50'}`}
+        >
+          ↑ Sent · {money(totals.outSum)} <span className="opacity-60">({totals.outN})</span>
+        </button>
+        {dir !== 'all' && (
+          <span className="text-xs text-slate-400">net {money(totals.inSum - totals.outSum)}</span>
+        )}
+      </div>
 
       {pendingFlagged.length > 0 && (
         <>
