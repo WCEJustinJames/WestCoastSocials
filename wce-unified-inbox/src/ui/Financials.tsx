@@ -69,6 +69,9 @@ export function Financials() {
   const [rangeW, setRangeW] = useState<number>(8)
   const [venue, setVenue] = useState('all')
   const [perGame, setPerGame] = useState(false)
+  // 'time' = trend over weeks/games; 'venue' = one bar per venue/night summed
+  // over the range, sorted best-first — the which-night-makes-money view.
+  const [mode, setMode] = useState<'time' | 'venue'>('time')
   const [hover, setHover] = useState<number | null>(null)
   const [selected, setSelected] = useState<Bucket | null>(null)
 
@@ -96,8 +99,22 @@ export function Financials() {
   const buckets = useMemo(() => {
     const cutoff = new Date(Date.now() - rangeW * 7 * 86_400_000).toISOString().slice(0, 10)
     const inRange = rows.filter(
-      (g) => g.date >= cutoff && (venue === 'all' || (g.venue ?? '').toLowerCase() === venue.toLowerCase()),
+      (g) => g.date >= cutoff && (mode === 'venue' || venue === 'all' || (g.venue ?? '').toLowerCase() === venue.toLowerCase()),
     )
+    if (mode === 'venue') {
+      const map = new Map<string, Bucket>()
+      for (const g of inRange) {
+        const k = g.venue ?? '(unknown)'
+        const b = map.get(k) ?? { key: k, label: k, netActual: 0, netCalc: 0, buyins: 0, rake: 0, games: [] }
+        b.netActual += g.netActual ?? g.netCalc ?? 0
+        b.netCalc += g.netCalc ?? g.netActual ?? 0
+        b.buyins += g.buyins ?? 0
+        b.rake += g.rake ?? 0
+        b.games.push(g)
+        map.set(k, b)
+      }
+      return [...map.values()].sort((a, b) => b[metric] - a[metric])
+    }
     if (perGame) {
       return inRange.slice(-40).map<Bucket>((g) => ({
         key: `${g.sheetId}`,
@@ -121,7 +138,7 @@ export function Financials() {
       map.set(k, b)
     }
     return [...map.values()].sort((a, b) => a.key.localeCompare(b.key)).slice(-Math.max(rangeW, 4))
-  }, [rows, rangeW, venue, perGame])
+  }, [rows, rangeW, venue, perGame, mode, metric])
 
   const thisWeekKey = weekStart(new Date())
   const thisWeek = buckets.find((b) => !perGame && b.key === thisWeekKey)
@@ -201,19 +218,34 @@ export function Financials() {
           </button>
         ))}
         <span className="mx-1 h-4 w-px bg-slate-200" />
-        <select value={venue} onChange={(e) => { setVenue(e.target.value); setSelected(null) }} className="input px-2 py-0.5 text-xs">
-          <option value="all">all venues</option>
-          {VENUES.map((v) => <option key={v} value={v}>{v}</option>)}
-        </select>
-        <label className="ml-auto flex items-center gap-1 text-xs text-slate-500">
-          <input type="checkbox" checked={perGame} onChange={(e) => { setPerGame(e.target.checked); setSelected(null) }} />
-          per game
-        </label>
+        <button onClick={() => { setMode('time'); setSelected(null) }}
+          className={`chip border ${mode === 'time' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-500 hover:border-emerald-400'}`}>
+          over time
+        </button>
+        <button onClick={() => { setMode('venue'); setSelected(null) }}
+          className={`chip border ${mode === 'venue' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-500 hover:border-emerald-400'}`}>
+          by venue
+        </button>
+        {mode === 'time' && (
+          <>
+            <select value={venue} onChange={(e) => { setVenue(e.target.value); setSelected(null) }} className="input px-2 py-0.5 text-xs">
+              <option value="all">all venues</option>
+              {VENUES.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+            <label className="ml-auto flex items-center gap-1 text-xs text-slate-500">
+              <input type="checkbox" checked={perGame} onChange={(e) => { setPerGame(e.target.checked); setSelected(null) }} />
+              per game
+            </label>
+          </>
+        )}
       </div>
 
       {/* chart */}
       <p className="mb-1 text-xs font-medium text-slate-500">
-        {metricLabel} — {perGame ? `last ${buckets.length} games` : `weekly, last ${buckets.length} weeks`}{venue !== 'all' ? ` · ${venue}` : ''}
+        {metricLabel} — {mode === 'venue'
+          ? `by venue/night, ${RANGES.find((r) => r.key === rangeW)?.label ?? ''} total (best first)`
+          : perGame ? `last ${buckets.length} games` : `weekly, last ${buckets.length} weeks`}
+        {mode === 'time' && venue !== 'all' ? ` · ${venue}` : ''}
       </p>
       <div className="relative">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={`${metricLabel} bar chart`}>
@@ -263,8 +295,9 @@ export function Financials() {
             {' · net '}{fmt(hovered.netActual)}
             {' · buy-ins '}{fmt(hovered.buyins)}
             {' · rake '}{fmt(hovered.rake)}
-            {!perGame && ` · ${hovered.games.length} game(s)`}
-            {perGame && hovered.games[0]?.venue ? ` · ${hovered.games[0].venue}` : ''}
+            {(mode === 'venue' || !perGame) && ` · ${hovered.games.length} game(s)`}
+            {mode === 'venue' && hovered.games.length > 0 && ` · avg ${fmt(hovered[metric] / hovered.games.length)}/game`}
+            {mode === 'time' && perGame && hovered.games[0]?.venue ? ` · ${hovered.games[0].venue}` : ''}
           </div>
         )}
       </div>
@@ -274,7 +307,9 @@ export function Financials() {
       {selected && (
         <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50/60 p-2">
           <div className="mb-1 flex items-center justify-between">
-            <p className="text-xs font-semibold">{perGame ? selected.label : `Week of ${selected.label}`} — {selected.games.length} game(s)</p>
+            <p className="text-xs font-semibold">
+              {mode === 'venue' ? selected.label : perGame ? selected.label : `Week of ${selected.label}`} — {selected.games.length} game(s)
+            </p>
             <button onClick={() => setSelected(null)} className="text-xs text-slate-400 hover:text-rose-600">close</button>
           </div>
           <div className="overflow-x-auto">
