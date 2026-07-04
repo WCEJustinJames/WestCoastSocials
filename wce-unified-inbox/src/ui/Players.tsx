@@ -1,12 +1,53 @@
-import { useState } from 'react'
-import { usePlayers, attKey, VENUES } from './usePlayers'
+import { useMemo, useState } from 'react'
+import { usePlayers, attKey, normCore, VENUES, type SingleThread } from './usePlayers'
 import { PlayerCard } from './PlayerRow'
+
+/**
+ * Candidate Beeper threads for a player with no contact details, by name
+ * similarity — looser than the auto-linker's exact-unique rule, because a
+ * human confirms each link. Matches: same normalised name, one name a subset
+ * of the other's words, or first name + surname initial.
+ */
+function threadCandidates(name: string | null, threads: { core: string; toks: string[]; t: SingleThread }[]): SingleThread[] {
+  const core = normCore(name ?? '')
+  if (core.length < 3) return []
+  const toks = core.split(' ')
+  const out: SingleThread[] = []
+  for (const th of threads) {
+    if (!th.core) continue
+    let hit = th.core === core
+    if (!hit && toks.length >= 2 && th.toks.length >= 1) {
+      const sub = toks.every((x) => th.toks.includes(x)) || th.toks.every((x) => toks.includes(x))
+      const initials =
+        toks[0] === th.toks[0] &&
+        toks.length >= 2 && th.toks.length >= 2 &&
+        toks[toks.length - 1][0] === th.toks[th.toks.length - 1][0]
+      hit = sub || initials
+    }
+    if (hit) out.push(th.t)
+    if (out.length >= 3) break
+  }
+  return out
+}
 
 /** Players tab — the full contact list + per-player settings (browse / edit).
  * `initialFilter` lets the Home dashboard open this tab pre-filtered (e.g. the
  * "No contact" card jumps straight to the no-contact list). */
 export function Players({ initialFilter }: { initialFilter?: string | null }) {
   const p = usePlayers(initialFilter ?? undefined)
+  // Pre-normalise every 1:1 thread once; only threads not already linked to a
+  // CRM row are offered as candidates.
+  const linkedChats = useMemo(
+    () => new Set(p.rows.map((r) => r.beeper_chat_id).filter(Boolean)),
+    [p.rows],
+  )
+  const threadIndex = useMemo(
+    () =>
+      p.singleThreads
+        .filter((t) => !linkedChats.has(t.chatId) && !/^[\d\s+()-]{6,}$/.test(t.title))
+        .map((t) => ({ core: normCore(t.title), toks: normCore(t.title).split(' '), t })),
+    [p.singleThreads, linkedChats],
+  )
   return (
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto p-6">
       <div className="mb-1 flex items-center justify-between">
@@ -118,6 +159,10 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
               threadName={p.chatTitles.get(r.beeper_chat_id ?? '') ?? null}
               att={p.att.get(attKey(r.player_name)) ?? null}
               rank={p.sortMode === 'games' ? i + 1 : null}
+              threadSuggestions={
+                !r.beeper_chat_id && !r.phone ? threadCandidates(r.player_name, threadIndex) : []
+              }
+              onLinkThread={p.linkThread}
             />
           )
         })}

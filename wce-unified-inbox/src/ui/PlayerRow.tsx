@@ -47,6 +47,10 @@ interface PlayerCardProps {
   // Attendance scoring (full LP+TD history) + frequency rank when ranked.
   att?: { games: number; tourney_games: number; cash_games: number; last_seen: string | null } | null
   rank?: number | null
+  // Candidate Beeper threads for a no-contact player (name-similarity matches
+  // the strict auto-linker won't touch) — human confirms with one tap.
+  threadSuggestions?: { chatId: string; title: string; network: string }[]
+  onLinkThread?: (id: string, chatId: string) => void
 }
 
 /** One editable player record. Shared by the Players list and the review queue. */
@@ -56,6 +60,7 @@ export function PlayerCard({
   showSelect = false, selected = false, onToggleSel,
   threadNetwork = null, threadName = null,
   att = null, rank = null,
+  threadSuggestions = [], onLinkThread,
 }: PlayerCardProps) {
   const stakeArr = e.stakes.split(',').map((s) => s.trim()).filter(Boolean)
   const venueArr = e.venues.split(',').map((s) => s.trim()).filter(Boolean)
@@ -259,6 +264,23 @@ export function PlayerCard({
           {r.hidden ? 'unhide' : 'hide'}
         </button>
       </div>
+      {threadSuggestions.length > 0 && onLinkThread && (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-md border border-indigo-100 bg-indigo-50/60 px-2 py-1">
+          <span className="text-[11px] text-indigo-700">possible thread match:</span>
+          {threadSuggestions.map((s) => (
+            <span key={s.chatId} className="flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2 py-0.5 text-[11px]">
+              <span className="font-medium">{s.title}</span>
+              <span className="text-slate-400">· {s.network}</span>
+              <button
+                onClick={() => onLinkThread(r.id, s.chatId)}
+                disabled={busy}
+                title="Link this thread to the player — they become reachable from Batches/Inbox"
+                className="font-medium text-emerald-700 hover:underline disabled:opacity-40"
+              >link</button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="mt-1 flex flex-wrap items-center gap-2">
         {/* Region (zone) — single-select */}
         <select

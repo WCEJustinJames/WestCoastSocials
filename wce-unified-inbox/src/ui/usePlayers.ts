@@ -4,6 +4,8 @@ import type { Database } from '../types/database'
 
 export type PlayerRow = Database['public']['Tables']['inbox_outreach']['Row']
 export type AttStats = Database['public']['Views']['inbox_attendance_stats']['Row']
+/** A 1:1 Beeper thread — candidate for linking to a no-contact player. */
+export interface SingleThread { chatId: string; title: string; network: string }
 
 export const phoneCore = (p: string | null): string =>
   p ? p.replace(/\D/g, '').replace(/^61/, '').replace(/^0/, '') : ''
@@ -19,6 +21,7 @@ const filledCount = (r: PlayerRow): number =>
 // inviting them: a way to reach them, a region, stakes, or a venue. These are the
 // rows to work through in Merge & Review.
 export const isIncomplete = (r: PlayerRow): boolean => {
+  if (r.do_not_message) return false // banned: never invited, so nothing to complete
   const noContact = !r.phone?.trim() && !r.beeper_chat_id?.trim()
   const noRegion = !(r.region ?? '').trim()
   const noStakes = (r.stakes?.length ?? 0) === 0
@@ -31,6 +34,7 @@ export const isIncomplete = (r: PlayerRow): boolean => {
 // captures that never recorded a surname). These are the rows to work through and
 // name; saving a surname makes the row stop matching, so it drops off the list.
 export const isFirstNameOnly = (r: PlayerRow): boolean => {
+  if (r.do_not_message) return false // banned: not worth naming, keep the backlog honest
   const n = (r.player_name ?? '').trim()
   if (n === '' || /\s/.test(n)) return false // blank or has a surname
   if (/^[0-9 +()-]+$/.test(n)) return false // a bare phone number
@@ -262,6 +266,8 @@ export function usePlayers(initialFilter?: string) {
   // as it appears in Messenger / the phone), so the card can surface a last name
   // the bare player_name is missing.
   const [chatTitles, setChatTitles] = useState<Map<string, string>>(new Map())
+  // Every 1:1 thread — for suggesting Messenger matches to no-contact players.
+  const [singleThreads, setSingleThreads] = useState<SingleThread[]>([])
   const [query, setQuery] = useState('')
   const [regionFilter, setRegionFilter] = useState('all')
   const [status, setStatus] = useState<string | null>(null)
@@ -347,16 +353,21 @@ export function usePlayers(initialFilter?: string) {
     // Google Messages, not Messenger) so the card badge shows the right channel.
     const { data: convs } = await supabase
       .from('inbox_conversations')
-      .select('external_chat_id, network, title')
+      .select('external_chat_id, network, title, type')
       .limit(5000)
     const nets = new Map<string, string>()
     const titles = new Map<string, string>()
-    for (const c of (convs as { external_chat_id: string | null; network: string | null; title: string | null }[]) ?? []) {
+    const singles: SingleThread[] = []
+    for (const c of (convs as { external_chat_id: string | null; network: string | null; title: string | null; type: string | null }[]) ?? []) {
       if (c.external_chat_id && c.network) nets.set(c.external_chat_id, c.network)
       if (c.external_chat_id && c.title) titles.set(c.external_chat_id, c.title)
+      if (c.external_chat_id && c.title && c.type === 'single') {
+        singles.push({ chatId: c.external_chat_id, title: c.title, network: c.network ?? '' })
+      }
     }
     setChatNetworks(nets)
     setChatTitles(titles)
+    setSingleThreads(singles)
 
     // Which fb_friend no-contact players are verified as real players (in TD/LP).
     const fbView = supabase as unknown as {
@@ -429,7 +440,9 @@ export function usePlayers(initialFilter?: string) {
       if (!showHidden && r.hidden) return false
       if (tournamentOnly && !(r.tournament ?? false)) return false
       if (cashOnly && !(r.cash ?? false)) return false
-      if (noContactOnly && (!!r.phone?.trim() || !!r.beeper_chat_id?.trim())) return false
+      // Banned players are excluded from the no-contact work queue: they're
+      // never messaged, so chasing their number is wasted effort.
+      if (noContactOnly && (r.do_not_message || !!r.phone?.trim() || !!r.beeper_chat_id?.trim())) return false
       if (banOnly && !r.do_not_message) return false
       if (staffOnly && !(r.staff ?? false)) return false
       if (incompleteOnly && !isIncomplete(r)) return false
@@ -714,8 +727,20 @@ export function usePlayers(initialFilter?: string) {
   const setE = (id: string, patch: Partial<Edit>) =>
     setEdits((p) => ({ ...p, [id]: { ...p[id], ...patch } }))
 
+  /** Hand-link a player to a Beeper thread (from the suggested-match chip). */
+  async function linkThread(id: string, chatId: string) {
+    setBusy(true)
+    const { error } = await supabase.from('inbox_outreach').update({ beeper_chat_id: chatId }).eq('id', id)
+    setBusy(false)
+    if (error) { setStatus(`Error: ${error.message}`); return }
+    setStatus('Thread linked.')
+    await load()
+    setTimeout(() => setStatus(null), 4000)
+  }
+
   return {
     att, venueFilter, setVenueFilter, sortMode, setSortMode,
+    singleThreads, linkThread,
     rows, edits, setE, query, setQuery, regionFilter, setRegionFilter,
     status, busy, renames, setRenames, sel, toggleSel, setSel, selectedRows,
     keeperId, setKeeperId, showHidden, setShowHidden, groupKeeper, setGroupKeeper,
