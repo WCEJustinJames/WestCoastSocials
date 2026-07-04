@@ -56,11 +56,20 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
           Refresh
         </button>
       </div>
-      <p className="mb-4 text-sm text-slate-500">
-        {p.rows.length} players ·{' '}
-        {p.regions.length} region values ·{' '}
-        {p.dupGroups.length} phone-duplicate group(s) — clean up in Merge &amp; Review.
+      <p className="mb-2 text-sm text-slate-500">
+        {p.rows.length} players · {p.regions.length} region values ·{' '}
+        {p.dupGroups.length} phone-duplicate group(s).
       </p>
+      {p.dupGroups.length > 0 && (
+        <button
+          onClick={() => void p.mergePhoneDuplicates()}
+          disabled={p.busy}
+          title="Merge records that share a phone number when their names are compatible; clashing names are left for manual review"
+          className="mb-4 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+        >
+          Auto-merge {p.dupGroups.length} shared-number duplicate(s)
+        </button>
+      )}
       {p.status && <p className="mb-3 text-sm text-emerald-700">{p.status}</p>}
 
       <FbFriendsImporter p={p} />
@@ -163,6 +172,7 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
                 !r.beeper_chat_id && !r.phone ? threadCandidates(r.player_name, threadIndex) : []
               }
               onLinkThread={p.linkThread}
+              onIcePlayer={p.icePlayer}
             />
           )
         })}

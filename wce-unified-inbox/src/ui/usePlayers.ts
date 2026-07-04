@@ -617,6 +617,57 @@ export function usePlayers(initialFilter?: string) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, hidden: !currentlyHidden } : r)))
   }
 
+  /** Put a player on ice for N days (snooze_until = today + N); days=0 un-ices. */
+  async function icePlayer(id: string, days: number) {
+    const until = days > 0
+      ? new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
+      : null
+    await supabase.from('inbox_outreach').update({ snooze_until: until }).eq('id', id)
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, snooze_until: until } : r)))
+    setStatus(until ? `On ice until ${until}.` : 'Un-iced.')
+    setTimeout(() => setStatus(null), 3000)
+  }
+
+  /**
+   * Auto-merge exact phone-number duplicates (the same person saved in both
+   * Google accounts, receipts, TD sheets, …). Only merges when the names are
+   * COMPATIBLE — identical, one empty, or one a subset of the other — so a
+   * father/son sharing a landline are left for manual review, never silently
+   * fused. Uses the same safe merge as the manual path (flags OR'd, list
+   * memberships moved, most-complete record kept).
+   */
+  async function mergePhoneDuplicates(): Promise<{ merged: number; skipped: number }> {
+    const nameOk = (g: PlayerRow[]): boolean => {
+      const names = g.map((r) => normCore(r.player_name ?? '')).filter(Boolean)
+      if (names.length <= 1) return true // ≤1 named record: safe
+      const toks = names.map((n) => new Set(n.split(' ')))
+      // every named pair must be identical or one a subset of the other
+      for (let i = 0; i < toks.length; i++) {
+        for (let j = i + 1; j < toks.length; j++) {
+          const a = toks[i], b = toks[j]
+          const subset = [...a].every((x) => b.has(x)) || [...b].every((x) => a.has(x))
+          if (!subset) return false
+        }
+      }
+      return true
+    }
+    setBusy(true)
+    let merged = 0, skipped = 0
+    for (const g of dupGroups) {
+      if (!nameOk(g)) { skipped++; continue }
+      const { primary, merged: m, dropIds } = mergeRows(g)
+      await supabase.from('inbox_outreach').update(m).eq('id', primary.id)
+      await moveListMemberships(dropIds, primary.id)
+      if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+      merged++
+    }
+    setBusy(false)
+    setStatus(`Merged ${merged} phone-duplicate group(s)${skipped ? `, skipped ${skipped} with clashing names (review manually)` : ''}.`)
+    await load()
+    setTimeout(() => setStatus(null), 6000)
+    return { merged, skipped }
+  }
+
   async function savePlayer(id: string) {
     const e = edits[id]
     if (!e) return
@@ -758,5 +809,6 @@ export function usePlayers(initialFilter?: string) {
     load, regionCounts, regions, dupGroups, nameDupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,
     mergeOneGroup, mergeNameGroup, mergeAllDuplicates,
+    icePlayer, mergePhoneDuplicates,
   }
 }
