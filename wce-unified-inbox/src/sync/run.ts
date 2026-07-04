@@ -34,7 +34,7 @@ import { generateSocialPromos } from './socialauto'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g43-full-sweep'
+const SYNC_VERSION = 'g44-work-token'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -95,8 +95,11 @@ if (env.airtableSync && env.airtableKey) {
 }
 if (env.googleRefreshToken) {
   console.log(`[contacts] Google Contacts sync on (every ${env.contactsSyncMinutes}m)`)
-  console.log(`[tdsheets] TD-sheet attendee pull on (every ${env.tdSheetsSyncMinutes}m)`)
-  console.log('[email] Gmail inbox pull on (every 10m, needs gmail.readonly on the token)')
+}
+if (env.googleRefreshTokenWork) {
+  const which = process.env.GOOGLE_REFRESH_TOKEN_WORK ? 'WORK account token' : 'main token (set GOOGLE_REFRESH_TOKEN_WORK to use the work account)'
+  console.log(`[tdsheets] TD-sheet pull on (every ${env.tdSheetsSyncMinutes}m, ${which})`)
+  console.log(`[email] Gmail inbox pull on (every 10m, ${which})`)
 }
 console.log(`[autolink] name-match auto-linker on (every ${env.autoLinkMinutes}m)`)
 console.log(
@@ -338,20 +341,37 @@ async function runOnce(): Promise<void> {
         env.googleClientId,
         env.googleClientSecret,
         env.googleRefreshToken,
+        1,
       )
       if (gc.created) console.log(`[contacts] ${gc.created} new contact(s) imported (${gc.autoHidden} auto-hidden as non-person, ${gc.scanned} changed)`)
     } catch (e) {
       console.error('[contacts] sync error:', e instanceof Error ? e.message : e)
+    }
+    // BOTH address books, per Justin: the work account's contacts too (slot 2
+    // keeps its own incremental cursor). Skipped when no separate work token.
+    if (process.env.GOOGLE_REFRESH_TOKEN_WORK && env.googleRefreshTokenWork !== env.googleRefreshToken) {
+      try {
+        const gw = await syncGoogleContacts(
+          supabaseAdmin,
+          env.googleClientId,
+          env.googleClientSecret,
+          env.googleRefreshTokenWork,
+          2,
+        )
+        if (gw.created) console.log(`[contacts] WORK account: ${gw.created} new contact(s) imported (${gw.autoHidden} auto-hidden, ${gw.scanned} changed)`)
+      } catch (e) {
+        console.error('[contacts] work-account sync error:', e instanceof Error ? e.message : e)
+      }
     }
   }
 
   // Gmail: mirror unread inbox emails for the Home action queue (read-only; the
   // queue's "done" never touches Gmail). No-op until the refresh token carries the
   // gmail.readonly scope — the module detects that and logs the fix once.
-  if (env.googleRefreshToken && Date.now() - lastEmailSync > 10 * 60_000) {
+  if (env.googleRefreshTokenWork && Date.now() - lastEmailSync > 10 * 60_000) {
     lastEmailSync = Date.now()
     try {
-      const em = await syncGmail(supabaseAdmin, env.googleClientId, env.googleClientSecret, env.googleRefreshToken)
+      const em = await syncGmail(supabaseAdmin, env.googleClientId, env.googleClientSecret, env.googleRefreshTokenWork)
       if (em.inserted) console.log(`[email] ${em.inserted} new unread email(s) mirrored (${em.scanned} unread)`)
     } catch (e) {
       console.error('[email] sync error:', e instanceof Error ? e.message : e)
@@ -361,14 +381,14 @@ async function runOnce(): Promise<void> {
   // TD sheets: pull tonight's attendees (cash players, tournament winners, and
   // electronic-paying tournament entrants) from the "DD/MM Venue" Google Sheets
   // into inbox_td_attendees, so the post-game tool has them one tap away.
-  if (env.googleRefreshToken && Date.now() - lastTdSheets > env.tdSheetsSyncMinutes * 60_000) {
+  if (env.googleRefreshTokenWork && Date.now() - lastTdSheets > env.tdSheetsSyncMinutes * 60_000) {
     lastTdSheets = Date.now()
     try {
       const td = await syncTdSheets(
         supabaseAdmin,
         env.googleClientId,
         env.googleClientSecret,
-        env.googleRefreshToken,
+        env.googleRefreshTokenWork,
       )
       if (td.attendees) console.log(`[tdsheets] ${td.attendees} attendee(s) from ${td.sheets} sheet(s)`)
       // Heartbeat (id=2) so the dashboard's TD-sheets indicator shows its last run.
@@ -382,10 +402,10 @@ async function runOnce(): Promise<void> {
 
   // Transfer confirmations: write queued JL initials (+ receipt refs) back into
   // the TD sheets. Cheap when nothing is queued; a read-only token logs once.
-  if (env.googleRefreshToken) {
+  if (env.googleRefreshTokenWork) {
     try {
       const tw = await processTransferConfirms(
-        supabaseAdmin, env.googleClientId, env.googleClientSecret, env.googleRefreshToken,
+        supabaseAdmin, env.googleClientId, env.googleClientSecret, env.googleRefreshTokenWork,
       )
       if (tw.written) console.log(`[transfers] wrote ${tw.written} JL confirmation(s) back to the sheets`)
     } catch (e) {

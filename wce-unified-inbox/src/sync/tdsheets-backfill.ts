@@ -18,10 +18,13 @@ import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { syncTdSheets } from './tdsheets'
 
 requireEnv(['supabaseUrl', 'supabaseServiceKey'])
-if (!env.googleRefreshToken) {
-  console.error('[backfill] GOOGLE_REFRESH_TOKEN is not set in .env')
+if (!env.googleRefreshTokenWork) {
+  console.error('[backfill] no Google token — set GOOGLE_REFRESH_TOKEN_WORK (work account, owns the TD sheets) or GOOGLE_REFRESH_TOKEN in .env')
   process.exit(1)
 }
+console.log(process.env.GOOGLE_REFRESH_TOKEN_WORK
+  ? '[backfill] using the WORK account token'
+  : '[backfill] using the main token — set GOOGLE_REFRESH_TOKEN_WORK to sweep the work account’s Drive')
 
 const all = process.argv.includes('--all')
 const LOOKBACK_DAYS = all ? 366 : 70
