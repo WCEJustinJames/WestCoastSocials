@@ -260,7 +260,7 @@ export function extractTransfers(rows: string[][]): TransferLine[] {
 
 // ----- financial harvest (Home dashboard tiles + trend) -----
 const FIN_TAB = /financial|reconcil|invoice/i
-const FIN_LABEL = /profit|rake|drop|buy.?in|total|expense|fee|gst|wage|payout|float|takings|revenue|income|cost|balance|banked|turnover/i
+const FIN_LABEL = /profit|rake|drop|buy.?in|total|expense|fee|gst|wage|croupier|dealer|staff|payout|float|takings|revenue|income|cost|balance|banked|turnover/i
 const MONEY_RE = /^\(?-?\$?\s?-?\d[\d,]*(\.\d+)?\)?$/
 
 export interface FinancialLine {
