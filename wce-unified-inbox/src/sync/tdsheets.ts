@@ -70,9 +70,9 @@ export function parseTitle(name: string): TitleInfo | null {
     const year = y ? (Number(y) < 100 ? 2000 + Number(y) : Number(y)) : null
     return { day, mon, year, venue: v }
   }
-  let m = name.match(/^\s*(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\.?\s+(.+?)\s*$/)
+  let m = name.match(/^\s*(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\.?\s+(.+?)\s*$/)
   if (m) return mk(m[1], m[2], m[3], m[4])
-  m = name.match(/^\s*(.+?)\s+(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\.?\s*$/)
+  m = name.match(/^\s*(.+?)\s+(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\.?\s*$/)
   if (m) return mk(m[2], m[3], m[4], m[1])
   return null
 }
@@ -397,6 +397,24 @@ export async function syncTdSheets(
   // history sweeps (titles have none). pageToken paging matters once the needle
   // set covers the whole calendar — a chunk can match >100 files across years.
   const byId = new Map<string, { id: string; name: string; createdTime?: string }>()
+  // Full-history sweep: don't guess names with date needles — LIST EVERY
+  // spreadsheet the account can see and let parseTitle() decide. Needle search
+  // missed whole venues (Bentley, Planet Royale) whose names don't carry a
+  // recognisable DD/MM. The needle path below stays for the cheap live pull.
+  if (lookbackDays >= 366) {
+    let pageToken: string | undefined
+    do {
+      const list = await gfetch<{ files?: { id: string; name: string; createdTime?: string }[]; nextPageToken?: string }>(
+        `${DRIVE_URL}?q=${encodeURIComponent("mimeType='application/vnd.google-apps.spreadsheet' and trashed=false")}` +
+          `&fields=${encodeURIComponent('nextPageToken,files(id,name,createdTime)')}&pageSize=1000` +
+          (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''),
+        token,
+      )
+      for (const f of list.files ?? []) byId.set(f.id, f)
+      pageToken = list.nextPageToken
+    } while (pageToken)
+    console.log(`[tdsheets] full listing: ${byId.size} spreadsheet(s) visible, ${[...byId.values()].filter((f) => parseTitle(f.name)).length} parse as TD sheets`)
+  } else
   for (let i = 0; i < needles.length; i += 24) {
     const q =
       `mimeType='application/vnd.google-apps.spreadsheet' and trashed=false and (` +
