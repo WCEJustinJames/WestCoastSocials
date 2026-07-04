@@ -43,12 +43,12 @@ export function SyncStrip() {
         const okWord = spec.ok ?? 'up to date'
         const g: { tone: Tone; status: string } =
           s == null
-            ? { tone: 'off', status: 'not run yet' }
+            ? { tone: 'warn', status: 'no signal' } // no timestamp — awaiting a restart or first run
             : s < spec.fresh
               ? { tone: 'ok', status: okWord }
               : s < spec.fresh * 8
                 ? { tone: 'warn', status: `${rel(s)} ago` }
-                : { tone: 'bad', status: `${rel(s)} ago` }
+                : { tone: 'bad', status: `failed · ${rel(s)}` }
         return { key: spec.key, label: spec.label, detail: row?.detail, ...g }
       }),
     )
