@@ -1125,6 +1125,16 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_td_coverage: {
+        Row: {
+          event_date: string | null
+          event_name: string | null
+          venue: string | null
+          entries: number | null
+          has_sheet: boolean | null
+        }
+        Relationships: []
+      }
       inbox_financial_summary: {
         Row: {
           sheet_id: string
