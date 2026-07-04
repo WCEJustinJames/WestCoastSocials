@@ -37,6 +37,12 @@ function weekStart(d: Date): string {
 }
 const dLabel = (iso: string): string =>
   new Date(`${iso}T12:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+/** "29 Jun – 5 Jul" for a Monday-start week key. */
+function weekRange(k: string): string {
+  const end = new Date(`${k}T12:00:00`)
+  end.setDate(end.getDate() + 6)
+  return `${dLabel(k)} – ${end.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`
+}
 
 interface Game {
   sheetId: string
@@ -327,7 +333,11 @@ export function Financials() {
                     fontSize={10} fill="#334155" className="tabular-nums">{fmt(v)}</text>
                 )}
                 {(buckets.length <= 14 || i % Math.ceil(buckets.length / 14) === 0) && (
-                  <text x={i * slot + slot / 2} y={H - 3} textAnchor="middle" fontSize={8.5} fill="#94a3b8">{b.label}</text>
+                  <text x={i * slot + slot / 2} y={H - 3} textAnchor="middle" fontSize={8.5}
+                    fill={mode === 'time' && !perGame && b.key === thisWeekKey ? '#334155' : '#94a3b8'}
+                    fontWeight={mode === 'time' && !perGame && b.key === thisWeekKey ? 600 : 400}>
+                    {mode === 'time' && !perGame && b.key === thisWeekKey ? 'this wk' : b.label}
+                  </text>
                 )}
               </g>
             )
@@ -338,7 +348,7 @@ export function Financials() {
             className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-md"
             style={{ left: `${Math.min(88, Math.max(12, ((hover! + 0.5) / buckets.length) * 100))}%` }}
           >
-            <span className="font-medium">{hovered.label}</span>
+            <span className="font-medium">{mode === 'time' && !perGame ? `wk ${weekRange(hovered.key)}` : hovered.label}</span>
             {' · net '}{fmt(hovered.netActual)}
             {' · buy-ins '}{fmt(hovered.buyins)}
             {' · rake '}{fmt(hovered.rake)}
@@ -355,7 +365,7 @@ export function Financials() {
         <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50/60 p-2">
           <div className="mb-1 flex items-center justify-between">
             <p className="text-xs font-semibold">
-              {mode === 'venue' ? selected.label : perGame ? selected.label : `Week of ${selected.label}`} — {selected.games.length} game(s)
+              {mode === 'venue' ? selected.label : perGame ? selected.label : `Week ${weekRange(selected.key)}`} — {selected.games.length} game(s)
             </p>
             <button onClick={() => setSelected(null)} className="text-xs text-slate-400 hover:text-rose-600">close</button>
           </div>
