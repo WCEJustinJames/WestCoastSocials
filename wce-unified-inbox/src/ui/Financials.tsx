@@ -137,7 +137,22 @@ export function Financials() {
       b.games.push(g)
       map.set(k, b)
     }
-    return [...map.values()].sort((a, b) => a.key.localeCompare(b.key)).slice(-Math.max(rangeW, 4))
+    // CONTINUOUS axis: every week in the chosen range gets a slot, so switching
+    // 4w/8w/13w/26w visibly changes the span and dataless weeks read as gaps
+    // (not silently skipped, which made the range chips look broken).
+    const firstKey = rangeW >= 999
+      ? (inRange.length ? weekStart(new Date(`${inRange[0].date}T12:00:00`)) : weekStart(new Date()))
+      : weekStart(new Date(Date.now() - (rangeW - 1) * 7 * 86_400_000))
+    const nowKey = weekStart(new Date())
+    const out: Bucket[] = []
+    const cur = new Date(`${firstKey}T12:00:00`)
+    while (out.length < 120) {
+      const k = weekStart(cur)
+      out.push(map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, games: [] })
+      if (k === nowKey) break
+      cur.setDate(cur.getDate() + 7)
+    }
+    return out
   }, [rows, rangeW, venue, perGame, mode, metric])
 
   const thisWeekKey = weekStart(new Date())
@@ -261,21 +276,26 @@ export function Financials() {
           <line x1={0} x2={W} y1={y0} y2={y0} stroke="#cbd5e1" strokeWidth={1} />
           {buckets.map((b, i) => {
             const v = b[metric]
+            const empty = b.games.length === 0
             const h = Math.max(2, Math.abs(v) * scale)
             const y = v >= 0 ? y0 - h : y0
             const x = i * slot + (slot - barW) / 2
             const isSel = selected?.key === b.key
             return (
               <g key={b.key}
-                className="cursor-pointer"
-                onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
-                onClick={() => setSelected((s) => (s?.key === b.key ? null : b))}>
+                className={empty ? undefined : 'cursor-pointer'}
+                onMouseEnter={() => !empty && setHover(i)} onMouseLeave={() => setHover(null)}
+                onClick={() => !empty && setSelected((s) => (s?.key === b.key ? null : b))}>
                 <rect x={i * slot} y={0} width={slot} height={H} fill="transparent" />
-                <rect x={x} y={y} width={barW} height={h} rx={3}
-                  fill={v >= 0 ? POS : NEG}
-                  opacity={hover != null && hover !== i && !isSel ? 0.45 : 1}
-                  stroke={isSel ? '#0f172a' : 'none'} strokeWidth={isSel ? 1.5 : 0} />
-                {(i === buckets.length - 1 || isSel) && (
+                {empty ? (
+                  <line x1={x} x2={x + barW} y1={y0} y2={y0} stroke="#cbd5e1" strokeWidth={2} strokeDasharray="2 3" />
+                ) : (
+                  <rect x={x} y={y} width={barW} height={h} rx={3}
+                    fill={v >= 0 ? POS : NEG}
+                    opacity={hover != null && hover !== i && !isSel ? 0.45 : 1}
+                    stroke={isSel ? '#0f172a' : 'none'} strokeWidth={isSel ? 1.5 : 0} />
+                )}
+                {!empty && (i === buckets.length - 1 || isSel) && (
                   <text x={x + barW / 2} y={v >= 0 ? Math.max(9, y - 4) : Math.min(H - LABEL_H, y + h + 11)} textAnchor="middle"
                     fontSize={10} fill="#334155" className="tabular-nums">{fmt(v)}</text>
                 )}
