@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LP Cash Rosters — West Coast Poker</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .cash-wrap { display: grid; grid-template-columns: 340px 1fr; gap: 18px; padding: 22px; }
+    .events-col { display: flex; flex-direction: column; gap: 10px; }
+    .ev-card { background: var(--panel, #1b1f2a); border: 1px solid var(--border, #2a3040);
+      border-radius: 12px; padding: 12px 14px; cursor: pointer; }
+    .ev-card.active { border-color: var(--accent, #6ea8fe); box-shadow: 0 0 0 1px var(--accent, #6ea8fe); }
+    .ev-date { font-size: 12px; color: var(--muted, #8b93a7); }
+    .ev-label { font-weight: 600; margin: 2px 0 6px; font-size: 14px; }
+    .ev-counts { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; }
+    .pill { padding: 2px 8px; border-radius: 999px; background: var(--panel-2, #232838); color: var(--muted, #8b93a7); }
+    .pill.seated { background: #16361f; color: #6ee7a0; }
+    .pill.pending { background: #2b2c16; color: #e7d96e; }
+    .pill.skipped { background: #2a2330; color: #c79ae0; }
+    .pill.error { background: #3a1d1d; color: #f08a8a; }
+    .roster-col { background: var(--panel, #1b1f2a); border: 1px solid var(--border, #2a3040);
+      border-radius: 12px; padding: 18px; min-height: 60vh; }
+    .roster-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+    .roster-head h2 { margin: 0; font-size: 18px; }
+    .add-row { display: flex; gap: 8px; margin: 12px 0 16px; }
+    .add-row input { flex: 1; }
+    table.roster { width: 100%; border-collapse: collapse; }
+    table.roster th { text-align: left; font-size: 11px; color: var(--muted, #8b93a7);
+      text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; border-bottom: 1px solid var(--border, #2a3040); }
+    table.roster td { padding: 8px; border-bottom: 1px solid var(--border, #222838); font-size: 14px; vertical-align: middle; }
+    .seat-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+    .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .icon-btn { background: transparent; border: 1px solid var(--border, #2a3040); color: var(--muted, #8b93a7);
+      border-radius: 8px; padding: 3px 8px; cursor: pointer; font-size: 12px; }
+    .icon-btn:hover { color: #fff; border-color: var(--accent, #6ea8fe); }
+    .icon-btn.danger:hover { color: #f08a8a; border-color: #f08a8a; }
+    .muted { color: var(--muted, #8b93a7); }
+    .excluded td { opacity: .45; }
+    .toast { position: fixed; bottom: 18px; right: 18px; background: #16361f; color: #9af0b8;
+      padding: 10px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity .2s; }
+    .toast.show { opacity: 1; }
+    .toast.err { background: #3a1d1d; color: #f3a6a6; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 16px 22px;
+      border-bottom: 1px solid var(--border, #2a3040); }
+    .topbar h1 { margin: 0; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>LP Cash Rosters</h1>
+    <span class="muted" id="subhead">Prefilled from each game's prior week — review &amp; adjust before seating.</span>
+  </div>
+  <div class="cash-wrap">
+    <div class="events-col" id="eventsCol"><div class="muted">Loading events…</div></div>
+    <div class="roster-col" id="rosterCol">
+      <div class="muted">Select an event to review its roster.</div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="cash.js"></script>
+</body>
+</html>
