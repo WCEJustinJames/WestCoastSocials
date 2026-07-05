@@ -34,13 +34,22 @@ const RANGES = [
 const fmt = (n: number | null | undefined): string =>
   n == null ? '—' : `${n < 0 ? '-' : ''}$${Math.abs(Math.round(n)).toLocaleString()}`
 
+/** Local YYYY-MM-DD for a date (no UTC drift). */
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 /** Monday-start key for a date, local. */
 function weekStart(d: Date): string {
-  const w = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7))
-  return `${w.getFullYear()}-${String(w.getMonth() + 1).padStart(2, '0')}-${String(w.getDate()).padStart(2, '0')}`
+  return ymd(new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)))
+}
+/** Month-start key for a date, local. */
+function monthStart(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
 const dLabel = (iso: string): string =>
   new Date(`${iso}T12:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+const mLabel = (iso: string): string =>
+  new Date(`${iso}T12:00:00`).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' })
 /** "29 Jun – 5 Jul" for a Monday-start week key. */
 function weekRange(k: string): string {
   const end = new Date(`${k}T12:00:00`)
@@ -76,10 +85,25 @@ interface Bucket {
   games: Game[]
 }
 
+const zero = () => ({ netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, wages: 0 })
+const newBucket = (key: string, label: string): Bucket => ({ key, label, ...zero(), games: [] })
+/** Fold one game's money into a bucket (net falls back across actual/calc). */
+function acc(b: Bucket, g: Game) {
+  b.netActual += g.netActual ?? g.netCalc ?? 0
+  b.netCalc += g.netCalc ?? g.netActual ?? 0
+  b.buyins += g.buyins ?? 0
+  b.rake += g.rake ?? 0
+  b.outgoings += g.outgoings ?? 0
+  b.overlay += g.overlay ?? 0
+  b.wages += g.wages ?? 0
+  b.games.push(g)
+}
+
 /**
  * Home financials — interactive explorer over the TD-sheet money harvest
  * (inbox_financial_summary): pick the metric, range, venue and granularity;
- * hover for the full breakdown; click a bar to open that week's games.
+ * hover for the full breakdown; click a bar/point to open that period's games.
+ * Bars or a trend line; weekly, monthly, or per game; one venue or all.
  */
 export function Financials() {
   const [rows, setRows] = useState<Game[]>([])
@@ -87,9 +111,10 @@ export function Financials() {
   const [metric, setMetric] = useState<MetricKey>('netActual')
   const [rangeW, setRangeW] = useState<number>(8)
   const [venue, setVenue] = useState('all')
-  const [perGame, setPerGame] = useState(false)
-  // 'time' = trend over weeks/games; 'venue' = one bar per venue/night summed
-  // over the range, sorted best-first — the which-night-makes-money view.
+  const [grain, setGrain] = useState<'game' | 'week' | 'month'>('week')
+  const [chartType, setChartType] = useState<'bar' | 'line'>('bar')
+  // 'time' = trend over weeks/months/games; 'venue' = one bar per venue/night
+  // summed over the range, sorted best-first — the which-night-makes-money view.
   const [mode, setMode] = useState<'time' | 'venue'>('time')
   const [hover, setHover] = useState<number | null>(null)
   const [selected, setSelected] = useState<Bucket | null>(null)
@@ -101,7 +126,7 @@ export function Financials() {
     const wk = weekStart(new Date(`${dateStr}T12:00:00`))
     const weeksBack = Math.ceil((Date.now() - new Date(`${wk}T12:00:00`).getTime()) / (7 * 86_400_000)) + 1
     setMode('time')
-    setPerGame(false)
+    setGrain('week')
     setVenue('all')
     setRangeW(RANGES.find((r) => r.key >= weeksBack)?.key ?? 999)
     setPendingWeek(wk)
@@ -109,33 +134,40 @@ export function Financials() {
 
   useEffect(() => {
     void (async () => {
+      const today = ymd(new Date())
       const { data } = await supabase
         .from('inbox_financial_summary')
         .select('*')
         .not('game_date', 'is', null)
         .order('game_date', { ascending: true })
         .limit(2000)
-      setRows(((data as Fin[]) ?? []).map((r) => ({
-        sheetId: r.sheet_id,
-        date: r.game_date ?? '',
-        venue: r.venue,
-        netActual: r.net_profit_actual == null ? null : Number(r.net_profit_actual),
-        netCalc: r.net_profit_calc == null ? null : Number(r.net_profit_calc),
-        buyins: r.gross_buyins == null ? null : Number(r.gross_buyins),
-        buyinsCash: r.buyins_cash == null ? null : Number(r.buyins_cash),
-        buyinsEftpos: r.buyins_eftpos == null ? null : Number(r.buyins_eftpos),
-        buyinsPayid: r.buyins_payid == null ? null : Number(r.buyins_payid),
-        rake: r.cash_rake == null ? null : Number(r.cash_rake),
-        outgoings: r.outgoings == null ? null : Number(r.outgoings),
-        overlay: r.overlay == null ? null : Number(r.overlay),
-        wages: r.wages == null ? null : Number(r.wages),
-      })))
+      setRows(
+        ((data as Fin[]) ?? [])
+          .map((r) => ({
+            sheetId: r.sheet_id,
+            date: r.game_date ?? '',
+            venue: r.venue,
+            netActual: r.net_profit_actual == null ? null : Number(r.net_profit_actual),
+            netCalc: r.net_profit_calc == null ? null : Number(r.net_profit_calc),
+            buyins: r.gross_buyins == null ? null : Number(r.gross_buyins),
+            buyinsCash: r.buyins_cash == null ? null : Number(r.buyins_cash),
+            buyinsEftpos: r.buyins_eftpos == null ? null : Number(r.buyins_eftpos),
+            buyinsPayid: r.buyins_payid == null ? null : Number(r.buyins_payid),
+            rake: r.cash_rake == null ? null : Number(r.cash_rake),
+            outgoings: r.outgoings == null ? null : Number(r.outgoings),
+            overlay: r.overlay == null ? null : Number(r.overlay),
+            wages: r.wages == null ? null : Number(r.wages),
+          }))
+          // Drop future scheduled games — LP calendar seeds blank TD sheets ahead
+          // of time, which land here as all-$0 rows and made "this wk" read $0.
+          .filter((g) => g.date && g.date <= today),
+      )
       setLoaded(true)
     })()
   }, [])
 
   const buckets = useMemo(() => {
-    const cutoff = new Date(Date.now() - rangeW * 7 * 86_400_000).toISOString().slice(0, 10)
+    const cutoff = ymd(new Date(Date.now() - rangeW * 7 * 86_400_000))
     const inRange = rows.filter(
       (g) => g.date >= cutoff && (mode === 'venue' || venue === 'all' || (g.venue ?? '').toLowerCase() === venue.toLowerCase()),
     )
@@ -143,64 +175,45 @@ export function Financials() {
       const map = new Map<string, Bucket>()
       for (const g of inRange) {
         const k = g.venue ?? '(unknown)'
-        const b = map.get(k) ?? { key: k, label: k, netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, wages: 0, games: [] }
-        b.netActual += g.netActual ?? g.netCalc ?? 0
-        b.netCalc += g.netCalc ?? g.netActual ?? 0
-        b.buyins += g.buyins ?? 0
-        b.rake += g.rake ?? 0
-        b.outgoings += g.outgoings ?? 0
-        b.overlay += g.overlay ?? 0
-        b.wages += g.wages ?? 0
-        b.games.push(g)
+        const b = map.get(k) ?? newBucket(k, k)
+        acc(b, g)
         map.set(k, b)
       }
       return [...map.values()].sort((a, b) => b[metric] - a[metric])
     }
-    if (perGame) {
-      return inRange.slice(-40).map<Bucket>((g) => ({
-        key: `${g.sheetId}`,
-        label: `${dLabel(g.date)}${g.venue ? ` ${g.venue.slice(0, 4)}` : ''}`,
-        netActual: g.netActual ?? g.netCalc ?? 0,
-        netCalc: g.netCalc ?? g.netActual ?? 0,
-        buyins: g.buyins ?? 0,
-        rake: g.rake ?? 0,
-        outgoings: g.outgoings ?? 0,
-        overlay: g.overlay ?? 0,
-        wages: g.wages ?? 0,
-        games: [g],
-      }))
+    if (grain === 'game') {
+      return inRange.slice(-40).map<Bucket>((g) => {
+        const b = newBucket(`${g.sheetId}`, `${dLabel(g.date)}${g.venue ? ` ${g.venue.slice(0, 4)}` : ''}`)
+        acc(b, g)
+        return b
+      })
     }
+    // Weekly or monthly: bucket, then lay out a CONTINUOUS axis so every period
+    // in the chosen range gets a slot — switching range/grain visibly changes the
+    // span and dataless periods read as gaps (not silently skipped).
+    const startKey = grain === 'month' ? monthStart : weekStart
     const map = new Map<string, Bucket>()
     for (const g of inRange) {
-      const k = weekStart(new Date(`${g.date}T12:00:00`))
-      const b = map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, wages: 0, games: [] }
-      b.netActual += g.netActual ?? g.netCalc ?? 0
-      b.netCalc += g.netCalc ?? g.netActual ?? 0
-      b.buyins += g.buyins ?? 0
-      b.rake += g.rake ?? 0
-      b.outgoings += g.outgoings ?? 0
-      b.overlay += g.overlay ?? 0
-      b.wages += g.wages ?? 0
-      b.games.push(g)
+      const k = startKey(new Date(`${g.date}T12:00:00`))
+      const b = map.get(k) ?? newBucket(k, grain === 'month' ? mLabel(k) : dLabel(k))
+      acc(b, g)
       map.set(k, b)
     }
-    // CONTINUOUS axis: every week in the chosen range gets a slot, so switching
-    // 4w/8w/13w/26w visibly changes the span and dataless weeks read as gaps
-    // (not silently skipped, which made the range chips look broken).
     const firstKey = rangeW >= 999
-      ? (inRange.length ? weekStart(new Date(`${inRange[0].date}T12:00:00`)) : weekStart(new Date()))
-      : weekStart(new Date(Date.now() - (rangeW - 1) * 7 * 86_400_000))
-    const nowKey = weekStart(new Date())
+      ? (inRange.length ? startKey(new Date(`${inRange[0].date}T12:00:00`)) : startKey(new Date()))
+      : startKey(new Date(Date.now() - (rangeW - 1) * 7 * 86_400_000))
+    const nowKey = startKey(new Date())
     const out: Bucket[] = []
     const cur = new Date(`${firstKey}T12:00:00`)
     while (out.length < 120) {
-      const k = weekStart(cur)
-      out.push(map.get(k) ?? { key: k, label: dLabel(k), netActual: 0, netCalc: 0, buyins: 0, rake: 0, outgoings: 0, overlay: 0, wages: 0, games: [] })
+      const k = startKey(cur)
+      out.push(map.get(k) ?? newBucket(k, grain === 'month' ? mLabel(k) : dLabel(k)))
       if (k === nowKey) break
-      cur.setDate(cur.getDate() + 7)
+      if (grain === 'month') cur.setMonth(cur.getMonth() + 1)
+      else cur.setDate(cur.getDate() + 7)
     }
     return out
-  }, [rows, rangeW, venue, perGame, mode, metric])
+  }, [rows, rangeW, venue, grain, mode, metric])
 
   // Resolve a pending "jump to date" once the buckets for its range exist.
   useEffect(() => {
@@ -212,9 +225,25 @@ export function Financials() {
     }
   }, [buckets, pendingWeek])
 
+  // This-week / last-week tiles are always weekly and independent of the chart
+  // grain (respecting only the venue filter), so switching to monthly/line view
+  // never blanks them out.
+  const weekTiles = useMemo(() => {
+    const build = (k: string): Bucket => {
+      const b = newBucket(k, '')
+      for (const g of rows) {
+        if (venue !== 'all' && (g.venue ?? '').toLowerCase() !== venue.toLowerCase()) continue
+        if (weekStart(new Date(`${g.date}T12:00:00`)) !== k) continue
+        acc(b, g)
+      }
+      return b
+    }
+    return { now: build(weekStart(new Date())), prev: build(weekStart(new Date(Date.now() - 7 * 86_400_000))) }
+  }, [rows, venue])
+
   const thisWeekKey = weekStart(new Date())
-  const thisWeek = buckets.find((b) => !perGame && b.key === thisWeekKey)
-  const lastWeek = !perGame && buckets.length >= 2 ? buckets[buckets.length - 2] : null
+  const thisMonthKey = monthStart(new Date())
+  const nowKey = grain === 'month' ? thisMonthKey : thisWeekKey
 
   if (loaded && rows.length === 0) {
     return (
@@ -233,7 +262,7 @@ export function Financials() {
     )
   }
 
-  // ----- geometry (zero-baseline bars) -----
+  // ----- geometry (zero-baseline) -----
   const W = 560, H = 170, PAD = 22, LABEL_H = 16
   const vals = buckets.map((b) => b[metric])
   const top = Math.max(...vals, 0)
@@ -246,18 +275,24 @@ export function Financials() {
   const slot = W / buckets.length
   const barW = Math.max(6, Math.min(36, slot - 8))
   const metricLabel = METRICS.find((m) => m.key === metric)?.label ?? metric
+  const isPeriod = mode === 'time' && grain !== 'game'
+  const cx = (i: number) => i * slot + slot / 2
+  const cy = (v: number) => y0 - v * scale
 
   const tiles: { name: string; now: number | null; prev: number | null }[] = [
-    { name: 'Net (actual)', now: thisWeek?.netActual ?? null, prev: lastWeek?.netActual ?? null },
-    { name: 'Net (calc)', now: thisWeek?.netCalc ?? null, prev: lastWeek?.netCalc ?? null },
-    { name: 'Buy-ins', now: thisWeek?.buyins ?? null, prev: lastWeek?.buyins ?? null },
-    { name: 'Cash rake', now: thisWeek?.rake ?? null, prev: lastWeek?.rake ?? null },
-    { name: 'Outgoings', now: thisWeek?.outgoings ?? null, prev: lastWeek?.outgoings ?? null },
-    { name: 'Overlay', now: thisWeek?.overlay ?? null, prev: lastWeek?.overlay ?? null },
-    { name: 'Wages', now: thisWeek?.wages ?? null, prev: lastWeek?.wages ?? null },
+    { name: 'Net (actual)', now: weekTiles.now.netActual, prev: weekTiles.prev.netActual },
+    { name: 'Net (calc)', now: weekTiles.now.netCalc, prev: weekTiles.prev.netCalc },
+    { name: 'Buy-ins', now: weekTiles.now.buyins, prev: weekTiles.prev.buyins },
+    { name: 'Cash rake', now: weekTiles.now.rake, prev: weekTiles.prev.rake },
+    { name: 'Outgoings', now: weekTiles.now.outgoings, prev: weekTiles.prev.outgoings },
+    { name: 'Overlay', now: weekTiles.now.overlay, prev: weekTiles.prev.overlay },
+    { name: 'Wages', now: weekTiles.now.wages, prev: weekTiles.prev.wages },
   ]
 
   const hovered = hover != null ? buckets[hover] : null
+  // Non-empty points for the line path (gaps break the line).
+  const linePts = buckets.map((b, i) => ({ b, i })).filter((p) => p.b.games.length > 0)
+  const lastNonEmpty = linePts.length ? linePts[linePts.length - 1].i : -1
 
   return (
     <div className="card mb-4 p-3 sm:p-4">
@@ -292,6 +327,20 @@ export function Financials() {
             {r.label}
           </button>
         ))}
+      </div>
+
+      {/* view row: bar/line · over time / by venue · venue · granularity */}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <div className="inline-flex overflow-hidden rounded-md border border-slate-300">
+          <button onClick={() => setChartType('bar')}
+            className={`px-2 py-0.5 text-xs ${chartType === 'bar' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+            ▮ bars
+          </button>
+          <button onClick={() => setChartType('line')}
+            className={`px-2 py-0.5 text-xs ${chartType === 'line' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+            ⟋ line
+          </button>
+        </div>
         <span className="mx-1 h-4 w-px bg-slate-200" />
         <button onClick={() => { setMode('time'); setSelected(null) }}
           className={`chip border ${mode === 'time' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-500 hover:border-emerald-400'}`}>
@@ -307,10 +356,14 @@ export function Financials() {
               <option value="all">all venues</option>
               {VENUES.map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
-            <label className="flex items-center gap-1 text-xs text-slate-500">
-              <input type="checkbox" checked={perGame} onChange={(e) => { setPerGame(e.target.checked); setSelected(null) }} />
-              per game
-            </label>
+            <div className="inline-flex overflow-hidden rounded-md border border-slate-300">
+              {(['game', 'week', 'month'] as const).map((gr) => (
+                <button key={gr} onClick={() => { setGrain(gr); setSelected(null) }}
+                  className={`px-2 py-0.5 text-xs ${grain === gr ? 'bg-emerald-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  {gr === 'game' ? 'per game' : gr === 'week' ? 'weekly' : 'monthly'}
+                </button>
+              ))}
+            </div>
           </>
         )}
         <label className="ml-auto flex items-center gap-1 text-xs text-slate-500" title="Jump straight to any past game night — opens that week's games">
@@ -323,11 +376,13 @@ export function Financials() {
       <p className="mb-1 text-xs font-medium text-slate-500">
         {metricLabel} — {mode === 'venue'
           ? `by venue/night, ${RANGES.find((r) => r.key === rangeW)?.label ?? ''} total (best first)`
-          : perGame ? `last ${buckets.length} games` : `weekly, last ${buckets.length} weeks`}
+          : grain === 'game' ? `last ${buckets.length} games`
+          : grain === 'month' ? `monthly, last ${buckets.length} months`
+          : `weekly, last ${buckets.length} weeks`}
         {mode === 'time' && venue !== 'all' ? ` · ${venue}` : ''}
       </p>
       <div className="relative">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={`${metricLabel} bar chart`}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={`${metricLabel} ${chartType} chart`}>
           {ticks.map((t) => {
             const ty = y0 - t * scale
             return (
@@ -338,36 +393,62 @@ export function Financials() {
             )
           })}
           <line x1={0} x2={W} y1={y0} y2={y0} stroke="#cbd5e1" strokeWidth={1} />
+
+          {/* line path — drawn as segments so dataless gaps break the line */}
+          {chartType === 'line' && linePts.length > 1 && (() => {
+            const segs: string[] = []
+            let cur: string[] = []
+            let prevI = -2
+            for (const { b, i } of linePts) {
+              if (i !== prevI + 1 && cur.length) { segs.push(cur.join(' ')); cur = [] }
+              cur.push(`${cx(i).toFixed(1)},${cy(b[metric]).toFixed(1)}`)
+              prevI = i
+            }
+            if (cur.length) segs.push(cur.join(' '))
+            return segs.map((pts, si) => <polyline key={si} points={pts} fill="none" stroke={POS} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />)
+          })()}
+
           {buckets.map((b, i) => {
             const v = b[metric]
             const empty = b.games.length === 0
-            const h = Math.max(2, Math.abs(v) * scale)
-            const y = v >= 0 ? y0 - h : y0
-            const x = i * slot + (slot - barW) / 2
             const isSel = selected?.key === b.key
+            const showLabel = !empty && (i === (chartType === 'line' ? lastNonEmpty : buckets.length - 1) || isSel)
+            const highlight = isPeriod && b.key === nowKey
             return (
               <g key={b.key}
                 className={empty ? undefined : 'cursor-pointer'}
                 onMouseEnter={() => !empty && setHover(i)} onMouseLeave={() => setHover(null)}
                 onClick={() => !empty && setSelected((s) => (s?.key === b.key ? null : b))}>
                 <rect x={i * slot} y={0} width={slot} height={H} fill="transparent" />
-                {empty ? (
-                  <line x1={x} x2={x + barW} y1={y0} y2={y0} stroke="#cbd5e1" strokeWidth={2} strokeDasharray="2 3" />
-                ) : (
-                  <rect x={x} y={y} width={barW} height={h} rx={3}
-                    fill={v >= 0 ? POS : NEG}
-                    opacity={hover != null && hover !== i && !isSel ? 0.45 : 1}
-                    stroke={isSel ? '#0f172a' : 'none'} strokeWidth={isSel ? 1.5 : 0} />
-                )}
-                {!empty && (i === buckets.length - 1 || isSel) && (
-                  <text x={x + barW / 2} y={v >= 0 ? Math.max(9, y - 4) : Math.min(H - LABEL_H, y + h + 11)} textAnchor="middle"
+                {chartType === 'line' ? (
+                  empty ? null : (
+                    <circle cx={cx(i)} cy={cy(v)} r={isSel ? 4.5 : 3}
+                      fill={v >= 0 ? POS : NEG}
+                      opacity={hover != null && hover !== i && !isSel ? 0.5 : 1}
+                      stroke={isSel ? '#0f172a' : '#fff'} strokeWidth={isSel ? 1.5 : 1} />
+                  )
+                ) : empty ? (
+                  <line x1={i * slot + (slot - barW) / 2} x2={i * slot + (slot - barW) / 2 + barW} y1={y0} y2={y0} stroke="#cbd5e1" strokeWidth={2} strokeDasharray="2 3" />
+                ) : (() => {
+                  const h = Math.max(2, Math.abs(v) * scale)
+                  const y = v >= 0 ? y0 - h : y0
+                  const x = i * slot + (slot - barW) / 2
+                  return (
+                    <rect x={x} y={y} width={barW} height={h} rx={3}
+                      fill={v >= 0 ? POS : NEG}
+                      opacity={hover != null && hover !== i && !isSel ? 0.45 : 1}
+                      stroke={isSel ? '#0f172a' : 'none'} strokeWidth={isSel ? 1.5 : 0} />
+                  )
+                })()}
+                {showLabel && (
+                  <text x={cx(i)} y={v >= 0 ? Math.max(9, cy(v) - 6) : Math.min(H - LABEL_H, cy(v) + 13)} textAnchor="middle"
                     fontSize={10} fill="#334155" className="tabular-nums">{fmt(v)}</text>
                 )}
                 {(buckets.length <= 14 || i % Math.ceil(buckets.length / 14) === 0) && (
-                  <text x={i * slot + slot / 2} y={H - 3} textAnchor="middle" fontSize={8.5}
-                    fill={mode === 'time' && !perGame && b.key === thisWeekKey ? '#334155' : '#94a3b8'}
-                    fontWeight={mode === 'time' && !perGame && b.key === thisWeekKey ? 600 : 400}>
-                    {mode === 'time' && !perGame && b.key === thisWeekKey ? 'this wk' : b.label}
+                  <text x={cx(i)} y={H - 3} textAnchor="middle" fontSize={8.5}
+                    fill={highlight ? '#334155' : '#94a3b8'}
+                    fontWeight={highlight ? 600 : 400}>
+                    {highlight ? (grain === 'month' ? 'this mo' : 'this wk') : b.label}
                   </text>
                 )}
               </g>
@@ -379,24 +460,31 @@ export function Financials() {
             className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-md"
             style={{ left: `${Math.min(88, Math.max(12, ((hover! + 0.5) / buckets.length) * 100))}%` }}
           >
-            <span className="font-medium">{mode === 'time' && !perGame ? `wk ${weekRange(hovered.key)}` : hovered.label}</span>
+            <span className="font-medium">
+              {mode === 'time' && grain === 'week' ? `wk ${weekRange(hovered.key)}`
+                : mode === 'time' && grain === 'month' ? hovered.label
+                : hovered.label}
+            </span>
             {' · net '}{fmt(hovered.netActual)}
             {' · buy-ins '}{fmt(hovered.buyins)}
             {' · rake '}{fmt(hovered.rake)}
-            {(mode === 'venue' || !perGame) && ` · ${hovered.games.length} game(s)`}
+            {(mode === 'venue' || isPeriod) && ` · ${hovered.games.length} game(s)`}
             {mode === 'venue' && hovered.games.length > 0 && ` · avg ${fmt(hovered[metric] / hovered.games.length)}/game`}
-            {mode === 'time' && perGame && hovered.games[0]?.venue ? ` · ${hovered.games[0].venue}` : ''}
+            {mode === 'time' && grain === 'game' && hovered.games[0]?.venue ? ` · ${hovered.games[0].venue}` : ''}
           </div>
         )}
       </div>
-      <p className="mt-0.5 text-[10px] text-slate-400">hover for detail · click a bar to open its games</p>
+      <p className="mt-0.5 text-[10px] text-slate-400">hover for detail · click a {chartType === 'line' ? 'point' : 'bar'} to open its games</p>
 
       {/* drill-down */}
       {selected && (
         <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50/60 p-2">
           <div className="mb-1 flex items-center justify-between">
             <p className="text-xs font-semibold">
-              {mode === 'venue' ? selected.label : perGame ? selected.label : `Week ${weekRange(selected.key)}`} — {selected.games.length} game(s)
+              {mode === 'venue' ? selected.label
+                : grain === 'game' ? selected.label
+                : grain === 'month' ? mLabel(selected.key)
+                : `Week ${weekRange(selected.key)}`} — {selected.games.length} game(s)
             </p>
             <button onClick={() => setSelected(null)} className="text-xs text-slate-400 hover:text-rose-600">close</button>
           </div>
@@ -411,22 +499,27 @@ export function Financials() {
                   <th className="py-1 pr-3 font-medium" title="tournament buy-ins paid in cash">· cash</th>
                   <th className="py-1 pr-3 font-medium" title="tournament buy-ins via EFTPOS">· eftpos</th>
                   <th className="py-1 pr-3 font-medium" title="tournament buy-ins via PayID">· payid</th>
-                  <th className="py-1 font-medium">rake</th>
+                  <th className="py-1 pr-3 font-medium">rake</th>
+                  <th className="py-1 font-medium">wages</th>
                 </tr>
               </thead>
               <tbody>
-                {selected.games.map((g) => (
-                  <tr key={g.sheetId} className="border-t border-slate-200/70 tabular-nums">
-                    <td className="py-1 pr-3">{dLabel(g.date)}</td>
-                    <td className="py-1 pr-3">{g.venue ?? '—'}</td>
-                    <td className={`py-1 pr-3 ${g.netActual != null && g.netActual < 0 ? 'text-rose-700' : ''}`}>{fmt(g.netActual)}</td>
-                    <td className="py-1 pr-3 font-medium">{fmt(g.buyins)}</td>
-                    <td className="py-1 pr-3 text-slate-500">{g.buyinsCash == null ? '—' : fmt(g.buyinsCash)}</td>
-                    <td className="py-1 pr-3 text-slate-500">{g.buyinsEftpos == null ? '—' : fmt(g.buyinsEftpos)}</td>
-                    <td className="py-1 pr-3 text-slate-500">{g.buyinsPayid == null ? '—' : fmt(g.buyinsPayid)}</td>
-                    <td className="py-1">{fmt(g.rake)}</td>
-                  </tr>
-                ))}
+                {selected.games
+                  .slice()
+                  .sort((a, b) => (a.date < b.date ? -1 : 1))
+                  .map((g) => (
+                    <tr key={g.sheetId} className="border-t border-slate-200/70 tabular-nums">
+                      <td className="py-1 pr-3">{dLabel(g.date)}</td>
+                      <td className="py-1 pr-3">{g.venue ?? '—'}</td>
+                      <td className={`py-1 pr-3 ${g.netActual != null && g.netActual < 0 ? 'text-rose-700' : ''}`}>{fmt(g.netActual)}</td>
+                      <td className="py-1 pr-3 font-medium">{fmt(g.buyins)}</td>
+                      <td className="py-1 pr-3 text-slate-500">{g.buyinsCash == null ? '—' : fmt(g.buyinsCash)}</td>
+                      <td className="py-1 pr-3 text-slate-500">{g.buyinsEftpos == null ? '—' : fmt(g.buyinsEftpos)}</td>
+                      <td className="py-1 pr-3 text-slate-500">{g.buyinsPayid == null ? '—' : fmt(g.buyinsPayid)}</td>
+                      <td className="py-1 pr-3">{fmt(g.rake)}</td>
+                      <td className="py-1 text-slate-500">{g.wages == null ? '—' : fmt(g.wages)}</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
