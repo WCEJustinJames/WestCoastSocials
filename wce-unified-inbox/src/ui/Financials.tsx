@@ -263,17 +263,22 @@ export function Financials() {
   }
 
   // ----- geometry (zero-baseline) -----
-  const W = 560, H = 170, PAD = 22, LABEL_H = 16
+  // XAXIS is the bottom band reserved for the (rotated) date labels.
+  const W = 560, H = 190, PAD = 20, XAXIS = 40
   const vals = buckets.map((b) => b[metric])
   const top = Math.max(...vals, 0)
   const bot = Math.min(...vals, 0)
   const span = top - bot || 1
-  const scale = (H - PAD * 2 - LABEL_H) / span
+  const scale = (H - PAD - XAXIS) / span
   const y0 = PAD + top * scale
   // Recessive gridlines at the extremes (and halfway when there's room).
   const ticks = [...new Set([top, top > 0 ? top / 2 : 0, bot < 0 ? bot : 0])].filter((t) => t !== 0)
   const slot = W / buckets.length
   const barW = Math.max(6, Math.min(36, slot - 8))
+  // Thin the x-axis ticks to what actually fits, then rotate them, so dense
+  // per-game / long venue labels never collapse into an unreadable smear.
+  const labelChars = Math.max(4, ...buckets.map((b) => b.label.length))
+  const tickStep = Math.max(1, Math.ceil((labelChars * 2.4) / slot))
   const metricLabel = METRICS.find((m) => m.key === metric)?.label ?? metric
   const isPeriod = mode === 'time' && grain !== 'game'
   const cx = (i: number) => i * slot + slot / 2
@@ -382,13 +387,13 @@ export function Financials() {
         {mode === 'time' && venue !== 'all' ? ` · ${venue}` : ''}
       </p>
       <div className="relative">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={`${metricLabel} ${chartType} chart`}>
+        <svg viewBox={`-30 0 ${W + 52} ${H}`} className="w-full" role="img" aria-label={`${metricLabel} ${chartType} chart`}>
           {ticks.map((t) => {
             const ty = y0 - t * scale
             return (
               <g key={t}>
                 <line x1={0} x2={W} y1={ty} y2={ty} stroke="#f1f5f9" strokeWidth={1} />
-                <text x={2} y={ty - 3} fontSize={8.5} fill="#94a3b8" className="tabular-nums">{fmt(t)}</text>
+                <text x={-28} y={ty - 3} fontSize={8.5} fill="#94a3b8" className="tabular-nums">{fmt(t)}</text>
               </g>
             )
           })}
@@ -441,11 +446,13 @@ export function Financials() {
                   )
                 })()}
                 {showLabel && (
-                  <text x={cx(i)} y={v >= 0 ? Math.max(9, cy(v) - 6) : Math.min(H - LABEL_H, cy(v) + 13)} textAnchor="middle"
+                  <text x={cx(i)} y={v >= 0 ? Math.max(9, cy(v) - 6) : Math.min(H - XAXIS - 4, cy(v) + 13)} textAnchor="middle"
                     fontSize={10} fill="#334155" className="tabular-nums">{fmt(v)}</text>
                 )}
-                {(buckets.length <= 14 || i % Math.ceil(buckets.length / 14) === 0) && (
-                  <text x={cx(i)} y={H - 3} textAnchor="middle" fontSize={8.5}
+                {(i % tickStep === 0 || highlight) && (
+                  <text x={cx(i)} y={H - XAXIS + 11}
+                    transform={`rotate(-40 ${cx(i).toFixed(1)} ${H - XAXIS + 11})`}
+                    textAnchor="end" fontSize={8.5}
                     fill={highlight ? '#334155' : '#94a3b8'}
                     fontWeight={highlight ? 600 : 400}>
                     {highlight ? (grain === 'month' ? 'this mo' : 'this wk') : b.label}
