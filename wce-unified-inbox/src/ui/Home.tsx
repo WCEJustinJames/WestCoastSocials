@@ -4,6 +4,7 @@ import { normFull, normCore, VENUES } from './usePlayers'
 import { ActionQueue } from './ActionQueue'
 import { Financials } from './Financials'
 import { SheetCoverage } from './SheetCoverage'
+import { SeatMonitor } from './SeatMonitor'
 
 /** A trimmed CRM row — only what the post-game matcher / router needs. */
 interface CrmRow {
@@ -21,14 +22,17 @@ interface CrmRow {
 export function Home({
   onNavigate,
   onOpenConversation,
+  onFillSeats,
 }: {
   onNavigate: (filter: string | null) => void
   onOpenConversation: (conversationId: string) => void
+  onFillSeats: (listId: string | null, venue: string | null) => void
 }) {
   return (
     <div className="mx-auto h-full w-full max-w-6xl overflow-y-auto p-6">
       <h2 className="mb-4 text-lg font-semibold">Home</h2>
       <ActionQueue onOpen={onOpenConversation} />
+      <SeatMonitor onFill={onFillSeats} />
       <Financials />
       <SheetCoverage />
       <DashboardCards onNavigate={onNavigate} />
