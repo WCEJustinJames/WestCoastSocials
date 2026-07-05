@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { normFull, normCore, VENUES } from './usePlayers'
 import { ActionQueue } from './ActionQueue'
+import { SendQueue } from './SendQueue'
 import { Financials } from './Financials'
 import { SheetCoverage } from './SheetCoverage'
 import { SeatMonitor } from './SeatMonitor'
@@ -31,6 +32,7 @@ export function Home({
   return (
     <div className="mx-auto h-full w-full max-w-6xl overflow-y-auto p-6">
       <h2 className="mb-4 text-lg font-semibold">Home</h2>
+      <SendQueue />
       <ActionQueue onOpen={onOpenConversation} />
       <SeatMonitor onFill={onFillSeats} />
       <Financials />
