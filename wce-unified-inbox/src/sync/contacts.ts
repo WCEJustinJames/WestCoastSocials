@@ -127,7 +127,13 @@ export async function syncGoogleContacts(
       if (pageToken) url.searchParams.set('pageToken', pageToken)
 
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      if (res.status === 410) { expired = true; break } // sync token too old
+      // An expired sync token: the People API returns it as 410, OR as a 400
+      // with reason EXPIRED_SYNC_TOKEN — both mean "drop the token, full resync".
+      if (res.status === 410 || res.status === 400) {
+        const body = await res.text().catch(() => '')
+        if (res.status === 410 || /EXPIRED_SYNC_TOKEN|Sync token is expired/i.test(body)) { expired = true; break }
+        throw new Error(`People API 400 ${body}`.trim())
+      }
       if (!res.ok) throw new Error(`People API ${res.status} ${await res.text().catch(() => '')}`.trim())
       const data = (await res.json()) as {
         connections?: Person[]
