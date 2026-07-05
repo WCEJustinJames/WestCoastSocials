@@ -23,6 +23,7 @@ const METRICS = [
 type MetricKey = (typeof METRICS)[number]['key']
 
 const RANGES = [
+  { key: 1, label: '1w' },
   { key: 4, label: '4w' },
   { key: 8, label: '8w' },
   { key: 13, label: '13w' },

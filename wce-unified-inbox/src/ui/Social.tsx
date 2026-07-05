@@ -5,6 +5,14 @@ import type { Database } from '../types/database'
 
 type Post = Database['public']['Tables']['social_posts']['Row']
 type Push = Database['public']['Tables']['klaviyo_pushes']['Row']
+// LetsPoker calendar row (tournament_events) — the API-synced game schedule.
+interface LpEvent { event_date: string; label: string; buy_in: string | null; excluded: boolean }
+
+/** Trim LP's promo-heavy label to a short calendar caption. */
+function shortLabel(label: string): string {
+  const clean = label.replace(/\$[\d,]+\s*(gtd|entry)?/gi, '').replace(/\s+/g, ' ').replace(/[|]+/g, ' ').trim()
+  return (clean || label).slice(0, 22)
+}
 
 // 'lp-banner' is a pseudo-channel: the post's artwork also becomes the live
 // LetsPoker club cover (what players see in the app) at publish time.
@@ -37,6 +45,7 @@ function statusChip(status: string): string {
 export function Social() {
   const [posts, setPosts] = useState<Post[]>([])
   const [pushes, setPushes] = useState<Push[]>([])
+  const [lpEvents, setLpEvents] = useState<LpEvent[]>([])
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [showPosted, setShowPosted] = useState(false)
@@ -70,6 +79,13 @@ export function Social() {
     const { data: ks } = await supabase
       .from('klaviyo_pushes').select('*').order('created_at', { ascending: false }).limit(50)
     setPushes((ks as Push[]) ?? [])
+    // The LetsPoker calendar (synced from LP via API, ~weekly ahead) — mirrored
+    // onto the calendar as a read-only reference so posts line up with real games.
+    const lp = supabase as unknown as {
+      from: (t: string) => { select: (c: string) => { order: (col: string) => { limit: (n: number) => Promise<{ data: LpEvent[] | null }> } } }
+    }
+    const { data: le } = await lp.from('tournament_events').select('event_date, label, buy_in, excluded').order('event_date').limit(400)
+    setLpEvents(((le as LpEvent[]) ?? []).filter((e) => !e.excluded))
   }
   useEffect(() => { void load() }, [])
 
@@ -97,6 +113,15 @@ export function Social() {
     }
     return map
   }, [posts])
+
+  const lpByDay = useMemo(() => {
+    const map = new Map<string, LpEvent[]>()
+    for (const e of lpEvents) {
+      if (!e.event_date) continue
+      map.set(e.event_date, [...(map.get(e.event_date) ?? []), e])
+    }
+    return map
+  }, [lpEvents])
 
   const todayKey = dayKey(new Date())
   const monthLabel = month.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
@@ -207,6 +232,7 @@ export function Social() {
             const k = dayKey(d)
             const inMonth = d.getMonth() === month.getMonth()
             const dayPosts = postsByDay.get(k) ?? []
+            const dayGames = lpByDay.get(k) ?? []
             return (
               <button key={k} onClick={() => pickDay(d)}
                 className={`min-h-[3.5rem] rounded-lg border p-1 text-left align-top transition-colors sm:min-h-[4.5rem] ${
@@ -216,18 +242,30 @@ export function Social() {
                 }`}>
                 <span className={`text-[11px] ${k === todayKey ? 'font-bold text-emerald-700' : 'text-slate-400'}`}>{d.getDate()}</span>
                 <div className="mt-0.5 space-y-0.5">
-                  {dayPosts.slice(0, 3).map((p) => (
+                  {/* LetsPoker calendar (API) — read-only game reference */}
+                  {dayGames.slice(0, 2).map((g, gi) => (
+                    <span key={gi} title={`LetsPoker: ${g.label}${g.buy_in ? ` ($${g.buy_in})` : ''}`}
+                      className="chip block truncate bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-100">
+                      🎰 {shortLabel(g.label)}
+                    </span>
+                  ))}
+                  {dayPosts.slice(0, 2).map((p) => (
                     <span key={p.id} title={p.title} className={`chip block truncate ${statusChip(p.status)}`}>
                       {p.repeat_rule !== 'none' ? '🔁 ' : ''}{p.title}
                     </span>
                   ))}
-                  {dayPosts.length > 3 && <span className="block text-[10px] text-slate-400">+{dayPosts.length - 3} more</span>}
+                  {dayPosts.length + dayGames.length > 4 && (
+                    <span className="block text-[10px] text-slate-400">+{dayPosts.length + dayGames.length - 4} more</span>
+                  )}
                 </div>
               </button>
             )
           })}
         </div>
-        <p className="mt-2 text-[11px] text-slate-400">Tap a day to point the composer at it.</p>
+        <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
+          <span>Tap a day to point the composer at it.</span>
+          <span className="flex items-center gap-1"><span className="chip bg-violet-50 px-1 text-violet-700 ring-1 ring-inset ring-violet-100">🎰</span> LetsPoker game (live from API)</span>
+        </p>
       </div>
 
       {/* ----- composer ----- */}
