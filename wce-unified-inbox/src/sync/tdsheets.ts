@@ -271,35 +271,52 @@ export interface FinancialLine {
   value_raw: string
 }
 
+const isLabelCell = (c: string): boolean => /[a-z]/i.test(c) && c.length >= 3 && c.length <= 60
+const isMoneyCell = (raw: string): boolean =>
+  // Money-looking, but not a bare small integer (headcount / table number).
+  !!raw && MONEY_RE.test(raw) && !(!/[$,.]/.test(raw) && raw.replace(/\D/g, '').length < 3)
+
 /**
  * Pull label:value money lines out of a financial tab. Deliberately generic —
- * the first texty cell in a row is the label, the first money-looking cell
- * after it is the value — so layout changes don't need a code change; the
- * metric mapping lives in the inbox_financial_summary view.
+ * a texty cell is a label, the first money-looking cell to its right (before the
+ * next label) is its value; the metric mapping lives in the inbox_financial_summary
+ * view.
+ *
+ * Scans EVERY label on a row, not just the first — the older TD templates lay the
+ * financials out in two side-by-side blocks (e.g. a Staff column at B and an
+ * Expenses column at K), so "Croupiers" often sits in a right-hand column that a
+ * first-cell-only reader never sees. The first captured line on a row keeps the
+ * historic row_num (ri+1) so a re-harvest still overwrites the prior value; any
+ * extra same-row lines get a high, collision-free key (10000+ri*100+ci) so they
+ * add rather than clobber.
  */
 export function extractFinancials(rows: string[][]): FinancialLine[] {
   const out: FinancialLine[] = []
   for (let ri = 0; ri < Math.min(rows.length, 120); ri++) {
     const cells = (rows[ri] ?? []).map((c) => (c ?? '').toString().trim())
-    const li = cells.findIndex((c) => /[a-z]/i.test(c) && c.length >= 3 && c.length <= 60)
-    if (li < 0) continue
-    const label = cells[li]
-    if (!FIN_LABEL.test(label)) continue
-    for (let ci = li + 1; ci < cells.length; ci++) {
-      const raw = cells[ci]
-      if (!raw || !MONEY_RE.test(raw)) continue
-      // Bare small integers (headcounts, table numbers) aren't money.
-      if (!/[$,.]/.test(raw) && raw.replace(/\D/g, '').length < 3) break
-      const neg = raw.includes('(') || /-/.test(raw)
-      const num = Number(raw.replace(/[^0-9.]/g, ''))
-      out.push({
-        row_num: ri + 1,
-        label,
-        norm_label: label.toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim(),
-        value_num: Number.isFinite(num) ? (neg ? -num : num) : null,
-        value_raw: raw,
-      })
-      break
+    let firstDone = false
+    for (let ci = 0; ci < cells.length; ci++) {
+      const label = cells[ci]
+      if (!isLabelCell(label) || !FIN_LABEL.test(label)) continue
+      // Look right for this label's value, stopping at the next label so we never
+      // reach across into a neighbouring block's number.
+      for (let cj = ci + 1; cj < Math.min(cells.length, ci + 9); cj++) {
+        const raw = cells[cj]
+        if (!raw) continue
+        if (isLabelCell(raw)) break // next column's label — this one has no value
+        if (!isMoneyCell(raw)) continue
+        const neg = raw.includes('(') || /-/.test(raw)
+        const num = Number(raw.replace(/[^0-9.]/g, ''))
+        out.push({
+          row_num: firstDone ? 10000 + ri * 100 + ci : ri + 1,
+          label,
+          norm_label: label.toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim(),
+          value_num: Number.isFinite(num) ? (neg ? -num : num) : null,
+          value_raw: raw,
+        })
+        firstDone = true
+        break
+      }
     }
   }
   return out
