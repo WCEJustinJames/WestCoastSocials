@@ -49,7 +49,7 @@ function messagedRecently(iso: string | null): boolean {
   return Date.now() - new Date(iso).getTime() < GUARD_WINDOW_MS
 }
 
-export function Batches() {
+export function Batches({ initialListId }: { initialListId?: { id: string; nonce: number } | null } = {}) {
   const [source, setSource] = useState<Source>('all')
   const [conversations, setConversations] = useState<ConvRow[]>([])
   const [outreach, setOutreach] = useState<OutreachRow[]>([])
@@ -569,6 +569,15 @@ export function Batches() {
       .order('name')
       .then(({ data }) => setVenueLists((data as typeof venueLists) ?? []))
   }, [])
+
+  // Deep-link from the Home seat-monitor: once the venue lists are loaded, auto-
+  // load the requested list. The nonce lets a repeat click re-trigger.
+  useEffect(() => {
+    if (initialListId?.id && venueLists.some((l) => l.id === initialListId.id)) {
+      void loadVenueList(initialListId.id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialListId?.nonce, venueLists])
 
   // Draft batches the recurring scheduler built (Schedules tab) and that are waiting
   // for approval. Loaded into the preview phase so you can review + Approve to send.

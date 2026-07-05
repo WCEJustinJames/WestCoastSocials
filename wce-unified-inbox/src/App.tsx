@@ -99,6 +99,12 @@ export default function App() {
     setInboxConv((prev) => ({ id: conversationId, nonce: (prev?.nonce ?? 0) + 1 }))
     setView('inbox')
   }
+  // Home's seat monitor deep-links into Batches with a venue list pre-loaded.
+  const [batchesList, setBatchesList] = useState<{ id: string; nonce: number } | null>(null)
+  const goBatches = (listId: string | null) => {
+    if (listId) setBatchesList((prev) => ({ id: listId, nonce: (prev?.nonce ?? 0) + 1 }))
+    setView('batches')
+  }
 
   const nav = (v: View) => {
     if (v === 'players') setPlayersFilter(null)
@@ -199,11 +205,11 @@ export default function App() {
         <SyncStrip />
         <div className="min-h-0 flex-1">
           {view === 'home' ? (
-            <Home onNavigate={goPlayers} onOpenConversation={goInbox} />
+            <Home onNavigate={goPlayers} onOpenConversation={goInbox} onFillSeats={goBatches} />
           ) : view === 'inbox' ? (
             <Inbox openConversation={inboxConv} />
           ) : view === 'batches' ? (
-            <Batches />
+            <Batches initialListId={batchesList} />
           ) : view === 'drafts' ? (
             <Drafts />
           ) : view === 'confirmed' ? (

@@ -779,6 +779,7 @@ export type Database = {
           active: boolean
           last_materialised_for: string | null
           created_at: string
+          seat_target: number
         }
         Insert: {
           id?: string
@@ -793,6 +794,7 @@ export type Database = {
           active?: boolean
           last_materialised_for?: string | null
           created_at?: string
+          seat_target?: number
         }
         Update: {
           id?: string
@@ -807,6 +809,7 @@ export type Database = {
           active?: boolean
           last_materialised_for?: string | null
           created_at?: string
+          seat_target?: number
         }
         Relationships: [
           {

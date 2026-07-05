@@ -169,6 +169,10 @@ export function Schedules() {
                   <option value={1}>1 day before</option>
                   <option value={2}>2 days before</option>
                 </select>
+                <span className="text-slate-400" title="Seats to fill (cash tables). 0 = uncapped / not monitored on Home">seats</span>
+                <input type="number" min={0} max={20} value={s.seat_target}
+                  onChange={(e) => void patch(s.id, { seat_target: Math.max(0, Number(e.target.value) || 0) })}
+                  className="w-14 rounded-md border border-slate-200 px-2 py-1" />
                 <button onClick={() => void saveRow(s)} disabled={busy}
                   className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40">Save</button>
                 {s.last_materialised_for && <span className="ml-auto text-[11px] text-slate-400">last built for {s.last_materialised_for}</span>}
