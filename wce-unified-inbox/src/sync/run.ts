@@ -21,7 +21,7 @@ import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
 import { syncGmail } from './email'
 import { syncTdSheets, processTransferConfirms } from './tdsheets'
-import { checkBridges } from './bridges'
+import { checkBridges, alertBridgeChanges } from './bridges'
 import { autoLink } from './autolink'
 import { matchFbFriends } from './fbmatch'
 import { processReplies } from './notify'
@@ -413,6 +413,9 @@ async function runOnce(): Promise<void> {
       const bh = await checkBridges(supabaseAdmin, beeperClient)
       if (bh.newlyDown.length)
         console.warn(`[bridges] DOWN: ${bh.newlyDown.map((d) => `${d.network}${d.label ? ` (${d.label})` : ''}`).join(', ')}`)
+      // Text Justin on a non-SMS bridge drop / recovery (SMS-bridge drop is
+      // in-app only — can't text through the bridge that's down).
+      await alertBridgeChanges(adapter, env.notifyPhone, bh)
       const note = bh.unreachable
         ? 'beeper unreachable'
         : `beeper ${bh.connected}/${bh.checked} connected${bh.down ? ` · ${bh.down} down` : ''}`

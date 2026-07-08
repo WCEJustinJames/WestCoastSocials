@@ -1,8 +1,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import type { BeeperClient } from '../adapters/beeper/client'
+import type { ChannelAdapter } from '../adapters/types'
 
 type DB = SupabaseClient<Database>
+
+// The SMS bridge is the transport our own alert texts ride — so a drop on it
+// can't be texted (the message would need the very bridge that's down); it stays
+// in-app only. Everything else (WhatsApp, Messenger, …) gets a text.
+const SMS_NETWORK = 'Google Messages'
 
 /** One stored row of per-network bridge health. */
 interface HealthRow {
@@ -16,13 +22,20 @@ interface HealthRow {
   since: string | null
 }
 
+export interface BridgeEdge {
+  network: string
+  label: string | null
+}
+
 export interface BridgeCheckResult {
   checked: number
   connected: number
   down: number
   unreachable: boolean
-  /** Bridges that flipped connected -> not this pass (for logging / alarms). */
-  newlyDown: { network: string; label: string | null }[]
+  /** Bridges that flipped connected -> not this pass (edge-once, from DB state). */
+  newlyDown: BridgeEdge[]
+  /** Bridges that flipped back to connected this pass. */
+  newlyUp: BridgeEdge[]
 }
 
 // The Beeper account object is loosely typed (`[k]: unknown`); pull the fields
@@ -90,15 +103,17 @@ export async function checkBridges(db: DB, beeper: BeeperClient): Promise<Bridge
       const { error } = await q.from('inbox_bridge_health').upsert(rows, { onConflict: 'account_id' })
       if (error) console.error('[bridges] write failed:', error.message)
     }
-    return { checked: rows.length, connected: 0, down: rows.length, unreachable: true, newlyDown: [] }
+    return { checked: rows.length, connected: 0, down: rows.length, unreachable: true, newlyDown: [], newlyUp: [] }
   }
 
-  const newlyDown: { network: string; label: string | null }[] = []
+  const newlyDown: BridgeEdge[] = []
+  const newlyUp: BridgeEdge[] = []
   const rows = accounts.map((a) => {
     const connected = a.status === 'connected'
     const label = labelOf(a)
     const p = priorById.get(a.accountID)
     if (p?.connected && !connected) newlyDown.push({ network: a.network, label })
+    if (p && !p.connected && connected) newlyUp.push({ network: a.network, label })
     return {
       account_id: a.accountID,
       network: a.network,
@@ -138,5 +153,42 @@ export async function checkBridges(db: DB, beeper: BeeperClient): Promise<Bridge
     if (error) console.error('[bridges] write failed:', error.message)
   }
   const connected = rows.filter((r) => r.connected).length
-  return { checked: rows.length, connected, down: rows.length - connected, unreachable: false, newlyDown }
+  return { checked: rows.length, connected, down: rows.length - connected, unreachable: false, newlyDown, newlyUp }
+}
+
+async function safeText(adapter: ChannelAdapter, account: string, phone: string, text: string): Promise<void> {
+  if (!adapter.startChatAndSend) return
+  try {
+    await adapter.startChatAndSend(account, phone, text)
+  } catch (e) {
+    console.error('[bridges] alert send failed:', e instanceof Error ? e.message : e)
+  }
+}
+
+/**
+ * Text Justin when a bridge drops or recovers. Edge-once (the connected<->down
+ * transitions come from DB state, so each fires a single text). The SMS bridge
+ * itself is skipped for down-alerts — the text would need the very bridge that's
+ * down — so that one stays in-app only via the Home banner. Best-effort.
+ */
+export async function alertBridgeChanges(
+  adapter: ChannelAdapter,
+  notifyPhone: string,
+  result: BridgeCheckResult,
+  notifyAccount = 'gmessages',
+): Promise<void> {
+  if (!notifyPhone) return
+  for (const b of result.newlyUp) {
+    await safeText(adapter, notifyAccount, notifyPhone, `WCP Beeper: ${b.network}${b.label ? ` (${b.label})` : ''} is back online.`)
+  }
+  const down = result.newlyDown.filter((b) => b.network !== SMS_NETWORK)
+  if (down.length) {
+    const list = down.map((b) => `${b.network}${b.label ? ` (${b.label})` : ''}`).join(', ')
+    await safeText(
+      adapter,
+      notifyAccount,
+      notifyPhone,
+      `WCP Beeper ALARM: ${list} disconnected — messages on it won't send. Open Beeper on the PC and re-link.`,
+    )
+  }
 }
