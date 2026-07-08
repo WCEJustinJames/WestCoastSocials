@@ -83,6 +83,9 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
   const [picked, setPicked] = useState<Map<string, Recipient>>(new Map())
   // Recipients to auto-pick once a reused list's rows load for the active source.
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set())
+  // The standing list currently loaded (if any) + its member keys, so a deselect
+  // can offer "skip this week" (just untick) vs "remove from the standing list".
+  const [loadedList, setLoadedList] = useState<{ id: string; name: string; members: Set<string> } | null>(null)
   const [name, setName] = useState('')
   const [template, setTemplate] = useState('')
   const [attachImg, setAttachImg] = useState<PickedImage | null>(null)
@@ -695,7 +698,8 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
     if (l?.venue && !batchVenue.trim()) setBatchVenue(l.venue)
     setSource('all')
     setPendingKeys(keys)
-    setStatus(`Loaded ${keys.size} from “${l?.name ?? 'list'}” — edit the template and Build preview.`)
+    setLoadedList({ id, name: l?.name ?? 'list', members: keys })
+    setStatus(`Loaded ${keys.size} from “${l?.name ?? 'list'}” — untick = skip this week, or remove from the list.`)
     setTimeout(() => setStatus(null), 6000)
   }
 
@@ -706,6 +710,30 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
       return m
     })
   }
+
+  // Permanently drop a player from the loaded standing list (Lists tab membership),
+  // vs an untick which only skips them for THIS week's batch. Unticks them here too.
+  async function removeFromList(r: Recipient) {
+    if (!loadedList) return
+    await supabase
+      .from('inbox_list_members')
+      .delete()
+      .eq('list_id', loadedList.id)
+      .eq('outreach_id', r.key)
+    setLoadedList((prev) => {
+      if (!prev) return prev
+      const members = new Set(prev.members)
+      members.delete(r.key)
+      return { ...prev, members }
+    })
+    setPicked((prev) => {
+      const m = new Map(prev)
+      m.delete(r.key)
+      return m
+    })
+    setStatus(`Removed ${r.name} from “${loadedList.name}”.`)
+    setTimeout(() => setStatus(null), 4000)
+  }
   function selectAllSendable() {
     setPicked((prev) => {
       const m = new Map(prev)
@@ -715,6 +743,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
   }
   function clearSelection() {
     setPicked(new Map())
+    setLoadedList(null)
   }
 
   async function buildPreview() {
@@ -1695,6 +1724,15 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
                     className="text-xs text-slate-300 hover:text-rose-700"
                   >
                     ban
+                  </button>
+                )}
+                {loadedList?.members.has(r.key) && (
+                  <button
+                    onClick={() => void removeFromList(r)}
+                    title={`Remove permanently from the “${loadedList.name}” standing list (untick just skips this week)`}
+                    className="text-xs text-slate-300 hover:text-rose-700"
+                  >
+                    off list
                   </button>
                 )}
                 <button
