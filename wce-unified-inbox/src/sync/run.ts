@@ -495,7 +495,11 @@ async function runOnce(): Promise<void> {
   }
 
   // Invite variants: pre-write 3 invite options per venue for the Batches picker.
-  if (anthropic && Date.now() - lastVariants > 60 * 60_000) {
+  // Runs every ~60s but is cheap in steady state — it only makes an Anthropic call
+  // for a venue MISSING fresh variants, so it stays idle until the daily refresh
+  // window or until the "new wording" button retires a venue's current set (which
+  // it then regenerates within a pass).
+  if (anthropic && Date.now() - lastVariants > 60_000) {
     lastVariants = Date.now()
     try {
       const v = await generateInviteVariants(supabaseAdmin, anthropic, env.anthropicModel)
