@@ -21,6 +21,7 @@ import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
 import { syncGmail } from './email'
 import { syncTdSheets, processTransferConfirms } from './tdsheets'
+import { checkBridges } from './bridges'
 import { autoLink } from './autolink'
 import { matchFbFriends } from './fbmatch'
 import { processReplies } from './notify'
@@ -135,6 +136,8 @@ let lastEmailSync = 0
 let lastMarketing = 0
 // Game-week promo generator runs a few times a day (idempotent via source_key).
 let lastSocialAuto = 0
+// Beeper bridge-health poll runs on its own ~60s cadence.
+let lastBridges = 0
 
 // Log quiet-hours transitions once, not every 15s pass.
 let wasQuiet = false
@@ -398,6 +401,27 @@ async function runOnce(): Promise<void> {
       if (hb2Err) console.error('[tdsheets] heartbeat write failed:', hb2Err.message)
     } catch (e) {
       console.error('[tdsheets] sync error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Beeper bridge health: poll every network's connection state so the dashboard
+  // can alarm the instant WhatsApp / Google Messages / Messenger drops — even
+  // idle, when the send-time circuit-breaker wouldn't fire. Own ~60s cadence.
+  if (Date.now() - lastBridges > 60_000) {
+    lastBridges = Date.now()
+    try {
+      const bh = await checkBridges(supabaseAdmin, beeperClient)
+      if (bh.newlyDown.length)
+        console.warn(`[bridges] DOWN: ${bh.newlyDown.map((d) => `${d.network}${d.label ? ` (${d.label})` : ''}`).join(', ')}`)
+      const note = bh.unreachable
+        ? 'beeper unreachable'
+        : `beeper ${bh.connected}/${bh.checked} connected${bh.down ? ` · ${bh.down} down` : ''}`
+      const { error: hb4Err } = await supabaseAdmin
+        .from('inbox_sync_heartbeat')
+        .upsert({ id: 4, last_run: new Date().toISOString(), host: os.hostname(), note })
+      if (hb4Err) console.error('[bridges] heartbeat write failed:', hb4Err.message)
+    } catch (e) {
+      console.error('[bridges] check error:', e instanceof Error ? e.message : e)
     }
   }
 
