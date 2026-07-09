@@ -36,7 +36,7 @@ export function Home({
       <BridgeAlarm />
       <SendQueue />
       <ActionQueue onOpen={onOpenConversation} />
-      <SeatMonitor onFill={onFillSeats} />
+      <SeatMonitor onFill={onFillSeats} onOpen={onOpenConversation} />
       <Financials />
       <SheetCoverage />
       <DashboardCards onNavigate={onNavigate} />
