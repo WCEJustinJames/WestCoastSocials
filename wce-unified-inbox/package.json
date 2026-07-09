@@ -1,0 +1,41 @@
+{
+  "name": "wce-unified-inbox",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "WCE Unified Inbox — automated player messaging for West Coast Poker",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "sync": "tsx src/sync/run.ts",
+    "sync:once": "tsx src/sync/run.ts --once",
+    "beeper:probe": "tsx src/adapters/beeper/probe.ts",
+    "beeper:contacts": "tsx src/adapters/beeper/contacts.ts",
+    "beeper:startchat": "tsx src/adapters/beeper/startchat.ts",
+    "beeper:receipts": "tsx src/adapters/beeper/receipts.ts",
+    "receipts": "tsx src/sync/receipts-run.ts",
+    "tdsheets:backfill": "tsx src/sync/tdsheets-backfill.ts",
+    "receipts:count": "tsx src/sync/receipts-count.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "dotenv": "^16.4.5",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.6",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3",
+    "vite": "^6.0.7"
+  }
+}
