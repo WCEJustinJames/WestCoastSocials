@@ -1,39 +1,44 @@
-// LetsPoker recurring events — fill the club calendar's regular weekly games
-// for the rest of the month, headless.
+// LetsPoker recurring events — stage the club's regular weekly games for the
+// rest of the month behind a review gate, then publish the approved ones.
 //
-// The club's schedule is week-shaped: each venue's game repeats on the same
-// weekday at the same time ("Tuesday 7pm at the Woody"). This function reads
-// the live LetsPoker calendar (getEventList), detects those weekly series from
-// recent history, and creates the missing occurrences through end of month via
-// createTournament — the same mutation the admin app fires, and the one
-// letspoker-cash already uses for cash-day containers.
+// LetsPoker tournaments (unlike cash tables) expose no private/public flag, and
+// there is no un-create, so we DON'T create straight onto the live calendar.
+// Instead every missing weekly occurrence is staged in our own DB
+// (public.letspoker_scheduled_events, status='pending') — a private review list
+// that players can't see — and only the rows Justin APPROVES are created on
+// LetsPoker via createTournament (the mutation letspoker-cash already uses).
+//
+// Flow:  plan → queue → review → approve/reject → publish
 //
 // Modes (request body { "mode": ... }):
-//   - "plan"     -> DEFAULT. Read-only: list the detected weekly series and the
-//                   dates each is missing through end of month. Writes nothing.
-//   - "fill"     -> create the missing events. dryRun DEFAULT true (this is an
-//                   outward-facing op — created events are player-visible).
-//                   Pass { "dryRun": false } to really create.
+//   - "plan"    -> DEFAULT. Read-only: detect the weekly series and the dates
+//                  each is missing through end of month. Touches nothing.
+//   - "queue"   -> Stage the missing occurrences into the queue as 'pending'
+//                  (idempotent — a date already on the LP calendar or already
+//                  queued is skipped). Writes only to our DB; nothing on LP.
+//   - "review"  -> Read-only: list queue rows (default status='pending').
+//   - "approve" -> Mark selected pending rows 'approved'.  Selector required.
+//   - "reject"  -> Mark selected pending rows 'rejected'.  Selector required.
+//   - "publish" -> Create the 'approved' rows on LetsPoker via createTournament
+//                  and record the id. dryRun DEFAULT true (this is the only mode
+//                  that touches the live calendar). Re-checks the calendar first
+//                  and skips anything already there.
 //
-// A filled event carries the series name and the same Perth wall-clock start
-// time as its last run. Buy-in / blind structure are NOT copied — LetsPoker has
-// no captured config-copy mutation, so createTournament sets name + start only
-// and the club's defaults apply until the event is opened in the admin (same as
-// how letspoker-cash seeds its cash-day containers).
+// Selectors (approve / reject / publish): choose which rows to act on —
+//   ids: [1,2,3]     specific queue-row ids
+//   only: "woodvale" case-insensitive substring on the series name
+//   all: true        every matching row in the status/date window
+//   from / to        YYYY-MM-DD date window (default: all future)
+// approve/reject require a selector; publish with no selector = all 'approved'.
 //
-// Options (all modes unless noted):
-//   from        YYYY-MM-DD  first date to consider   (default: tomorrow, Perth)
-//   to          YYYY-MM-DD  last date to consider    (default: end of Perth month)
-//   recentDays  number      a series is "alive" only if it last ran within this
-//                           many days (default 8 — a skipped week reads as
-//                           deliberate and is NOT auto-resumed)
-//   only        string      case-insensitive substring filter on event name
+// Detection options (plan / queue): from, to (default tomorrow → end of Perth
+// month), recentDays (a series must have run within this many days to count as
+// alive; default 8, so a deliberately-skipped week isn't auto-resumed), only.
 //
-// Idempotent: a date that already has an event with the series' name is
-// skipped, so re-runs (or a future cron) can never double-create. Failures log
-// to cash_open_log (source "schedule") and alert Justin, matching house style.
+// Failures log to cash_open_log (source "schedule") and alert Justin.
 
 const ENDPOINT = "https://wcp.admin.lets.poker/api/graphql?ngsw-bypass=true";
+const QUEUE_TABLE = "letspoker_scheduled_events";
 
 const LIST_QUERY = `query getList($clubId: ID!, $startDate: DateTime!, $endDate: DateTime!, $includeCash: Boolean!) {
   events: getEventList(clubId: $clubId, startDate: $startDate, endDate: $endDate, includeCash: $includeCash) {
@@ -54,6 +59,7 @@ function env(name: string): string | undefined {
   return v && v.length > 0 ? v : undefined;
 }
 
+/* ------------------------------ time / dates -------------------------- */
 // Perth is UTC+8, no DST.
 function perthDate(dayOffset = 0): string {
   return new Date(Date.now() + (8 * 60 + dayOffset * 24 * 60) * 60 * 1000).toISOString().slice(0, 10);
@@ -77,7 +83,11 @@ function weekdayOf(date: string): number {
 function addDays(date: string, days: number): string {
   return new Date(new Date(date + "T00:00:00Z").getTime() + days * 86_400_000).toISOString().slice(0, 10);
 }
+function isDate(s: unknown): s is string {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
 
+/* ------------------------------ LP transport -------------------------- */
 function headers(cookie: string, sessionGroupId: string): HeadersInit {
   return {
     accept: "application/json, text/plain, */*",
@@ -128,6 +138,25 @@ async function getCookie(): Promise<string | undefined> {
   return env("LETSPOKER_COOKIE");
 }
 
+// Fire one GraphQL operation (batched-array form, as the LP admin client sends).
+async function gql(cookie: string, sgid: string, operationName: string | null, query: string, variables: unknown):
+  Promise<{ status: number | null; text: string; ok: boolean; unauth: boolean; error: string | null }> {
+  let status: number | null = null, text = "";
+  try {
+    const res = await fetch(ENDPOINT, {
+      method: "POST", headers: headers(cookie, sgid),
+      body: JSON.stringify([{ operationName, query, variables }]),
+    });
+    status = res.status; text = await res.text();
+  } catch (e) {
+    return { status: null, text: "", ok: false, unauth: false, error: `network error: ${e}` };
+  }
+  const unauth = looksUnauthenticated(status, text);
+  const gqlErr = firstGraphqlError(text);
+  return { status, text, ok: status === 200 && !unauth && !gqlErr, unauth, error: gqlErr };
+}
+
+/* ------------------------------ Supabase ------------------------------ */
 async function rest(path: string, init: RequestInit = {}): Promise<Response> {
   const url = env("SUPABASE_URL");
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
@@ -169,36 +198,18 @@ async function alertJustin(subject: string, message: string) {
   await Promise.allSettled(tasks);
 }
 
-// Fire one GraphQL operation (batched-array form, as the LP admin client sends).
-async function gql(cookie: string, sgid: string, operationName: string | null, query: string, variables: unknown):
-  Promise<{ status: number | null; text: string; ok: boolean; unauth: boolean; error: string | null }> {
-  let status: number | null = null, text = "";
-  try {
-    const res = await fetch(ENDPOINT, {
-      method: "POST", headers: headers(cookie, sgid),
-      body: JSON.stringify([{ operationName, query, variables }]),
-    });
-    status = res.status; text = await res.text();
-  } catch (e) {
-    return { status: null, text: "", ok: false, unauth: false, error: `network error: ${e}` };
-  }
-  const unauth = looksUnauthenticated(status, text);
-  const gqlErr = firstGraphqlError(text);
-  return { status, text, ok: status === 200 && !unauth && !gqlErr, unauth, error: gqlErr };
-}
-
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), { status, headers: { "Content-Type": "application/json" } });
 }
 
-/* -------------------------------- plan -------------------------------- */
+/* -------------------------- series detection -------------------------- */
 
 type LPEvent = { id: string; scheduledDate: string; name: string; date: string; time: string; buyIn: number | null };
 type Series = {
   name: string; weekday: number; time: string;
   lastSeen: string; buyIn: number | null;
   scheduled: string[];       // future dates already on the calendar
-  missing: string[];         // dates to create
+  missing: string[];         // dates with no event yet
 };
 
 function buyInOf(e: any): number | null {
@@ -265,63 +276,196 @@ function detectSeries(events: LPEvent[], from: string, to: string, recentDays: n
 
 async function buildPlan(cookie: string, sgid: string, clubId: string, body: any):
   Promise<{ from: string; to: string; recentDays: number; series: Series[] }> {
-  const from = typeof body?.from === "string" ? body.from : perthDate(1);
-  const to = typeof body?.to === "string" ? body.to : perthEndOfMonth();
+  const from = isDate(body?.from) ? body.from : perthDate(1);
+  const to = isDate(body?.to) ? body.to : perthEndOfMonth();
   const recentDays = Number.isFinite(body?.recentDays) ? Number(body.recentDays) : 8;
   const only = typeof body?.only === "string" ? body.only : null;
   const events = await fetchCalendar(cookie, sgid, clubId, perthDate(-LOOKBACK_DAYS), to);
   return { from, to, recentDays, series: detectSeries(events, from, to, recentDays, only) };
 }
 
-/* -------------------------------- fill -------------------------------- */
-// Create every missing occurrence via createTournament. The new event carries
-// the series name and the same Perth wall-clock start time as its last run;
-// buy-in/structure config isn't copied (LetsPoker exposes no captured config
-// mutation), so the club's defaults apply until the event is edited in admin.
-
-async function runFill(cookie: string, sgid: string, clubId: string, body: any): Promise<Response> {
-  const dryRun = body?.dryRun !== false; // outward-facing: default true
+/* -------------------------------- queue ------------------------------- */
+// Stage every missing occurrence as a 'pending' queue row. Idempotent: the
+// (event_date, series_name) unique key + ignore-duplicates means a re-run adds
+// only genuinely new occurrences and never disturbs an already-decided row.
+async function runQueue(cookie: string, sgid: string, clubId: string, body: any): Promise<Response> {
   let plan;
   try {
     plan = await buildPlan(cookie, sgid, clubId, body);
   } catch (e) {
-    const detail = `fill: calendar read failed — ${e}`;
-    await logSchedule({ op: "fill", ref: null, http_status: null, ok: false, detail });
-    await alertJustin("LetsPoker schedule fill failed", detail);
+    const detail = `queue: calendar read failed — ${e}`;
+    await logSchedule({ op: "queue", ref: null, http_status: null, ok: false, detail });
+    await alertJustin("LetsPoker schedule queue failed", detail);
+    return json({ ok: false, error: String(e) }, 502);
+  }
+
+  const source = `queue ${plan.from}..${plan.to}`;
+  const rows = plan.series.flatMap((s) =>
+    s.missing.map((date) => ({
+      series_name: s.name,
+      event_date: date,
+      start_time: s.time,
+      scheduled_at: new Date(`${date}T${s.time}:00+08:00`).toISOString(),
+      weekday: s.weekday,
+      buy_in: s.buyIn,
+      status: "pending",
+      source,
+    })));
+
+  if (!rows.length) {
+    await logSchedule({ op: "queue", ref: source, http_status: 200, ok: true, detail: "nothing to queue (calendar already full)" });
+    return json({ ok: true, mode: "queue", from: plan.from, to: plan.to, staged: 0, alreadyQueued: 0, rows: [] });
+  }
+
+  // ignore-duplicates => only genuinely new (event_date, series_name) rows come
+  // back; existing pending/approved/created rows are left exactly as they are.
+  const res = await rest(`/rest/v1/${QUEUE_TABLE}?on_conflict=event_date,series_name`, {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+    body: JSON.stringify(rows),
+  });
+  if (!res.ok) {
+    const detail = `queue: insert failed ${res.status} ${(await res.text()).slice(0, 200)}`;
+    await logSchedule({ op: "queue", ref: source, http_status: res.status, ok: false, detail });
+    await alertJustin("LetsPoker schedule queue: DB insert failed", detail);
+    return json({ ok: false, error: detail }, 500);
+  }
+  const inserted = (await res.json().catch(() => [])) as any[];
+
+  const staged = Array.isArray(inserted) ? inserted.length : 0;
+  await logSchedule({ op: "queue", ref: source, http_status: 200, ok: true, detail: `staged ${staged} of ${rows.length} candidate(s)` });
+  return json({
+    ok: true, mode: "queue", from: plan.from, to: plan.to,
+    staged, alreadyQueued: rows.length - staged,
+    rows: inserted.map((r) => ({ id: r.id, name: r.series_name, date: r.event_date, time: r.start_time, status: r.status })),
+  });
+}
+
+/* -------------------------------- review ------------------------------ */
+async function runReview(body: any): Promise<Response> {
+  const status = typeof body?.status === "string" ? body.status : "pending";
+  const parts = [`select=id,series_name,event_date,start_time,buy_in,status,tournament_event_id,note,created_at,decided_at,published_at`];
+  if (status !== "all") parts.push(`status=eq.${encodeURIComponent(status)}`);
+  if (isDate(body?.from)) parts.push(`event_date=gte.${body.from}`);
+  if (isDate(body?.to)) parts.push(`event_date=lte.${body.to}`);
+  if (typeof body?.only === "string" && body.only) parts.push(`series_name=ilike.*${encodeURIComponent(body.only)}*`);
+  parts.push(`order=event_date.asc,series_name.asc`);
+
+  const res = await rest(`/rest/v1/${QUEUE_TABLE}?${parts.join("&")}`);
+  if (!res.ok) return json({ ok: false, error: `review read failed: ${res.status} ${(await res.text()).slice(0, 200)}` }, 500);
+  const rows = (await res.json().catch(() => [])) as any[];
+  const byStatus: Record<string, number> = {};
+  for (const r of rows) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
+  return json({ ok: true, mode: "review", filter: { status, from: body?.from ?? null, to: body?.to ?? null, only: body?.only ?? null }, count: rows.length, byStatus, rows });
+}
+
+/* ---------------------- selectors for decide/publish ------------------ */
+// Build the PostgREST filter for the rows a decide/publish call should touch.
+// `fromStatus` scopes to the states a transition is valid from (pending for
+// approve/reject, approved for publish). Returns null when a required selector
+// is missing.
+function selectorParts(body: any, fromStatus: string, requireSelector: boolean): string[] | null {
+  const parts: string[] = [];
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((x: unknown) => Number.isInteger(x)) : [];
+  const hasOnly = typeof body?.only === "string" && body.only.length > 0;
+  const all = body?.all === true;
+
+  if (requireSelector && ids.length === 0 && !hasOnly && !all) return null;
+
+  parts.push(`status=eq.${fromStatus}`);
+  if (ids.length) parts.push(`id=in.(${ids.join(",")})`);
+  if (hasOnly) parts.push(`series_name=ilike.*${encodeURIComponent(body.only)}*`);
+  if (isDate(body?.from)) parts.push(`event_date=gte.${body.from}`);
+  if (isDate(body?.to)) parts.push(`event_date=lte.${body.to}`);
+  return parts;
+}
+
+async function runDecide(body: any, action: "approve" | "reject"): Promise<Response> {
+  const parts = selectorParts(body, "pending", true);
+  if (!parts) return json({ ok: false, error: `select rows to ${action} with ids:[…], only:"name", or all:true` }, 400);
+  const newStatus = action === "approve" ? "approved" : "rejected";
+  const now = new Date().toISOString();
+  const patch = { status: newStatus, decided_at: now, updated_at: now };
+  const res = await rest(`/rest/v1/${QUEUE_TABLE}?${parts.join("&")}`, {
+    method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(patch),
+  });
+  if (!res.ok) return json({ ok: false, error: `${action} failed: ${res.status} ${(await res.text()).slice(0, 200)}` }, 500);
+  const rows = (await res.json().catch(() => [])) as any[];
+  await logSchedule({ op: action, ref: null, http_status: 200, ok: true, detail: `${action}d ${rows.length} row(s)` });
+  return json({ ok: true, mode: action, changed: rows.length, rows });
+}
+
+/* -------------------------------- publish ----------------------------- */
+// Create the 'approved' rows on LetsPoker. dryRun defaults true. Re-reads the
+// live calendar first and skips any date/name already present, so a game added
+// by hand in the meantime is never duplicated (LP has no un-create).
+async function runPublish(cookie: string, sgid: string, clubId: string, body: any): Promise<Response> {
+  const dryRun = body?.dryRun !== false;
+  const parts = selectorParts(body, "approved", false)!; // publish w/o selector = all approved
+  parts.push(`select=id,series_name,event_date,start_time,scheduled_at`);
+  parts.push(`order=event_date.asc,series_name.asc`);
+
+  const listRes = await rest(`/rest/v1/${QUEUE_TABLE}?${parts.join("&")}`);
+  if (!listRes.ok) return json({ ok: false, error: `publish: queue read failed ${listRes.status}` }, 500);
+  const approved = (await listRes.json().catch(() => [])) as any[];
+  if (!approved.length) return json({ ok: true, mode: "publish", dryRun, created: 0, results: [], note: "no approved rows to publish" });
+
+  // Guard against duplicates: pull the live calendar over the span we're about
+  // to write and index existing events by date|lowercased-name.
+  const dates = approved.map((r) => r.event_date).sort();
+  let present = new Set<string>();
+  try {
+    const cal = await fetchCalendar(cookie, sgid, clubId, dates[0], dates[dates.length - 1]);
+    present = new Set(cal.map((e) => `${e.date}|${e.name.toLowerCase()}`));
+  } catch (e) {
+    const detail = `publish: calendar re-check failed — ${e}`;
+    await logSchedule({ op: "publish", ref: null, http_status: null, ok: false, detail });
+    await alertJustin("LetsPoker schedule publish failed", detail);
     return json({ ok: false, error: String(e) }, 502);
   }
 
   const results: unknown[] = [];
-  let failures = 0;
-  for (const s of plan.series) {
-    for (const date of s.missing) {
-      const scheduledDate = new Date(`${date}T${s.time}:00+08:00`).toISOString();
-      if (dryRun) {
-        results.push({ dryRun: true, wouldCreate: { name: s.name, date, time: s.time, scheduledDate } });
-        continue;
+  let created = 0, skipped = 0, failures = 0;
+  for (const row of approved) {
+    const already = present.has(`${row.event_date}|${row.series_name.toLowerCase()}`);
+    if (already) {
+      skipped++;
+      if (!dryRun) {
+        await rest(`/rest/v1/${QUEUE_TABLE}?id=eq.${row.id}`, {
+          method: "PATCH", headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ status: "skipped", note: "already on LP calendar at publish time", updated_at: new Date().toISOString() }),
+        });
       }
-      const r = await gql(cookie, sgid, "createTournament", CREATE_TOURNAMENT, { clubId, name: s.name, scheduledDate });
-      const id = firstData(r.text)?.createTournament?.id ?? null;
-      const ok = r.ok && !!id;
-      if (!ok) failures++;
-      await logSchedule({
-        op: "create", ref: date, http_status: r.status, ok,
-        detail: `createTournament("${s.name}", ${scheduledDate}) -> ${ok ? id : (r.error ?? r.text.slice(0, 120))}`,
-      });
-      results.push({ name: s.name, date, time: s.time, ok, id, error: ok ? undefined : (r.error ?? `status ${r.status}`) });
+      results.push({ id: row.id, name: row.series_name, date: row.event_date, skipped: true, reason: "already on calendar" });
+      continue;
     }
+    if (dryRun) {
+      results.push({ id: row.id, name: row.series_name, date: row.event_date, time: row.start_time, dryRun: true, wouldCreate: row.scheduled_at });
+      continue;
+    }
+    const r = await gql(cookie, sgid, "createTournament", CREATE_TOURNAMENT, { clubId, name: row.series_name, scheduledDate: row.scheduled_at });
+    const id = firstData(r.text)?.createTournament?.id ?? null;
+    const ok = r.ok && !!id;
+    if (!ok) failures++; else created++;
+    await rest(`/rest/v1/${QUEUE_TABLE}?id=eq.${row.id}`, {
+      method: "PATCH", headers: { Prefer: "return=minimal" },
+      body: JSON.stringify(ok
+        ? { status: "created", tournament_event_id: String(id), published_at: new Date().toISOString(), note: null, updated_at: new Date().toISOString() }
+        : { status: "failed", note: (r.error ?? `status ${r.status}`).slice(0, 300), updated_at: new Date().toISOString() }),
+    });
+    await logSchedule({ op: "create", ref: row.event_date, http_status: r.status, ok, detail: `createTournament("${row.series_name}", ${row.scheduled_at}) -> ${ok ? id : (r.error ?? r.text.slice(0, 120))}` });
+    results.push({ id: row.id, name: row.series_name, date: row.event_date, time: row.start_time, ok, tournamentEventId: id, error: ok ? undefined : (r.error ?? `status ${r.status}`) });
   }
 
   if (failures) {
-    await alertJustin("LetsPoker schedule fill: some creates failed",
-      `${failures} createTournament call(s) failed. See cash_open_log source="schedule".`);
+    await alertJustin("LetsPoker schedule publish: some creates failed",
+      `${failures} createTournament call(s) failed. See ${QUEUE_TABLE} (status='failed') and cash_open_log source="schedule".`);
   }
-  const created = results.filter((r: any) => r.ok).length;
   await logSchedule({
-    op: "fill", ref: `${plan.from}..${plan.to}`, http_status: 200, ok: failures === 0,
-    detail: dryRun ? `dry run — ${results.length} would be created` : `${created} created, ${failures} failed`,
+    op: "publish", ref: `${dates[0]}..${dates[dates.length - 1]}`, http_status: 200, ok: failures === 0,
+    detail: dryRun ? `dry run — ${approved.length - skipped} would be created, ${skipped} already present` : `${created} created, ${skipped} skipped, ${failures} failed`,
   });
-  return json({ ok: failures === 0, mode: "fill", dryRun, from: plan.from, to: plan.to, created: dryRun ? 0 : created, results }, failures ? 502 : 200);
+  return json({ ok: failures === 0, mode: "publish", dryRun, created: dryRun ? 0 : created, skipped, failed: failures, results }, failures ? 502 : 200);
 }
 
 /* --------------------------------- serve ------------------------------ */
@@ -332,6 +476,11 @@ Deno.serve(async (req) => {
     if (req.headers.get("content-type")?.includes("application/json")) body = await req.json();
   } catch { /* default plan mode */ }
   const mode = typeof body?.mode === "string" ? body.mode : "plan";
+
+  // review/approve/reject touch only our DB (service role), no LP cookie needed.
+  if (mode === "review") return await runReview(body);
+  if (mode === "approve") return await runDecide(body, "approve");
+  if (mode === "reject") return await runDecide(body, "reject");
 
   const cookie = await getCookie();
   if (!cookie) {
@@ -344,7 +493,8 @@ Deno.serve(async (req) => {
   const sgid = env("LETSPOKER_SESSION_GROUPID") ?? "wcp";
   const clubId = env("LETSPOKER_CLUB_ID") ?? "8f025bf9ecfa14c8";
 
-  if (mode === "fill") return await runFill(cookie, sgid, clubId, body);
+  if (mode === "queue") return await runQueue(cookie, sgid, clubId, body);
+  if (mode === "publish") return await runPublish(cookie, sgid, clubId, body);
 
   // mode === "plan" (read-only default)
   try {
