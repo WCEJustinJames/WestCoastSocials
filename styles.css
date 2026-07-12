@@ -18,6 +18,7 @@
   --linkedin: #0a66c2;
   --youtube: #ff0000;
   --threads: #b6b6c7;
+  --letspoker: #18a05a;
 }
 
 * { box-sizing: border-box; }
@@ -102,6 +103,7 @@ input, select, textarea, button {
   font: inherit; color: inherit;
 }
 input[type="search"], input[type="text"], input[type="url"], input[type="datetime-local"],
+input[type="date"],
 select, textarea {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -254,6 +256,15 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .p-linkedin { background: var(--linkedin); }
 .p-youtube { background: var(--youtube); }
 .p-threads { background: var(--threads); color: #0b0e1d; }
+.p-letspoker { background: var(--letspoker); }
+
+.repeat-flag {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--accent-2);
+  font-size: 13px;
+  font-weight: 700;
+}
 
 /* Calendar */
 .calendar-toolbar {
@@ -396,6 +407,17 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .modal-footer {
   display: flex; gap: 8px; align-items: center;
   padding-top: 8px;
+}
+
+#repeatRow { display: flex; flex-direction: column; gap: 12px; }
+.repeat-preview { font-size: 12px; line-height: 1.5; }
+.series-note {
+  font-size: 12px;
+  color: var(--accent-2);
+  background: rgba(138,125,255,.12);
+  border: 1px solid rgba(138,125,255,.35);
+  padding: 8px 10px;
+  border-radius: 8px;
 }
 
 /* Responsive */

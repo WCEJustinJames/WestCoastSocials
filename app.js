@@ -11,7 +11,10 @@ const PLATFORMS = [
   { id: 'linkedin',  label: 'LinkedIn',  handle: '/company/wcs' },
   { id: 'youtube',   label: 'YouTube',   handle: '/@westcoastsocials' },
   { id: 'threads',   label: 'Threads',   handle: '@westcoastsocials' },
+  { id: 'letspoker', label: 'LetsPoker', handle: '/clubwestcoast' },
 ];
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /* ------------------------------- State ------------------------------- */
 
@@ -158,6 +161,29 @@ function toInputValue(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function endOfMonthInput(d) {
+  const x = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`;
+}
+
+// All dates between start and until (inclusive) falling on the given weekdays,
+// at the start's time of day. Hard-capped so a far-future "until" can't
+// generate an unbounded series.
+function computeOccurrences(startValue, weekdays, untilValue) {
+  const start = new Date(startValue);
+  if (isNaN(start) || !untilValue) return [];
+  const until = new Date(untilValue + 'T23:59:59');
+  const wanted = new Set(weekdays);
+  const out = [];
+  const cursor = new Date(start);
+  for (let i = 0; i < 366 && cursor <= until && out.length < 60; i++) {
+    if (wanted.has(cursor.getDay())) out.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
 function platformBadge(id) {
   const p = platformById(id);
   if (!p) return '';
@@ -166,6 +192,10 @@ function platformBadge(id) {
 
 function statusChip(status) {
   return `<span class="status-chip status-${status}">${status}</span>`;
+}
+
+function seriesFlag(post) {
+  return post.seriesId ? `<span class="repeat-flag" title="Part of a weekly series">↻</span>` : '';
 }
 
 /* ------------------------------ Routing ------------------------------ */
@@ -233,7 +263,7 @@ function renderOverview() {
             <div>
               <div class="timeline-caption">${escapeHtml(p.caption)}</div>
               <div class="muted" style="font-size:11px;margin-top:4px;">
-                ${game ? 'vs ' + escapeHtml(game.opponent) + ' · ' : ''}${statusChip(p.status)}
+                ${game ? 'vs ' + escapeHtml(game.opponent) + ' · ' : ''}${statusChip(p.status)}${seriesFlag(p)}
               </div>
             </div>
             <div class="badges">${p.platforms.map(platformBadge).join('')}</div>
@@ -325,7 +355,7 @@ function renderPostsTable() {
           </div>
         </div>
         <div class="badges">${p.platforms.map(platformBadge).join('')}</div>
-        <div>${statusChip(p.status)}</div>
+        <div>${statusChip(p.status)}${seriesFlag(p)}</div>
         <div style="font-size:18px;color:var(--muted);">›</div>
       </div>
     `;
@@ -540,6 +570,10 @@ function renderSidebarAccounts() {
 
 /* ------------------------------- Modal ------------------------------- */
 
+// Tracks whether the user has manually picked repeat days; until then the
+// selection follows the "Schedule for" date's weekday.
+let repeatDaysTouched = false;
+
 function openPostModal(id, seed = {}) {
   const modal = $('#postModal');
   const form = $('#postForm');
@@ -564,6 +598,9 @@ function openPostModal(id, seed = {}) {
 
   let post = id ? state.posts.find((p) => p.id === id) : null;
 
+  form.elements.repeat.value = 'none';
+  const seriesNote = $('#seriesNote');
+
   if (post) {
     $('#postModalTitle').textContent = 'Edit post';
     form.elements.id.value = post.id;
@@ -576,6 +613,14 @@ function openPostModal(id, seed = {}) {
       cb.checked = post.platforms.includes(cb.value);
     });
     $('#deletePostBtn').hidden = false;
+    $('#repeatRow').classList.add('hidden');
+    if (post.seriesId) {
+      const count = state.posts.filter((p) => p.seriesId === post.seriesId).length;
+      seriesNote.textContent = `↻ Part of a weekly series — ${count} post${count === 1 ? '' : 's'} total. Changes here only affect this post.`;
+      seriesNote.classList.remove('hidden');
+    } else {
+      seriesNote.classList.add('hidden');
+    }
   } else {
     $('#postModalTitle').textContent = 'Schedule post';
     form.elements.id.value = '';
@@ -588,10 +633,56 @@ function openPostModal(id, seed = {}) {
     const enabled = new Set(state.accounts.filter((a) => a.enabled).map((a) => a.id));
     checks.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = enabled.has(cb.value); });
     $('#deletePostBtn').hidden = true;
+    $('#repeatRow').classList.remove('hidden');
+    seriesNote.classList.add('hidden');
+
+    repeatDaysTouched = false;
+    const start = new Date(form.elements.scheduledAt.value);
+    $('#repeatDays').innerHTML = DAY_NAMES.map((name, i) => `
+      <label class="check">
+        <input type="checkbox" value="${i}" ${i === start.getDay() ? 'checked' : ''} />
+        ${name}
+      </label>
+    `).join('');
+    form.elements.repeatUntil.value = endOfMonthInput(start);
   }
 
+  updateRepeatUI();
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden', 'false');
+}
+
+function selectedRepeatDays() {
+  return $$('#repeatDays input:checked').map((cb) => Number(cb.value));
+}
+
+function updateRepeatUI() {
+  const form = $('#postForm');
+  const weekly = !form.elements.id.value && form.elements.repeat.value === 'weekly';
+  $$('.repeat-only').forEach((el) => el.classList.toggle('hidden', !weekly));
+  if (!weekly) return;
+
+  const start = new Date(form.elements.scheduledAt.value);
+  if (!isNaN(start) &&
+      (!form.elements.repeatUntil.value || new Date(form.elements.repeatUntil.value + 'T23:59:59') < start)) {
+    form.elements.repeatUntil.value = endOfMonthInput(start);
+  }
+
+  const preview = $('#repeatPreview');
+  const days = selectedRepeatDays();
+  if (!days.length) {
+    preview.textContent = 'Pick at least one day of the week.';
+    return;
+  }
+  const occurrences = computeOccurrences(form.elements.scheduledAt.value, days, form.elements.repeatUntil.value);
+  if (!occurrences.length) {
+    preview.textContent = 'No matching dates before the end date.';
+    return;
+  }
+  const fmt = (d) => d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const shown = occurrences.slice(0, 5).map(fmt).join(' · ');
+  const extra = occurrences.length > 5 ? ` +${occurrences.length - 5} more` : '';
+  preview.textContent = `Creates ${occurrences.length} post${occurrences.length === 1 ? '' : 's'}: ${shown}${extra}`;
 }
 
 function closePostModal() {
@@ -636,6 +727,15 @@ function bindEvents() {
     if (id) {
       const p = state.posts.find((x) => x.id === id);
       Object.assign(p, data);
+    } else if (f.elements.repeat.value === 'weekly') {
+      const days = selectedRepeatDays();
+      if (!days.length) { alert('Pick at least one day of the week to repeat on.'); return; }
+      const occurrences = computeOccurrences(f.elements.scheduledAt.value, days, f.elements.repeatUntil.value);
+      if (!occurrences.length) { alert('No matching dates before the end date — check the repeat days and "until" date.'); return; }
+      const seriesId = uid();
+      for (const d of occurrences) {
+        state.posts.push({ id: uid(), ...data, scheduledAt: d.toISOString(), seriesId });
+      }
     } else {
       state.posts.push({ id: uid(), ...data });
     }
@@ -645,10 +745,34 @@ function bindEvents() {
   $('#deletePostBtn').addEventListener('click', () => {
     const id = $('#postForm').elements.id.value;
     if (!id) return;
+    const post = state.posts.find((p) => p.id === id);
+    if (!post) return;
     if (!confirm('Delete this post?')) return;
-    state.posts = state.posts.filter((p) => p.id !== id);
+    const siblings = post.seriesId
+      ? state.posts.filter((p) => p.seriesId === post.seriesId && p.id !== id)
+      : [];
+    if (siblings.length &&
+        confirm(`This post repeats weekly. Also delete the other ${siblings.length} post${siblings.length === 1 ? '' : 's'} in the series?`)) {
+      state.posts = state.posts.filter((p) => p.seriesId !== post.seriesId);
+    } else {
+      state.posts = state.posts.filter((p) => p.id !== id);
+    }
     save(); closePostModal(); renderAll();
   });
+
+  $('#postForm').elements.repeat.addEventListener('change', updateRepeatUI);
+  $('#postForm').elements.repeatUntil.addEventListener('change', updateRepeatUI);
+  $('#postForm').elements.scheduledAt.addEventListener('change', () => {
+    const form = $('#postForm');
+    if (!form.elements.id.value && !repeatDaysTouched) {
+      const start = new Date(form.elements.scheduledAt.value);
+      if (!isNaN(start)) {
+        $$('#repeatDays input').forEach((cb) => { cb.checked = Number(cb.value) === start.getDay(); });
+      }
+    }
+    updateRepeatUI();
+  });
+  $('#repeatDays').addEventListener('change', () => { repeatDaysTouched = true; updateRepeatUI(); });
 
   ['filterStatus', 'filterPlatform', 'filterGame'].forEach((id) => {
     $('#' + id).addEventListener('change', renderPostsTable);

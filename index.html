@@ -193,6 +193,7 @@
       </header>
       <form id="postForm" class="modal-body">
         <input type="hidden" name="id" />
+        <div id="seriesNote" class="series-note hidden"></div>
         <label>Caption
           <textarea name="caption" rows="4" placeholder="What's going out?" required></textarea>
         </label>
@@ -208,6 +209,26 @@
               <option value="published">Published</option>
             </select>
           </label>
+        </div>
+
+        <div id="repeatRow">
+          <div class="row">
+            <label>Repeat
+              <select name="repeat">
+                <option value="none">Does not repeat</option>
+                <option value="weekly">Weekly</option>
+              </select>
+            </label>
+            <label class="repeat-only hidden">Until
+              <input type="date" name="repeatUntil" />
+            </label>
+          </div>
+          <div class="repeat-only hidden">
+            <label>Repeat on
+              <div id="repeatDays" class="checks"></div>
+            </label>
+            <div id="repeatPreview" class="muted repeat-preview"></div>
+          </div>
         </div>
 
         <label>Publish to
