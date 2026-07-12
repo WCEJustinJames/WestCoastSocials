@@ -19,8 +19,11 @@ create table if not exists public.letspoker_scheduled_events (
   scheduled_at         timestamptz not null,          -- absolute instant sent to createTournament
   weekday              smallint,                       -- 0=Sun … 6=Sat (Perth)
   buy_in               numeric,                        -- informational, from the series' last run
+  -- 'publishing' is a transient claim state: publish atomically moves an
+  -- approved row to it (filter status=eq.approved) BEFORE calling createTournament,
+  -- so two concurrent publish runs partition the rows and can't double-create.
   status               text        not null default 'pending'
-                         check (status in ('pending','approved','rejected','created','failed','skipped')),
+                         check (status in ('pending','approved','rejected','publishing','created','failed','skipped')),
   source               text,                           -- e.g. 'queue 2026-07-13..2026-07-31'
   tournament_event_id  text,                           -- LP event id once created
   note                 text,                           -- freeform / failure detail

@@ -395,77 +395,145 @@ async function runDecide(body: any, action: "approve" | "reject"): Promise<Respo
   return json({ ok: true, mode: action, changed: rows.length, rows });
 }
 
+// Publish selector. Scoped to status='approved'. A selector key that is PRESENT
+// but empty/invalid (ids:[], ids:["12"], only:"") is an error — it must never
+// silently widen to "all approved" on the one irreversible mode. Omitting every
+// selector key means "all approved" by design.
+function publishFilter(body: any): { filter: string[] } | { error: string } {
+  const b = body ?? {};
+  const validIds = Array.isArray(b.ids) ? b.ids.filter((x: unknown) => Number.isInteger(x)) : [];
+  const validOnly = typeof b.only === "string" && b.only.length > 0;
+  const wantAll = b.all === true;
+
+  if ("ids" in b && validIds.length === 0) return { error: "ids must be a non-empty array of integer queue ids" };
+  if ("only" in b && !validOnly) return { error: "only must be a non-empty name substring" };
+  if ("all" in b && !wantAll) return { error: "all must be true (or omit it)" };
+
+  const parts = ["status=eq.approved"];
+  if (validIds.length) parts.push(`id=in.(${validIds.join(",")})`);
+  if (validOnly) parts.push(`series_name=ilike.*${encodeURIComponent(b.only)}*`);
+  if (isDate(b.from)) parts.push(`event_date=gte.${b.from}`);
+  if (isDate(b.to)) parts.push(`event_date=lte.${b.to}`);
+  return { filter: parts };
+}
+
+// PATCH one queue row; returns whether the DB write actually succeeded so the
+// caller can alert when a create landed on LP but the DB record didn't update.
+async function patchRow(id: number, patch: Record<string, unknown>): Promise<boolean> {
+  try {
+    const res = await rest(`/rest/v1/${QUEUE_TABLE}?id=eq.${id}`, {
+      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(patch),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
 /* -------------------------------- publish ----------------------------- */
-// Create the 'approved' rows on LetsPoker. dryRun defaults true. Re-reads the
-// live calendar first and skips any date/name already present, so a game added
-// by hand in the meantime is never duplicated (LP has no un-create).
+// Create the 'approved' rows on LetsPoker. dryRun defaults true. The live path
+// FIRST atomically claims the rows (approved -> publishing, filtered on
+// status=eq.approved) so two concurrent runs partition the work and can't
+// double-create; then it re-reads the live calendar and skips any date/name
+// already present (LP has no un-create).
 async function runPublish(cookie: string, sgid: string, clubId: string, body: any): Promise<Response> {
   const dryRun = body?.dryRun !== false;
-  const parts = selectorParts(body, "approved", false)!; // publish w/o selector = all approved
-  parts.push(`select=id,series_name,event_date,start_time,scheduled_at`);
-  parts.push(`order=event_date.asc,series_name.asc`);
+  const sel = publishFilter(body);
+  if ("error" in sel) return json({ ok: false, error: sel.error }, 400);
+  const baseFilter = sel.filter.join("&");
 
-  const listRes = await rest(`/rest/v1/${QUEUE_TABLE}?${parts.join("&")}`);
-  if (!listRes.ok) return json({ ok: false, error: `publish: queue read failed ${listRes.status}` }, 500);
-  const approved = (await listRes.json().catch(() => [])) as any[];
-  if (!approved.length) return json({ ok: true, mode: "publish", dryRun, created: 0, results: [], note: "no approved rows to publish" });
+  // ---- Dry run: read-only preview, no claim, no writes. ----
+  if (dryRun) {
+    const listRes = await rest(`/rest/v1/${QUEUE_TABLE}?${baseFilter}&select=id,series_name,event_date,start_time,scheduled_at&order=event_date.asc,series_name.asc`);
+    if (!listRes.ok) return json({ ok: false, error: `publish: queue read failed ${listRes.status}` }, 500);
+    const approved = (await listRes.json().catch(() => [])) as any[];
+    if (!approved.length) return json({ ok: true, mode: "publish", dryRun: true, created: 0, skipped: 0, results: [], note: "no approved rows to publish" });
+    const dates = approved.map((r) => r.event_date).sort();
+    let present: Set<string>;
+    try {
+      const cal = await fetchCalendar(cookie, sgid, clubId, dates[0], dates[dates.length - 1]);
+      present = new Set(cal.map((e) => `${e.date}|${e.name.toLowerCase()}`));
+    } catch (e) {
+      return json({ ok: false, error: `publish (dry run): calendar re-check failed — ${e}` }, 502);
+    }
+    let wouldCreate = 0, wouldSkip = 0;
+    const results = approved.map((row) => {
+      const already = present.has(`${row.event_date}|${row.series_name.toLowerCase()}`);
+      if (already) { wouldSkip++; return { id: row.id, name: row.series_name, date: row.event_date, skipped: true, reason: "already on calendar" }; }
+      wouldCreate++;
+      return { id: row.id, name: row.series_name, date: row.event_date, time: row.start_time, dryRun: true, wouldCreate: row.scheduled_at };
+    });
+    return json({ ok: true, mode: "publish", dryRun: true, created: 0, wouldCreate, skipped: wouldSkip, results });
+  }
 
-  // Guard against duplicates: pull the live calendar over the span we're about
-  // to write and index existing events by date|lowercased-name.
-  const dates = approved.map((r) => r.event_date).sort();
-  let present = new Set<string>();
+  // ---- Live: atomically claim approved -> publishing. ----
+  const claimRes = await rest(`/rest/v1/${QUEUE_TABLE}?${baseFilter}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ status: "publishing", updated_at: new Date().toISOString() }),
+  });
+  if (!claimRes.ok) {
+    const detail = `publish: claim failed ${claimRes.status} ${(await claimRes.text()).slice(0, 200)}`;
+    await logSchedule({ op: "publish", ref: null, http_status: claimRes.status, ok: false, detail });
+    await alertJustin("LetsPoker schedule publish failed", detail);
+    return json({ ok: false, error: detail }, 500);
+  }
+  const claimed = (await claimRes.json().catch(() => [])) as any[];
+  if (!claimed.length) return json({ ok: true, mode: "publish", dryRun: false, created: 0, skipped: 0, results: [], note: "no approved rows to publish (none matched, or another run claimed them)" });
+
+  // Re-read the live calendar over the claimed span. On failure, roll the claim
+  // back to 'approved' so the rows can be published again later.
+  const dates = claimed.map((r) => r.event_date).sort();
+  let present: Set<string>;
   try {
     const cal = await fetchCalendar(cookie, sgid, clubId, dates[0], dates[dates.length - 1]);
     present = new Set(cal.map((e) => `${e.date}|${e.name.toLowerCase()}`));
   } catch (e) {
-    const detail = `publish: calendar re-check failed — ${e}`;
+    const now = new Date().toISOString();
+    await Promise.allSettled(claimed.map((r) => patchRow(r.id, { status: "approved", updated_at: now })));
+    const detail = `publish: calendar re-check failed — ${e} (claim rolled back)`;
     await logSchedule({ op: "publish", ref: null, http_status: null, ok: false, detail });
     await alertJustin("LetsPoker schedule publish failed", detail);
     return json({ ok: false, error: String(e) }, 502);
   }
 
   const results: unknown[] = [];
-  let created = 0, skipped = 0, failures = 0;
-  for (const row of approved) {
+  let created = 0, skipped = 0, failures = 0, dbWriteFails = 0;
+  for (const row of claimed) {
     const already = present.has(`${row.event_date}|${row.series_name.toLowerCase()}`);
     if (already) {
       skipped++;
-      if (!dryRun) {
-        await rest(`/rest/v1/${QUEUE_TABLE}?id=eq.${row.id}`, {
-          method: "PATCH", headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({ status: "skipped", note: "already on LP calendar at publish time", updated_at: new Date().toISOString() }),
-        });
-      }
-      results.push({ id: row.id, name: row.series_name, date: row.event_date, skipped: true, reason: "already on calendar" });
-      continue;
-    }
-    if (dryRun) {
-      results.push({ id: row.id, name: row.series_name, date: row.event_date, time: row.start_time, dryRun: true, wouldCreate: row.scheduled_at });
+      const wrote = await patchRow(row.id, { status: "skipped", note: "already on LP calendar at publish time", updated_at: new Date().toISOString() });
+      if (!wrote) { dbWriteFails++; await alertJustin("LetsPoker schedule: DB write failed", `Row ${row.id} (${row.series_name} ${row.event_date}) — could not mark 'skipped'; left 'publishing'.`); }
+      results.push({ id: row.id, name: row.series_name, date: row.event_date, skipped: true, reason: "already on calendar", dbWriteOk: wrote });
       continue;
     }
     const r = await gql(cookie, sgid, "createTournament", CREATE_TOURNAMENT, { clubId, name: row.series_name, scheduledDate: row.scheduled_at });
     const id = firstData(r.text)?.createTournament?.id ?? null;
     const ok = r.ok && !!id;
     if (!ok) failures++; else created++;
-    await rest(`/rest/v1/${QUEUE_TABLE}?id=eq.${row.id}`, {
-      method: "PATCH", headers: { Prefer: "return=minimal" },
-      body: JSON.stringify(ok
-        ? { status: "created", tournament_event_id: String(id), published_at: new Date().toISOString(), note: null, updated_at: new Date().toISOString() }
-        : { status: "failed", note: (r.error ?? `status ${r.status}`).slice(0, 300), updated_at: new Date().toISOString() }),
-    });
-    await logSchedule({ op: "create", ref: row.event_date, http_status: r.status, ok, detail: `createTournament("${row.series_name}", ${row.scheduled_at}) -> ${ok ? id : (r.error ?? r.text.slice(0, 120))}` });
-    results.push({ id: row.id, name: row.series_name, date: row.event_date, time: row.start_time, ok, tournamentEventId: id, error: ok ? undefined : (r.error ?? `status ${r.status}`) });
+    const wrote = await patchRow(row.id, ok
+      ? { status: "created", tournament_event_id: String(id), published_at: new Date().toISOString(), note: null, updated_at: new Date().toISOString() }
+      : { status: "failed", note: (r.error ?? `status ${r.status}`).slice(0, 300), updated_at: new Date().toISOString() });
+    if (!wrote) {
+      dbWriteFails++;
+      // Most important when the create SUCCEEDED: the tournament is live on LP but
+      // the queue still says 'publishing'. Alert with the id so it can be reconciled.
+      await alertJustin("LetsPoker schedule: DB write failed after create",
+        `Row ${row.id} (${row.series_name} ${row.event_date}) — createTournament ${ok ? `SUCCEEDED id=${id}` : "failed"} but the queue DB update failed. Row left status='publishing' (won't be re-published; the calendar re-check also guards a re-create). Reconcile manually.`);
+    }
+    await logSchedule({ op: "create", ref: row.event_date, http_status: r.status, ok, detail: `createTournament("${row.series_name}", ${row.scheduled_at}) -> ${ok ? id : (r.error ?? r.text.slice(0, 120))}${wrote ? "" : " [DB WRITE FAILED]"}` });
+    results.push({ id: row.id, name: row.series_name, date: row.event_date, time: row.start_time, ok, tournamentEventId: id, error: ok ? undefined : (r.error ?? `status ${r.status}`), dbWriteOk: wrote });
   }
 
   if (failures) {
     await alertJustin("LetsPoker schedule publish: some creates failed",
       `${failures} createTournament call(s) failed. See ${QUEUE_TABLE} (status='failed') and cash_open_log source="schedule".`);
   }
+  const allOk = failures === 0 && dbWriteFails === 0;
   await logSchedule({
-    op: "publish", ref: `${dates[0]}..${dates[dates.length - 1]}`, http_status: 200, ok: failures === 0,
-    detail: dryRun ? `dry run — ${approved.length - skipped} would be created, ${skipped} already present` : `${created} created, ${skipped} skipped, ${failures} failed`,
+    op: "publish", ref: `${dates[0]}..${dates[dates.length - 1]}`, http_status: 200, ok: allOk,
+    detail: `${created} created, ${skipped} skipped, ${failures} failed${dbWriteFails ? `, ${dbWriteFails} db-write-fail` : ""}`,
   });
-  return json({ ok: failures === 0, mode: "publish", dryRun, created: dryRun ? 0 : created, skipped, failed: failures, results }, failures ? 502 : 200);
+  return json({ ok: allOk, mode: "publish", dryRun: false, created, skipped, failed: failures, dbWriteFails, results }, allOk ? 200 : 502);
 }
 
 /* --------------------------------- serve ------------------------------ */
