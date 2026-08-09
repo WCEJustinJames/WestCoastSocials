@@ -26,6 +26,42 @@ dns.setDefaultResultOrder('ipv4first')
 const ENV_KEY = process.argv.includes('contacts') ? 'GOOGLE_REFRESH_TOKEN' : 'GOOGLE_REFRESH_TOKEN_WORK'
 
 /**
+ * Report structural faults in .env without printing any secret.
+ *
+ * dotenv silently ignores a line it cannot parse and lets a later duplicate win,
+ * so a value can be present in the file and still arrive empty in the process —
+ * which is exactly how POSTIZ_API_KEY read as "not set" while sitting in plain
+ * view in the file. Names and lengths only; never values.
+ */
+function lintEnv() {
+  const file = '.env'
+  if (!existsSync(file)) return
+  const lines = readFileSync(file, 'utf8').split(/\r?\n/)
+  const seen = new Map()
+  const orphans = []
+  lines.forEach((line, i) => {
+    const t = line.trim()
+    if (!t || t.startsWith('#')) return
+    const m = t.match(/^([A-Za-z_][A-Za-z0-9_]*)=/)
+    if (!m) { orphans.push({ n: i + 1, preview: t.slice(0, 12) }) ; return }
+    seen.set(m[1], [...(seen.get(m[1]) ?? []), i + 1])
+  })
+  const dupes = [...seen.entries()].filter(([, ls]) => ls.length > 1)
+  if (!orphans.length && !dupes.length) return
+
+  console.log('\n--- .env needs attention -------------------------------------')
+  for (const o of orphans) {
+    console.log(`  line ${o.n}: not a KEY=VALUE line (starts "${o.preview}…")`)
+    console.log('            probably the tail of a value that got split across two lines.')
+  }
+  for (const [k, ls] of dupes) {
+    console.log(`  ${k} appears ${ls.length} times (lines ${ls.join(', ')}) — the LAST one wins.`)
+  }
+  console.log('  Delete the stray lines and any duplicate you did not intend, then restart the sync.')
+  console.log('---------------------------------------------------------------\n')
+}
+
+/**
  * Write the token straight into .env, replacing any existing line for this key.
  *
  * Copying it out of the terminal by hand is where this goes wrong: the value is
@@ -117,6 +153,7 @@ const server = http.createServer(async (req, res) => {
       if (w.ok) {
         console.log(`\n✅ Success. ${w.replaced ? 'Updated' : 'Added'} ${ENV_KEY} in .env (previous file kept as .env.bak).`)
         console.log('   Nothing to copy. Close the sync window and run run-wce.bat.\n')
+        lintEnv()
       } else {
         console.error(`\n⚠️  Got the token but could not write .env (${w.reason}).`)
         console.error('   Set this line by hand — it is ONE line, no spaces, no line break:\n')
