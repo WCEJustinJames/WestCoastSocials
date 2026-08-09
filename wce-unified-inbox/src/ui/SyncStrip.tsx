@@ -12,10 +12,13 @@ interface Item {
 
 // Each integration's "how fresh is fresh": under `fresh` = green, up to 8x =
 // amber, beyond = red. TD sheets pull every 30m; the engine ticks every 15s;
-// LetsPoker + Contacts run on slow daily-ish cadences.
+// the nightly deep sweep, LetsPoker + Contacts run on slow daily-ish cadences.
 const SPECS: { key: string; label: string; fresh: number; ok?: string }[] = [
   { key: 'engine', label: 'Sync engine', fresh: 120 },
   { key: 'tdsheets', label: 'TD sheets', fresh: 90 * 60 },
+  // The nightly re-read of the last 7 days. Amber here means the stored figures
+  // are still on the wall — just not re-checked against Drive since that time.
+  { key: 'deep', label: 'Nightly re-read', fresh: 28 * 3600, ok: 'swept' },
   { key: 'letspoker', label: 'LetsPoker', fresh: 2 * 86400, ok: 'synced' },
   { key: 'contacts', label: 'Contacts', fresh: 26 * 3600, ok: 'synced' },
 ]
