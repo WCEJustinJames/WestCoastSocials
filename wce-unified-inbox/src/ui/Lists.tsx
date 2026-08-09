@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { VENUES } from './usePlayers'
+import { useVenues } from './useVenues'
 import type { Database } from '../types/database'
 
 type ListRow = Database['public']['Tables']['inbox_lists']['Row']
@@ -27,6 +27,7 @@ const onIce = (iso: string | null): boolean => !!iso && iso >= new Date().toISOS
  * by hand. These lists are the recipient source the Batches picker loads from.
  */
 export function Lists() {
+  const VENUES = useVenues()
   const [lists, setLists] = useState<ListRow[]>([])
   const [counts, setCounts] = useState<Map<string, number>>(new Map())
   const [selId, setSelId] = useState<string | null>(null)

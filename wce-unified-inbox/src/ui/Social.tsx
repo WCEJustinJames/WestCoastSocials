@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { VENUES } from './usePlayers'
+import { useVenues } from './useVenues'
 import type { Database } from '../types/database'
 
 type Post = Database['public']['Tables']['social_posts']['Row']
@@ -43,6 +43,7 @@ function statusChip(status: string): string {
  * campaign itself fires from Klaviyo so unsubscribes stay compliant.
  */
 export function Social() {
+  const VENUES = useVenues()
   const [posts, setPosts] = useState<Post[]>([])
   const [pushes, setPushes] = useState<Push[]>([])
   const [lpEvents, setLpEvents] = useState<LpEvent[]>([])

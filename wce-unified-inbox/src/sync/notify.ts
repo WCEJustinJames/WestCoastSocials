@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
 import { VOICE } from './voice'
+import { loadVenues, venueFromText } from './venues'
 import { classifyAiError, type AiOutcome } from './alert'
 import { flaggedConversationIds } from './roster'
 import { gamesContext } from './drafting'
@@ -82,17 +83,6 @@ interface ConvJob {
   invite?: { text: string; sentAt: string }
 }
 
-// Pull the canonical venue out of an invite's wording, for the digest tag.
-const VENUE_WORDS: [RegExp, string][] = [
-  [/market city|\bmct\b/i, 'MCT'], [/woodvale|woody/i, 'Woodvale'],
-  [/leederville|leedy/i, 'Leederville'], [/kenwick/i, 'Kenwick'],
-  [/kingsley/i, 'Kingsley'], [/bentley/i, 'Bentley'],
-  [/stirling/i, 'Stirling'], [/planet royale/i, 'Planet Royale'],
-]
-function venueFromText(t: string): string | null {
-  for (const [re, v] of VENUE_WORDS) if (re.test(t)) return v
-  return null
-}
 
 interface Verdict {
   i: number
@@ -124,6 +114,9 @@ export async function processReplies(
   notifyGroupChatId: string | null = null,
   notifyAccount = 'gmessages',
 ): Promise<ReplyResult> {
+  // Venue vocabulary comes from inbox_venues, so a room added in the dashboard
+  // starts appearing in digest tags without a deploy.
+  const venues = await loadVenues(db)
   const since = new Date(Date.now() - LOOKBACK_MS).toISOString()
   const { data: rows, error } = await db
     .from('inbox_messages')
@@ -382,7 +375,7 @@ export async function processReplies(
 
     // Digest entries name the game the player was replying to (from the quoted
     // invite), so on a two-game day "yes @ Leederville" and "yes @ Kenwick" read apart.
-    const inviteVenue = job.invite ? venueFromText(job.invite.text) : null
+    const inviteVenue = job.invite ? venueFromText(job.invite.text, venues) : null
     const digestBase = whaleChats.has(job.chatId) ? `🐋 ${name}` : name
     const digestName = inviteVenue ? `${digestBase} @ ${inviteVenue}` : digestBase
     if (intent === 'yes') confirmedEntries.push(note ? `${digestName} (${note})` : digestName)

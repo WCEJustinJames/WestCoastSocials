@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { VENUES } from './usePlayers'
+import { useVenues } from './useVenues'
 import type { Database } from '../types/database'
 
 type Fin = Database['public']['Views']['inbox_financial_summary']['Row']
@@ -106,6 +106,7 @@ function acc(b: Bucket, g: Game) {
  * Bars or a trend line; weekly, monthly, or per game; one venue or all.
  */
 export function Financials() {
+  const VENUES = useVenues()
   const [rows, setRows] = useState<Game[]>([])
   const [loaded, setLoaded] = useState(false)
   const [metric, setMetric] = useState<MetricKey>('netActual')

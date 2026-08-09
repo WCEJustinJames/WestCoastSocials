@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { VENUES, normCore, type PlayerRow } from './usePlayers'
+import { normCore, type PlayerRow } from './usePlayers'
+import { useVenues, useVenueRows, reloadVenues, type Venue } from './useVenues'
+import { supabase as sb } from '../lib/supabase'
 
 type ListRow = { id: string; name: string; venue: string | null; game_type: string | null }
 type Member = { list_id: string; outreach_id: string; pinned: boolean }
@@ -26,7 +28,9 @@ const CAP = 30
  * read-from-live data; the only writes are add/remove list membership and un-ice.
  */
 export function Venues() {
-  const [venue, setVenue] = useState<string>(VENUES[0])
+  const VENUES = useVenues()
+  const [venue, setVenue] = useState<string>('')
+  const [managing, setManaging] = useState(false)
   const [lists, setLists] = useState<ListRow[]>([])
   const [members, setMembers] = useState<Member[]>([])
   const [players, setPlayers] = useState<PlayerRow[]>([])
@@ -54,6 +58,12 @@ export function Venues() {
     setAtt((as as Att[]) ?? [])
   }
   useEffect(() => { void load() }, [])
+  // The venue list arrives async now, so the first tab can't be picked at
+  // useState time. Settle on the first one once it lands, and again if the
+  // selected venue is retired out from under us.
+  useEffect(() => {
+    if (VENUES.length && !VENUES.includes(venue)) setVenue(VENUES[0])
+  }, [VENUES, venue])
 
   const byId = useMemo(() => new Map(players.map((p) => [p.id, p])), [players])
   const byNorm = useMemo(() => {
@@ -205,14 +215,20 @@ export function Venues() {
       {status && <p className="mb-3 text-sm font-medium text-emerald-700">{status}</p>}
 
       {/* venue sub-tabs */}
-      <div className="mb-4 flex flex-wrap gap-1.5">
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
         {VENUES.map((v) => (
           <button key={v} onClick={() => { setVenue(v); setShowAll({}) }}
             className={`btn px-3 py-1.5 ${v === venue ? 'bg-emerald-600 text-white' : 'border border-slate-300 bg-white text-slate-600 hover:border-emerald-400'}`}>
             {v}
           </button>
         ))}
+        <button onClick={() => setManaging((m) => !m)}
+          className={`btn px-3 py-1.5 ${managing ? 'bg-slate-700 text-white' : 'border border-dashed border-slate-300 bg-white text-slate-500 hover:border-emerald-400 hover:text-emerald-700'}`}>
+          {managing ? 'Done' : '+ Venue'}
+        </button>
       </div>
+
+      {managing && <VenueManager onChanged={flash} />}
 
       {/* standing */}
       <div className="card mb-4 p-3 sm:p-4">
@@ -314,6 +330,114 @@ export function Venues() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Add and edit venues. This exists because the venue list used to be a
+ * TypeScript array: opening a room meant a code change and a deploy, and
+ * Gosnells sat outside every dropdown in the app while quietly logging 208
+ * games.
+ *
+ * Aliases are the half that's easy to skip and expensive to skip. TD sheets
+ * name the same room a dozen ways ("Woody", "Planet R", "Adriatic"), and the
+ * sync engine folds those onto the canonical name from this same list — so an
+ * alias added here is an alias the invite parser and the CRM importer honour
+ * too. Add the venue without its aliases and half the club's history stays
+ * filed under a name nothing matches.
+ */
+function VenueManager({ onChanged }: { onChanged: (m: string) => void }) {
+  const rows = useVenueRows()
+  const [name, setName] = useState('')
+  const [aliases, setAliases] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const parseAliases = (s: string): string[] =>
+    [...new Set(s.split(',').map((a) => a.trim().toLowerCase()).filter(Boolean))]
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault()
+    const clean = name.trim()
+    if (!clean) return
+    setBusy(true); setErr(null)
+    const { error } = await sb.from('inbox_venues').insert({
+      name: clean,
+      aliases: parseAliases(aliases),
+      sort: (rows.reduce((m, r) => Math.max(m, r.sort), 0) || 0) + 10,
+    })
+    setBusy(false)
+    // Say what actually happened. A duplicate name is the common case and it
+    // has a specific fix, so don't flatten it into "couldn't save".
+    if (error) {
+      setErr(error.code === '23505' ? `${clean} is already a venue.` : error.message)
+      return
+    }
+    setName(''); setAliases('')
+    await reloadVenues()
+    onChanged(`${clean} added — it's now selectable everywhere in the app.`)
+  }
+
+  async function save(v: Venue, patch: Partial<Venue>) {
+    const { error } = await sb.from('inbox_venues').update(patch).eq('name', v.name)
+    if (error) { setErr(error.message); return }
+    await reloadVenues()
+  }
+
+  return (
+    <div className="card mb-4 p-3 sm:p-4">
+      <p className="mb-2 text-sm font-semibold">Venues</p>
+      <form onSubmit={add} className="mb-3 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-slate-500">Venue name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Gosnells"
+            className="min-h-[44px] rounded border border-slate-300 px-3 py-2 text-sm" />
+        </label>
+        <label className="flex min-w-[16rem] flex-1 flex-col gap-1">
+          <span className="text-xs text-slate-500">Also known as (comma separated)</span>
+          <input value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder="GCFC, Thornlie"
+            className="min-h-[44px] rounded border border-slate-300 px-3 py-2 text-sm" />
+        </label>
+        <button type="submit" disabled={busy || !name.trim()}
+          className="btn min-h-[44px] bg-emerald-600 px-4 text-white disabled:opacity-50">
+          {busy ? 'Adding…' : 'Add venue'}
+        </button>
+      </form>
+      {err && <p className="mb-2 text-sm text-rose-600">{err}</p>}
+      <p className="mb-2 text-xs text-slate-400">
+        Aliases are how the TD sheets and invite replies spell it. They fold onto the venue name
+        everywhere — sheets, invites and the CRM.
+      </p>
+      <ul className="space-y-1.5">
+        {rows.map((v) => (
+          <li key={v.name}
+            className={`flex flex-wrap items-center gap-2 rounded-lg border px-2 py-1.5 ${v.active ? 'border-slate-100 bg-slate-50/50' : 'border-slate-100 bg-white opacity-60'}`}>
+            <span className="text-sm font-medium">{v.name}</span>
+            {!v.active && <span className="chip bg-slate-100 text-slate-500">retired</span>}
+            <span className="text-xs text-slate-400">
+              {v.aliases.length ? `aka ${v.aliases.join(', ')}` : 'no aliases'}
+            </span>
+            <input
+              defaultValue={v.aliases.join(', ')}
+              onBlur={(e) => {
+                const next = parseAliases(e.target.value)
+                if (next.join('|') !== v.aliases.join('|')) void save(v, { aliases: next })
+              }}
+              placeholder="add an alias…"
+              className="ml-auto min-h-[44px] w-48 rounded border border-slate-200 px-2 py-1 text-xs"
+            />
+            <button onClick={() => void save(v, { active: !v.active })}
+              className="min-h-[44px] px-2 text-xs font-medium text-slate-500 hover:text-slate-800">
+              {v.active ? 'Retire' : 'Restore'}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-slate-400">
+        Retiring a venue takes it out of the pickers. Nothing is deleted — past games, lists and
+        attendance keep their venue exactly as recorded.
+      </p>
     </div>
   )
 }

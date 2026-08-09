@@ -693,6 +693,30 @@ export type Database = {
         }
         Relationships: []
       }
+      inbox_venues: {
+        Row: {
+          name: string
+          aliases: string[]
+          active: boolean
+          sort: number
+          created_at: string
+        }
+        Insert: {
+          name: string
+          aliases?: string[]
+          active?: boolean
+          sort?: number
+          created_at?: string
+        }
+        Update: {
+          name?: string
+          aliases?: string[]
+          active?: boolean
+          sort?: number
+          created_at?: string
+        }
+        Relationships: []
+      }
       inbox_lists: {
         Row: {
           id: string

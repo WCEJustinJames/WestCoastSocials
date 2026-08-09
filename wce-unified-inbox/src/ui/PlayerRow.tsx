@@ -1,4 +1,5 @@
-import { REGIONS, VENUES, STAKES, sourceLabel, phoneStatus, phoneStatusLabel, type Edit, type PlayerRow as Row } from './usePlayers'
+import { REGIONS, STAKES, sourceLabel, phoneStatus, phoneStatusLabel, type Edit, type PlayerRow as Row } from './usePlayers'
+import { useVenues } from './useVenues'
 
 /** "messaged 3d ago" / "never messaged" from a last_contacted date. */
 function sinceLabel(iso: string | null): string {
@@ -67,6 +68,7 @@ export function PlayerCard({
   threadSuggestions = [], onLinkThread,
   onIcePlayer, sendFailed = false,
 }: PlayerCardProps) {
+  const VENUES = useVenues()
   // Bad-number flag: invalid digit count (from the edited value so it updates
   // as you type) or a failed SMS send on record.
   const pStatus = phoneStatus(e.phone)
