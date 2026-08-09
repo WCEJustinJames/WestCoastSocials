@@ -163,6 +163,12 @@ let lastOutreachSync = 0
 let lastContactsSync = 0
 // TD-sheet attendee pull runs on its own slow cadence.
 let lastTdSheets = 0
+// Held while either TD-sheet reader is mid-run. The live pull and the nightly
+// sweep hit the same Google quota and write the same rows, so they take turns:
+// whichever is second skips and picks it up on its next tick. Sheets quota is
+// per-minute, and exhausting it is what stalled the live pull for 82 minutes
+// after the backfill.
+let tdSheetsBusy = false
 // Name-match auto-linker runs on its own slow cadence too.
 let lastAutoLink = 0
 // FB-friend re-match runs on the same slow cadence.
@@ -424,8 +430,9 @@ async function runOnce(): Promise<void> {
   // TD sheets: pull tonight's attendees (cash players, tournament winners, and
   // electronic-paying tournament entrants) from the "DD/MM Venue" Google Sheets
   // into inbox_td_attendees, so the post-game tool has them one tap away.
-  if (env.googleRefreshTokenWork && Date.now() - lastTdSheets > env.tdSheetsSyncMinutes * 60_000) {
+  if (env.googleRefreshTokenWork && !tdSheetsBusy && Date.now() - lastTdSheets > env.tdSheetsSyncMinutes * 60_000) {
     lastTdSheets = Date.now()
+    tdSheetsBusy = true
     try {
       const td = await syncTdSheets(
         supabaseAdmin,
@@ -441,6 +448,8 @@ async function runOnce(): Promise<void> {
       if (hb2Err) console.error('[tdsheets] heartbeat write failed:', hb2Err.message)
     } catch (e) {
       console.error('[tdsheets] sync error:', e instanceof Error ? e.message : e)
+    } finally {
+      tdSheetsBusy = false
     }
   }
 
@@ -636,6 +645,11 @@ const DEEP_SWEEP_FORCE_H = 26 // machine was off overnight — sweep on sight
 
 let deepSweepRunning = false
 
+/** Nothing to sweep with, or the live pull has the Google quota right now. */
+function tdSweepBusyOrOff(): boolean {
+  return !env.googleRefreshTokenWork || tdSheetsBusy
+}
+
 /**
  * Whether a sweep is owed, answered from the database rather than a variable.
  * A restart must not re-sweep, and a desktop that was asleep at 4am must still
@@ -668,9 +682,10 @@ async function deepSweepDue(): Promise<boolean> {
 }
 
 async function deepSweep(): Promise<void> {
-  if (deepSweepRunning || !env.googleRefreshTokenWork) return
+  if (deepSweepRunning || tdSweepBusyOrOff()) return
   if (!(await deepSweepDue())) return
   deepSweepRunning = true
+  tdSheetsBusy = true
   const started = Date.now()
   console.log(`[deep] nightly sweep — re-reading the last ${DEEP_SWEEP_DAYS} days of TD sheets`)
   try {
@@ -698,6 +713,7 @@ async function deepSweep(): Promise<void> {
     console.error('[deep] sweep failed — clock left alone, will retry:', e instanceof Error ? e.message : e)
   } finally {
     deepSweepRunning = false
+    tdSheetsBusy = false
   }
 }
 
@@ -742,7 +758,10 @@ async function main(): Promise<void> {
       .catch((e) => console.error('[deep] error:', e instanceof Error ? e.message : e))
       .finally(() => setTimeout(sweepTick, DEEP_SWEEP_CHECK_MS))
   }
-  setTimeout(sweepTick, 60_000)
+  // Ten minutes, not one. A cold start already does a full TD pull, a contacts
+  // sync and a mirror backlog in its first pass; adding a week of sheets on top
+  // of that is how the startup pass ends up fighting itself for Google quota.
+  setTimeout(sweepTick, 10 * 60_000)
 }
 
 main().catch((err) => {
