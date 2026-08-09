@@ -692,18 +692,35 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
         fbDm: fbDm.count ?? 0,
         firstName: firstName.count ?? 0,
       })
-      // id=3, not id=1. id=1 is the LetsPoker chat sync, a cloud cron that
-      // keeps ticking whether or not the engine on the PC is alive — and it
-      // stamps the same host, so it looks identical. This card read id=1 and
-      // therefore sat green through the whole 3-9 Aug outage while nothing
-      // was actually sending or receiving. id=3 is the engine's own loop.
-      const { data: hb } = await supabase
+    })()
+  }, [])
+
+  // The heartbeat gets its own polling effect. The counts above are a
+  // mount-time snapshot, which is fine for them, but a liveness indicator that
+  // only reads once is worse than none: leave the dashboard open while the
+  // engine dies and the card would sit there green indefinitely. 20s matches
+  // BridgeAlarm and SyncStrip.
+  //
+  // It reads id=3, not id=1. id=1 is the LetsPoker chat sync, a cloud cron that
+  // keeps ticking whether or not the engine on the PC is alive — and it stamps
+  // the same host, so it looks identical. This card read id=1 and therefore sat
+  // green through the whole 3-9 Aug outage while nothing was actually sending
+  // or receiving. id=3 is the engine's own loop.
+  useEffect(() => {
+    let cancelled = false
+    async function loadBeat() {
+      const { data: hb, error } = await supabase
         .from('inbox_sync_heartbeat')
         .select('note, last_run')
         .eq('id', 3)
         .maybeSingle()
-      setBeat({ note: hb?.note ?? null, last: hb?.last_run ?? null })
-    })()
+      // Only trust a clean read — a failed request is our problem, not the
+      // engine's, and must not be rendered as "not running".
+      if (!cancelled && !error) setBeat({ note: hb?.note ?? null, last: hb?.last_run ?? null })
+    }
+    void loadBeat()
+    const t = setInterval(() => void loadBeat(), 20_000)
+    return () => { cancelled = true; clearInterval(t) }
   }, [])
 
   const ago = (iso: string | null): string => {
