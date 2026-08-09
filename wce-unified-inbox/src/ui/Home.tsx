@@ -657,6 +657,11 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
 function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) => void }) {
   const [stats, setStats] = useState<{ players: number; noContact: number; fbDm: number; firstName: number } | null>(null)
   const [beat, setBeat] = useState<{ note: string | null; last: string | null } | null>(null)
+  // Whether we have actually heard back yet. Without this, "not asked yet" and
+  // "engine is dead" render identically, so the card flashes red on every visit
+  // to Home while the query is in flight — and an alarm that cries wolf on
+  // every page load is one you stop reading.
+  const [beatKnown, setBeatKnown] = useState(false)
 
   useEffect(() => {
     void (async () => {
@@ -692,13 +697,38 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
         fbDm: fbDm.count ?? 0,
         firstName: firstName.count ?? 0,
       })
-      const { data: hb } = await supabase
+    })()
+  }, [])
+
+  // The heartbeat gets its own polling effect. The counts above are a
+  // mount-time snapshot, which is fine for them, but a liveness indicator that
+  // only reads once is worse than none: leave the dashboard open while the
+  // engine dies and the card would sit there green indefinitely. 20s matches
+  // BridgeAlarm and SyncStrip.
+  //
+  // It reads id=3, not id=1. id=1 is the LetsPoker chat sync, a cloud cron that
+  // keeps ticking whether or not the engine on the PC is alive — and it stamps
+  // the same host, so it looks identical. This card read id=1 and therefore sat
+  // green through the whole 3-9 Aug outage while nothing was actually sending
+  // or receiving. id=3 is the engine's own loop.
+  useEffect(() => {
+    let cancelled = false
+    async function loadBeat() {
+      const { data: hb, error } = await supabase
         .from('inbox_sync_heartbeat')
         .select('note, last_run')
-        .eq('id', 1)
+        .eq('id', 3)
         .maybeSingle()
-      setBeat({ note: hb?.note ?? null, last: hb?.last_run ?? null })
-    })()
+      // Only trust a clean read — a failed request is our problem, not the
+      // engine's, and must not be rendered as "not running".
+      if (!cancelled && !error) {
+        setBeat({ note: hb?.note ?? null, last: hb?.last_run ?? null })
+        setBeatKnown(true)
+      }
+    }
+    void loadBeat()
+    const t = setInterval(() => void loadBeat(), 20_000)
+    return () => { cancelled = true; clearInterval(t) }
   }, [])
 
   const ago = (iso: string | null): string => {
@@ -715,11 +745,24 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
       <Stat label="No contact" value={stats?.noContact} tone="amber" onClick={() => onNavigate('noContact')} />
       <Stat label="FB · DM to open" value={stats?.fbDm} tone="indigo" onClick={() => onNavigate('fbDm')} />
       <Stat label="First name only" value={stats?.firstName} tone="rose" onClick={() => onNavigate('firstName')} />
-      <div className="rounded-lg border border-slate-200 bg-white p-3">
-        <div className="text-[11px] uppercase tracking-wide text-slate-400">Sync</div>
-        <div className="mt-1 truncate text-sm font-semibold text-slate-700">{beat?.note ?? '—'}</div>
-        <div className="text-[11px] text-slate-400">ran {ago(beat?.last ?? null)}</div>
-      </div>
+      {(() => {
+        // The engine writes this heartbeat first thing every pass (15s, pass
+        // capped at 120s), so anything past a few minutes means it has stopped.
+        const staleS = beat?.last ? (Date.now() - new Date(beat.last).getTime()) / 1000 : null
+        // Only call it dead once we have an answer. Unknown stays neutral.
+        const dead = beatKnown && (staleS === null || staleS > 300)
+        return (
+          <div className={`rounded-lg border p-3 ${dead ? 'border-rose-300 bg-rose-50' : 'border-slate-200 bg-white'}`}>
+            <div className={`text-[11px] uppercase tracking-wide ${dead ? 'text-rose-500' : 'text-slate-400'}`}>Sync engine</div>
+            <div className={`mt-1 truncate text-sm font-semibold ${dead ? 'text-rose-800' : 'text-slate-700'}`}>
+              {!beatKnown ? 'checking…' : dead ? 'not running' : beat?.note ?? '—'}
+            </div>
+            <div className={`text-[11px] ${dead ? 'text-rose-700' : 'text-slate-400'}`}>
+              {beatKnown ? `ran ${ago(beat?.last ?? null)}` : ' '}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

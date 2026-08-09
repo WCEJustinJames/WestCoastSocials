@@ -40,8 +40,11 @@ function beeperItem(bridges: BridgeRow[], now: number): Item {
     return { key: 'beeper', label: 'Beeper', tone: 'warn', status: 'no signal', detail: 'No bridge health yet — restart the engine to begin polling.' }
   const lastChecked = Math.max(...bridges.map((b) => (b.last_checked ? new Date(b.last_checked).getTime() : 0)))
   const checkedAgo = lastChecked ? (now - lastChecked) / 1000 : null
+  // Red, not amber. A stale poll doesn't mean "slightly out of date" — it means
+  // every bridge figure in this strip is frozen fiction, which is exactly how
+  // 3 Aug read as healthy for six days.
   if (checkedAgo == null || checkedAgo > 300)
-    return { key: 'beeper', label: 'Beeper', tone: 'warn', status: checkedAgo == null ? 'no signal' : `${rel(checkedAgo)} ago`, detail: 'Bridge poll is stale — the engine may be down.' }
+    return { key: 'beeper', label: 'Beeper', tone: 'bad', status: checkedAgo == null ? 'no signal' : `${rel(checkedAgo)} ago`, detail: 'Bridge poll is stale — these numbers are not live. The engine is probably down.' }
   const down = bridges.filter((b) => !b.connected)
   const networks = [...new Set(bridges.map((b) => b.network))]
   if (bridges.every((b) => b.status === 'unreachable'))
