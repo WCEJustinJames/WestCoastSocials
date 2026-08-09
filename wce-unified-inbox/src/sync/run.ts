@@ -139,6 +139,7 @@ if (env.googleRefreshToken) {
 if (env.googleRefreshTokenWork) {
   const which = process.env.GOOGLE_REFRESH_TOKEN_WORK ? 'WORK account token' : 'main token (set GOOGLE_REFRESH_TOKEN_WORK to use the work account)'
   console.log(`[tdsheets] TD-sheet pull on (every ${env.tdSheetsSyncMinutes}m, ${which})`)
+  console.log('[deep] nightly 7-day TD re-read on (~4am Perth) — picks up money columns filled in after the game')
   console.log(`[email] Gmail inbox pull on (every 10m, ${which})`)
 }
 console.log(`[autolink] name-match auto-linker on (every ${env.autoLinkMinutes}m)`)
@@ -608,6 +609,98 @@ async function runOnce(): Promise<void> {
   }
 }
 
+// ─── Nightly deep sweep ──────────────────────────────────────────────────────
+//
+// The live TD pull above only ever looks at *today's* sheets, and nothing
+// re-reads a sheet after the night of the game. So when a TD fills the money
+// columns in two days later — which is normal — nobody goes back for them. That
+// is how 20 and 27 July ended up as skeletons on the financials chart while the
+// engine itself was perfectly healthy: the data was never missing from Drive,
+// it was just never asked for a second time.
+//
+// This re-reads the last week once a night and upserts whatever has changed.
+// Because every sheet is upserted as it is read, the dashboard's numbers live in
+// Supabase and stay there: a sweep that fails, or a machine that is off for a
+// week, costs you the *update*, never the data already stored.
+//
+// It runs on its own timer, deliberately outside runOnce(). A week of sheets can
+// take minutes; inside the pass it would trip PASS_TIMEOUT_MS and take the 15s
+// message loop down with it, which is exactly what the manual backfill did.
+const DEEP_SWEEP_ID = 6
+const DEEP_SWEEP_DAYS = 7
+const DEEP_SWEEP_CHECK_MS = 15 * 60_000
+// Perth local hours to prefer — games are long over and the TDs have gone home.
+const DEEP_SWEEP_HOURS = [3, 4, 5]
+const DEEP_SWEEP_DUE_H = 20 // earliest a quiet-hour sweep may repeat
+const DEEP_SWEEP_FORCE_H = 26 // machine was off overnight — sweep on sight
+
+let deepSweepRunning = false
+
+/**
+ * Whether a sweep is owed, answered from the database rather than a variable.
+ * A restart must not re-sweep, and a desktop that was asleep at 4am must still
+ * catch up the moment it wakes — neither works off in-memory state.
+ */
+async function deepSweepDue(): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from('inbox_sync_heartbeat')
+    .select('last_run')
+    .eq('id', DEEP_SWEEP_ID)
+    .maybeSingle()
+  // A read we couldn't do is not a sweep we're owed. Skipping is the safe side:
+  // tonight's games are already covered by the live pull, and the next check is
+  // fifteen minutes away.
+  if (error) {
+    console.error('[deep] heartbeat read failed:', error.message)
+    return false
+  }
+  const last = data?.last_run ? new Date(data.last_run).getTime() : 0
+  const hours = (Date.now() - last) / 3_600_000
+  if (hours >= DEEP_SWEEP_FORCE_H) return true
+  const perthHour = Number(
+    new Intl.DateTimeFormat('en-AU', {
+      timeZone: 'Australia/Perth',
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).format(new Date()),
+  )
+  return hours >= DEEP_SWEEP_DUE_H && DEEP_SWEEP_HOURS.includes(perthHour)
+}
+
+async function deepSweep(): Promise<void> {
+  if (deepSweepRunning || !env.googleRefreshTokenWork) return
+  if (!(await deepSweepDue())) return
+  deepSweepRunning = true
+  const started = Date.now()
+  console.log(`[deep] nightly sweep — re-reading the last ${DEEP_SWEEP_DAYS} days of TD sheets`)
+  try {
+    const td = await syncTdSheets(
+      supabaseAdmin,
+      env.googleClientId,
+      env.googleClientSecret,
+      env.googleRefreshTokenWork,
+      DEEP_SWEEP_DAYS,
+    )
+    const secs = Math.round((Date.now() - started) / 1000)
+    console.log(`[deep] swept ${td.sheets} sheet(s), ${td.attendees} attendee(s) in ${secs}s`)
+    // Stamped only on success. A failed sweep must leave the clock where it was,
+    // so the dashboard goes stale and the next check retries — rather than
+    // recording a sweep that read nothing. A green light over a failure is the
+    // one outcome worse than the failure.
+    const { error } = await supabaseAdmin.from('inbox_sync_heartbeat').upsert({
+      id: DEEP_SWEEP_ID,
+      last_run: new Date().toISOString(),
+      host: os.hostname(),
+      note: `deep sweep ${DEEP_SWEEP_DAYS}d · ${td.sheets} sheet(s) / ${td.attendees} attendee(s) in ${secs}s`,
+    })
+    if (error) console.error('[deep] heartbeat write failed:', error.message)
+  } catch (e) {
+    console.error('[deep] sweep failed — clock left alone, will retry:', e instanceof Error ? e.message : e)
+  } finally {
+    deepSweepRunning = false
+  }
+}
+
 // Hard ceiling on a single pass. A wedged Beeper/Supabase call (e.g. a dropped
 // HTTP/2 session, or a huge first-run mirror backlog) must never stall the loop:
 // if a pass exceeds this, we log and schedule the next one anyway. Approved
@@ -640,6 +733,16 @@ async function main(): Promise<void> {
       .finally(() => setTimeout(tick, env.syncIntervalMs))
   }
   tick()
+
+  // Second, independent loop with no timeout of its own: the sweep is allowed to
+  // take as long as it takes, and messages keep flowing the whole time. First
+  // check is delayed a minute so a cold start does its first pass unencumbered.
+  const sweepTick = (): void => {
+    deepSweep()
+      .catch((e) => console.error('[deep] error:', e instanceof Error ? e.message : e))
+      .finally(() => setTimeout(sweepTick, DEEP_SWEEP_CHECK_MS))
+  }
+  setTimeout(sweepTick, 60_000)
 }
 
 main().catch((err) => {
