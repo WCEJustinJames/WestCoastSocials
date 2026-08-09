@@ -68,13 +68,45 @@ export function SyncStrip() {
 
   async function load() {
     const bridgeQ = supabase as unknown as {
-      from: (t: string) => { select: (c: string) => Promise<{ data: BridgeRow[] | null }> }
+      from: (t: string) => {
+        select: (c: string) => Promise<{ data: BridgeRow[] | null; error: { message: string } | null }>
+      }
     }
-    const [{ data }, { data: bridgeData }] = await Promise.all([
+    const [{ data, error: statusErr }, { data: bridgeData, error: bridgeErr }] = await Promise.all([
       supabase.from('sync_status').select('integration, last_run, detail'),
       bridgeQ.from('inbox_bridge_health').select('network, label, connected, status, since, last_checked'),
     ])
     const rows = (data as { integration: string; last_run: string | null; detail: string | null }[]) ?? []
+    const bridges = bridgeData ?? []
+
+    // Tell "we couldn't read" apart from "there's nothing there".
+    //
+    // A hard failure surfaces as an error, but the one that actually caught us
+    // does not: an RLS denial is a 200 with zero rows, because the policy
+    // filters the table away rather than refusing the request. Both sources
+    // then look like five dead integrations at once, which is how a
+    // password-only session read as a total outage while the database was
+    // seconds-fresh.
+    //
+    // Neither table is ever legitimately empty in a working install — the
+    // heartbeat table always carries its slots — so nothing anywhere means we
+    // are not allowed to look, not that nothing is running. Say that instead of
+    // inventing five failures.
+    if (statusErr || bridgeErr) {
+      setItems([{
+        key: 'read', label: 'Live data', tone: 'bad', status: "can't read",
+        detail: `Query failed: ${(statusErr ?? bridgeErr)?.message ?? 'unknown error'}`,
+      }])
+      return
+    }
+    if (!rows.length && !bridges.length) {
+      setItems([{
+        key: 'read', label: 'Live data', tone: 'bad', status: 'not visible to you',
+        detail: 'Signed in, but this account cannot read the inbox tables — so integration status is unknown, not necessarily down. Sign out and back in (completing the authenticator step), or ask an admin to check your staff access.',
+      }])
+      return
+    }
+
     const now = Date.now()
     const base = SPECS.map((spec) => {
       const row = rows.find((r) => r.integration === spec.key)
@@ -82,7 +114,7 @@ export function SyncStrip() {
       const okWord = spec.ok ?? 'up to date'
       const g: { tone: Tone; status: string } =
         s == null
-          ? { tone: 'warn', status: 'no signal' } // no timestamp — awaiting a restart or first run
+          ? { tone: 'warn', status: 'no signal' } // row present, never run — awaiting a first run
           : s < spec.fresh
             ? { tone: 'ok', status: okWord }
             : s < spec.fresh * 8
@@ -90,7 +122,7 @@ export function SyncStrip() {
               : { tone: 'bad', status: `failed · ${rel(s)}` }
       return { key: spec.key, label: spec.label, detail: row?.detail, ...g }
     })
-    setItems([...base, beeperItem(bridgeData ?? [], now)])
+    setItems([...base, beeperItem(bridges, now)])
   }
 
   useEffect(() => {
