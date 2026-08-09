@@ -36,7 +36,13 @@ import { generateSocialPromos } from './socialauto'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
-const SYNC_VERSION = 'g49-contacts-token'
+//
+// Bump this when you change what the engine DOES. It went five deploys without
+// moving, and the cost was real: after shipping the nightly sweep there was no
+// way to tell from the database whether WESTCOAST1 had pulled it — the answer
+// had to come off a terminal someone scrolled back through, twice. A version
+// string that doesn't move is a version string that lies.
+const SYNC_VERSION = 'g50-nightly-sweep'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
