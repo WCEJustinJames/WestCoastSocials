@@ -23,8 +23,17 @@ echo.
 call npm run tdsheets:backfill -- %*
 
 echo.
-echo  ---------------------------------------------------------------
-echo   Done. Reload the dashboard and check the Financials chart.
-echo  ---------------------------------------------------------------
+if errorlevel 1 (
+  echo  ---------------------------------------------------------------
+  echo   IT DID NOT FINISH - see the error above.
+  echo   Nothing is broken and nothing was lost. The sweep is idempotent,
+  echo   so just run this again; it re-reads what it already has and
+  echo   carries on. Anything it did read is already saved.
+  echo  ---------------------------------------------------------------
+) else (
+  echo  ---------------------------------------------------------------
+  echo   Finished. Reload the dashboard and check the Financials chart.
+  echo  ---------------------------------------------------------------
+)
 echo.
 pause

@@ -26,11 +26,24 @@ const SHEETS_URL = 'https://sheets.googleapis.com/v4/spreadsheets'
 async function gfetch<T>(url: string, token: string): Promise<T> {
   // The full-history backfill reads hundreds of sheets, so quota 429s (and the
   // occasional 5xx) get a couple of patient retries instead of failing the run.
+  //
+  // A TIMEOUT is not an HTTP status — it rejects, so it used to skip the retry
+  // logic entirely and abort the whole sweep. One slow spreadsheet ended a
+  // 359-sheet run after six. Thrown errors now retry on the same terms.
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(20_000),
-    })
+    let res: Response
+    try {
+      res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(30_000),
+      })
+    } catch (e) {
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 3_000 * (attempt + 1)))
+        continue
+      }
+      throw e
+    }
     if ((res.status === 429 || res.status >= 500) && attempt < 2) {
       await new Promise((r) => setTimeout(r, res.status === 429 ? 20_000 : 3_000))
       continue
@@ -556,7 +569,12 @@ export async function syncTdSheets(
 
   let attendees = 0
   let sheetN = 0
+  let skipped = 0
   for (const f of sheets) {
+    // A sheet that will not read (permissions, a timeout that outlived its
+    // retries, a malformed tab) must cost us that sheet, not the remaining
+    // hundreds. Skip it loudly and carry on.
+    try {
     const t = parseTitle(f.name)
     if (!t) continue
     const venue = t.venue
@@ -668,7 +686,12 @@ export async function syncTdSheets(
       .from('inbox_td_attendees')
       .upsert(rows, { onConflict: 'sheet_id,name', ignoreDuplicates: false })
     if (!error) attendees += rows.length
+    } catch (e) {
+      console.error(`[tdsheets] skipped "${f.name}": ${e instanceof Error ? e.message : e}`)
+      skipped++
+    }
   }
 
+  if (skipped) console.warn(`[tdsheets] ${skipped} sheet(s) skipped after retries — re-run to pick them up`)
   return { sheets: sheets.length, attendees }
 }
