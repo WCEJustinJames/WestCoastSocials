@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { usePlayers, attKey, normCore, VENUES, type SingleThread } from './usePlayers'
+import { usePlayers, attKey, normCore, type SingleThread } from './usePlayers'
+import { useVenues } from './useVenues'
 import { PlayerCard } from './PlayerRow'
 
 /**
@@ -34,6 +35,7 @@ function threadCandidates(name: string | null, threads: { core: string; toks: st
  * `initialFilter` lets the Home dashboard open this tab pre-filtered (e.g. the
  * "No contact" card jumps straight to the no-contact list). */
 export function Players({ initialFilter }: { initialFilter?: string | null }) {
+  const VENUES = useVenues()
   const p = usePlayers(initialFilter ?? undefined)
   // Pre-normalise every 1:1 thread once; only threads not already linked to a
   // CRM row are offered as candidates.

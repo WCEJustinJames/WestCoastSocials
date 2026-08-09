@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { normFull, normCore, VENUES } from './usePlayers'
+import { normFull, normCore } from './usePlayers'
+import { useVenues } from './useVenues'
 import { ActionQueue } from './ActionQueue'
 import { BridgeAlarm } from './BridgeAlarm'
 import { SendQueue } from './SendQueue'
@@ -311,6 +312,7 @@ function analyzeAttendance(isoDates: string[]): PatternInfo | null {
  * only replies that actually carry context show.
  */
 function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void }) {
+  const VENUES = useVenues()
   const [rows, setRows] = useState<ContextRow[]>([])
   const [loading, setLoading] = useState(true)
   // Players actioned this session (added to a list / on ice / resolved) drop off.

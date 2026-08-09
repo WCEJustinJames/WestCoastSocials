@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { VENUES } from './usePlayers'
+import { useVenues } from './useVenues'
 import type { Database } from '../types/database'
 
 type Schedule = Database['public']['Tables']['inbox_schedules']['Row']
@@ -13,6 +13,7 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] // Postgres dow 0.
  * "Build due drafts now" button runs the same materialiser on demand.
  */
 export function Schedules() {
+  const VENUES = useVenues()
   const [rows, setRows] = useState<Schedule[]>([])
   const [lists, setLists] = useState<{ id: string; name: string; venue: string | null; game_type: string | null }[]>([])
   const [status, setStatus] = useState<string | null>(null)
