@@ -11,9 +11,14 @@ title WCE Unified Inbox - Google re-auth
 cd /d "%~dp0"
 
 echo.
-echo  Re-authorising the Google account for the sync.
-echo  A browser will open. Sign in as justin.james@clubwestcoast.com.au
-echo  and approve every permission it asks for.
+echo  Re-authorising a Google account for the sync.
+echo.
+echo   no argument  = justin.james@clubwestcoast.com.au  (TD sheets + Gmail)
+echo   "contacts"   = jjlewis1804@gmail.com              (phone contacts)
+echo.
+echo  A browser will open. The script prints which account to sign in as -
+echo  read it. The wrong account is accepted silently and points the sync
+echo  at the wrong mailbox.
 echo.
 
 node scripts/get-google-refresh-token.mjs %*

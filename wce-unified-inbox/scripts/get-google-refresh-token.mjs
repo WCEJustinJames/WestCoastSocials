@@ -23,7 +23,17 @@ dns.setDefaultResultOrder('ipv4first')
 // Which .env key to write. Default is the work-account token, which is what
 // TD sheets and the Gmail pull actually read; pass `contacts` for the personal
 // account that holds the phone contacts.
-const ENV_KEY = process.argv.includes('contacts') ? 'GOOGLE_REFRESH_TOKEN' : 'GOOGLE_REFRESH_TOKEN_WORK'
+const WANT_CONTACTS = process.argv.includes('contacts')
+const ENV_KEY = WANT_CONTACTS ? 'GOOGLE_REFRESH_TOKEN' : 'GOOGLE_REFRESH_TOKEN_WORK'
+
+// The two keys are two different Google accounts, and signing in as the wrong
+// one silently swaps which mailbox and which address book the sync reads —
+// with no error, because the token is perfectly valid, just for the wrong
+// account. So name the expected account rather than assuming.
+const ACCOUNT = WANT_CONTACTS ? 'jjlewis1804@gmail.com' : 'justin.james@clubwestcoast.com.au'
+const PURPOSE = WANT_CONTACTS
+  ? 'phone contacts'
+  : 'TD sheets, the Gmail inbox pull and transfer write-backs'
 
 /**
  * Report structural faults in .env without printing any secret.
@@ -151,7 +161,7 @@ const server = http.createServer(async (req, res) => {
       res.end('✅ Done! Close this tab and return to the terminal.')
       const w = writeToEnv(j.refresh_token)
       if (w.ok) {
-        console.log(`\n✅ Success. ${w.replaced ? 'Updated' : 'Added'} ${ENV_KEY} in .env (previous file kept as .env.bak).`)
+        console.log(`\n✅ Success. ${w.replaced ? 'Updated' : 'Added'} ${ENV_KEY} in .env for ${ACCOUNT} (previous file kept as .env.bak).`)
         console.log('   Nothing to copy. Close the sync window and run run-wce.bat.\n')
         lintEnv()
       } else {
@@ -200,10 +210,13 @@ server.listen(PORT, () => {
     /* ignore — the URL below still works */
   }
 
-  console.log('Sign in to Google to authorise the sync:\n')
+  console.log(`Re-authorising ${ENV_KEY} — the ${ACCOUNT} account.`)
+  console.log(`This is the one the sync uses for ${PURPOSE}.\n`)
   console.log('  → A file "google-login.html" was just created in this folder. Open it')
   console.log('    (double-click) — it takes you to the Google login.')
-  console.log('    Sign in as justin.james@clubwestcoast.com.au and approve all permissions.\n')
+  console.log(`    Sign in as ${ACCOUNT} and approve all permissions.`)
+  console.log('    If Google offers a different account, switch — the wrong one will')
+  console.log('    be accepted silently and point the sync at the wrong mailbox.\n')
   console.log('  → Or paste this URL into Chrome:\n')
   console.log('    ' + url + '\n')
   console.log('Waiting for you to approve…  (leave THIS window open)\n')
