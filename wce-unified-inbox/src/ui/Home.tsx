@@ -692,10 +692,15 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
         fbDm: fbDm.count ?? 0,
         firstName: firstName.count ?? 0,
       })
+      // id=3, not id=1. id=1 is the LetsPoker chat sync, a cloud cron that
+      // keeps ticking whether or not the engine on the PC is alive — and it
+      // stamps the same host, so it looks identical. This card read id=1 and
+      // therefore sat green through the whole 3-9 Aug outage while nothing
+      // was actually sending or receiving. id=3 is the engine's own loop.
       const { data: hb } = await supabase
         .from('inbox_sync_heartbeat')
         .select('note, last_run')
-        .eq('id', 1)
+        .eq('id', 3)
         .maybeSingle()
       setBeat({ note: hb?.note ?? null, last: hb?.last_run ?? null })
     })()
@@ -715,11 +720,21 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
       <Stat label="No contact" value={stats?.noContact} tone="amber" onClick={() => onNavigate('noContact')} />
       <Stat label="FB · DM to open" value={stats?.fbDm} tone="indigo" onClick={() => onNavigate('fbDm')} />
       <Stat label="First name only" value={stats?.firstName} tone="rose" onClick={() => onNavigate('firstName')} />
-      <div className="rounded-lg border border-slate-200 bg-white p-3">
-        <div className="text-[11px] uppercase tracking-wide text-slate-400">Sync</div>
-        <div className="mt-1 truncate text-sm font-semibold text-slate-700">{beat?.note ?? '—'}</div>
-        <div className="text-[11px] text-slate-400">ran {ago(beat?.last ?? null)}</div>
-      </div>
+      {(() => {
+        // The engine writes this heartbeat first thing every pass (15s, pass
+        // capped at 120s), so anything past a few minutes means it has stopped.
+        const staleS = beat?.last ? (Date.now() - new Date(beat.last).getTime()) / 1000 : null
+        const dead = staleS === null || staleS > 300
+        return (
+          <div className={`rounded-lg border p-3 ${dead ? 'border-rose-300 bg-rose-50' : 'border-slate-200 bg-white'}`}>
+            <div className={`text-[11px] uppercase tracking-wide ${dead ? 'text-rose-500' : 'text-slate-400'}`}>Sync engine</div>
+            <div className={`mt-1 truncate text-sm font-semibold ${dead ? 'text-rose-800' : 'text-slate-700'}`}>
+              {dead ? 'not running' : beat?.note ?? '—'}
+            </div>
+            <div className={`text-[11px] ${dead ? 'text-rose-700' : 'text-slate-400'}`}>ran {ago(beat?.last ?? null)}</div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
