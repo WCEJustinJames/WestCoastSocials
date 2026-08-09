@@ -16,6 +16,11 @@ interface Attendee {
 }
 
 const DRIVE_URL = 'https://www.googleapis.com/drive/v3/files'
+// Without these, drive/v3/files returns My Drive and "Shared with me" only —
+// anything living in a Workspace SHARED DRIVE is invisible, however widely it is
+// shared. That is silent: the request succeeds and simply omits them, so a game
+// whose sheet sits in a shared drive looks exactly like a game that never ran.
+const DRIVE_SCOPE = '&includeItemsFromAllDrives=true&supportsAllDrives=true&corpora=allDrives'
 const SHEETS_URL = 'https://sheets.googleapis.com/v4/spreadsheets'
 
 async function gfetch<T>(url: string, token: string): Promise<T> {
@@ -503,6 +508,7 @@ export async function syncTdSheets(
       const list = await gfetch<{ files?: { id: string; name: string; createdTime?: string }[]; nextPageToken?: string }>(
         `${DRIVE_URL}?q=${encodeURIComponent("mimeType='application/vnd.google-apps.spreadsheet' and trashed=false")}` +
           `&fields=${encodeURIComponent('nextPageToken,files(id,name,createdTime)')}&pageSize=1000` +
+          DRIVE_SCOPE +
           (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''),
         token,
       )
@@ -520,6 +526,7 @@ export async function syncTdSheets(
     do {
       const list = await gfetch<{ files?: { id: string; name: string; createdTime?: string }[]; nextPageToken?: string }>(
         `${DRIVE_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('nextPageToken,files(id,name,createdTime)')}&pageSize=100` +
+          DRIVE_SCOPE +
           (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''),
         token,
       )
@@ -528,6 +535,18 @@ export async function syncTdSheets(
     } while (pageToken)
   }
   const cap = lookbackDays > 90 ? 2000 : lookbackDays > 1 ? 100 : 12
+  // A file that matched the date but whose title won't parse is discarded here,
+  // and until now that happened in silence — a sheet renamed "SS 06/08 Woodvale"
+  // (parseTitle anchors the date to the start or the end, nothing in between) is
+  // indistinguishable from a game that never happened. Name them.
+  const rejected = [...byId.values()].filter((f) => parseTitle(f.name) == null)
+  if (rejected.length) {
+    console.warn(
+      `[tdsheets] ${rejected.length} spreadsheet(s) matched but the title did not parse as "DD/MM Venue" — ` +
+        rejected.slice(0, 6).map((f) => `"${f.name}"`).join(', ') +
+        (rejected.length > 6 ? ` (+${rejected.length - 6} more)` : ''),
+    )
+  }
   const sheets = [...byId.values()].filter((f) => parseTitle(f.name) != null).slice(0, cap)
 
   // Transfer reconciliation stays a rolling ~5-week window: mirroring years of
