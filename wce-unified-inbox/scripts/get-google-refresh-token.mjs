@@ -10,8 +10,51 @@
 // whenever the scopes change (you'll be asked to re-approve).
 import 'dotenv/config'
 import http from 'node:http'
+import dns from 'node:dns'
 import { exec } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, readFileSync, existsSync, copyFileSync } from 'node:fs'
+
+// Node 18+ resolves AAAA first and undici then hangs the full 10s connect
+// timeout when the network has no working IPv6 route. On the club PC that
+// showed up as `UND_ERR_CONNECT_TIMEOUT` against oauth2.googleapis.com while
+// the same host loaded fine in a browser. Prefer A records.
+dns.setDefaultResultOrder('ipv4first')
+
+// Which .env key to write. Default is the work-account token, which is what
+// TD sheets and the Gmail pull actually read; pass `contacts` for the personal
+// account that holds the phone contacts.
+const ENV_KEY = process.argv.includes('contacts') ? 'GOOGLE_REFRESH_TOKEN' : 'GOOGLE_REFRESH_TOKEN_WORK'
+
+/**
+ * Write the token straight into .env, replacing any existing line for this key.
+ *
+ * Copying it out of the terminal by hand is where this goes wrong: the value is
+ * ~100 characters and wraps across two console lines, so a selection that looks
+ * complete silently loses the tail, and Google answers `invalid_grant` with no
+ * hint that the value is truncated. Pasting it over a neighbouring line is the
+ * other way it goes wrong. Neither can happen if the script does the writing.
+ */
+function writeToEnv(token) {
+  const file = '.env'
+  if (!existsSync(file)) return { ok: false, reason: 'no .env file in this folder' }
+  try {
+    copyFileSync(file, '.env.bak')
+    const lines = readFileSync(file, 'utf8').split(/\r?\n/)
+    let replaced = false
+    const out = lines.map((line) => {
+      if (line.startsWith(ENV_KEY + '=')) { replaced = true; return ENV_KEY + '=' + token }
+      return line
+    })
+    if (!replaced) {
+      if (out.length && out[out.length - 1].trim() !== '') out.push('')
+      out.push(ENV_KEY + '=' + token)
+    }
+    writeFileSync(file, out.join('\n'))
+    return { ok: true, replaced }
+  } catch (e) {
+    return { ok: false, reason: String(e.message || e) }
+  }
+}
 
 console.log('\n=== WCE Google re-auth ===\n')
 
@@ -70,8 +113,15 @@ const server = http.createServer(async (req, res) => {
     const j = await r.json()
     if (j.refresh_token) {
       res.end('✅ Done! Close this tab and return to the terminal.')
-      console.log('\n✅ Success. Replace the GOOGLE_REFRESH_TOKEN line in your .env with:\n')
-      console.log(`GOOGLE_REFRESH_TOKEN=${j.refresh_token}\n`)
+      const w = writeToEnv(j.refresh_token)
+      if (w.ok) {
+        console.log(`\n✅ Success. ${w.replaced ? 'Updated' : 'Added'} ${ENV_KEY} in .env (previous file kept as .env.bak).`)
+        console.log('   Nothing to copy. Close the sync window and run run-wce.bat.\n')
+      } else {
+        console.error(`\n⚠️  Got the token but could not write .env (${w.reason}).`)
+        console.error('   Set this line by hand — it is ONE line, no spaces, no line break:\n')
+        console.log(`${ENV_KEY}=${j.refresh_token}\n`)
+      }
     } else {
       res.end('No refresh token returned — check the terminal.')
       console.error('\n❌ No refresh_token in the response (re-run and make sure you approve):\n', j, '\n')
