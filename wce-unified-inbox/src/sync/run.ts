@@ -5,6 +5,7 @@
  *   npm run sync:once     # single pass, then exit
  */
 import os from 'node:os'
+import { existsSync, readFileSync } from 'node:fs'
 import Anthropic from '@anthropic-ai/sdk'
 import { env, requireEnv, inQuietHours } from '../lib/env'
 import { supabaseAdmin } from '../lib/supabaseAdmin'
@@ -52,6 +53,44 @@ requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
         : 'unrecognised'
   console.log(`[env] supabase url: ${env.supabaseUrl}`)
   console.log(`[env] service key: ${k.slice(0, 18)}... (${kind})`)
+  warnAboutEnvFile()
+}
+
+/**
+ * Shout about a malformed .env at startup.
+ *
+ * dotenv fails silently in two ways and both cost us real time. A line it can't
+ * parse is skipped, so the tail of a value split across two lines just vanishes
+ * and the key keeps a truncated value — a Google token read as `invalid_grant`
+ * for an hour that way, indistinguishable from an expired one. And a duplicate
+ * key lets the last occurrence win, which is how a POSTIZ_API_KEY that is
+ * plainly there in the file arrives empty in the process.
+ *
+ * Both are invisible unless something looks. Names, line numbers and counts
+ * only — never a value.
+ */
+function warnAboutEnvFile(): void {
+  try {
+    if (!existsSync('.env')) return
+    const lines = readFileSync('.env', 'utf8').split(/\r?\n/)
+    const seen = new Map<string, number[]>()
+    const orphans: { n: number; preview: string }[] = []
+    lines.forEach((line, i) => {
+      const t = line.trim()
+      if (!t || t.startsWith('#')) return
+      const m = t.match(/^([A-Za-z_][A-Za-z0-9_]*)=/)
+      if (!m) { orphans.push({ n: i + 1, preview: t.slice(0, 12) }); return }
+      seen.set(m[1], [...(seen.get(m[1]) ?? []), i + 1])
+    })
+    for (const o of orphans) {
+      console.warn(`[env] .env line ${o.n} is not KEY=VALUE (starts "${o.preview}…") — ignored. Likely the tail of a value split across two lines.`)
+    }
+    for (const [key, ls] of seen) {
+      if (ls.length > 1) console.warn(`[env] .env has ${key} ${ls.length} times (lines ${ls.join(', ')}) — the LAST one wins.`)
+    }
+  } catch {
+    /* diagnostics only — never block startup */
+  }
 }
 
 const beeperClient = new BeeperClient({
