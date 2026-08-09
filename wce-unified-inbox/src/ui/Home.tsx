@@ -657,6 +657,11 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
 function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) => void }) {
   const [stats, setStats] = useState<{ players: number; noContact: number; fbDm: number; firstName: number } | null>(null)
   const [beat, setBeat] = useState<{ note: string | null; last: string | null } | null>(null)
+  // Whether we have actually heard back yet. Without this, "not asked yet" and
+  // "engine is dead" render identically, so the card flashes red on every visit
+  // to Home while the query is in flight — and an alarm that cries wolf on
+  // every page load is one you stop reading.
+  const [beatKnown, setBeatKnown] = useState(false)
 
   useEffect(() => {
     void (async () => {
@@ -716,7 +721,10 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
         .maybeSingle()
       // Only trust a clean read — a failed request is our problem, not the
       // engine's, and must not be rendered as "not running".
-      if (!cancelled && !error) setBeat({ note: hb?.note ?? null, last: hb?.last_run ?? null })
+      if (!cancelled && !error) {
+        setBeat({ note: hb?.note ?? null, last: hb?.last_run ?? null })
+        setBeatKnown(true)
+      }
     }
     void loadBeat()
     const t = setInterval(() => void loadBeat(), 20_000)
@@ -741,14 +749,17 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
         // The engine writes this heartbeat first thing every pass (15s, pass
         // capped at 120s), so anything past a few minutes means it has stopped.
         const staleS = beat?.last ? (Date.now() - new Date(beat.last).getTime()) / 1000 : null
-        const dead = staleS === null || staleS > 300
+        // Only call it dead once we have an answer. Unknown stays neutral.
+        const dead = beatKnown && (staleS === null || staleS > 300)
         return (
           <div className={`rounded-lg border p-3 ${dead ? 'border-rose-300 bg-rose-50' : 'border-slate-200 bg-white'}`}>
             <div className={`text-[11px] uppercase tracking-wide ${dead ? 'text-rose-500' : 'text-slate-400'}`}>Sync engine</div>
             <div className={`mt-1 truncate text-sm font-semibold ${dead ? 'text-rose-800' : 'text-slate-700'}`}>
-              {dead ? 'not running' : beat?.note ?? '—'}
+              {!beatKnown ? 'checking…' : dead ? 'not running' : beat?.note ?? '—'}
             </div>
-            <div className={`text-[11px] ${dead ? 'text-rose-700' : 'text-slate-400'}`}>ran {ago(beat?.last ?? null)}</div>
+            <div className={`text-[11px] ${dead ? 'text-rose-700' : 'text-slate-400'}`}>
+              {beatKnown ? `ran ${ago(beat?.last ?? null)}` : ' '}
+            </div>
           </div>
         )
       })()}
