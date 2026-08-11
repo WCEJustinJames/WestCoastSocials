@@ -1,33 +1,199 @@
+/* Modernist token sheet — Felt green. Source of truth for the app's look.
+   From the 2026-08 dashboard redesign handoff: flat and architectural, no
+   corner radius, structure drawn with rules (2px section dividers, 1px row
+   rules), one accent used sparingly. Alternate palettes (Signal red, Navy,
+   Clay, Charcoal dark) are runtime overrides of these same variables. */
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Shared component styles for the redesigned shell. Tabs may still use raw
-   utilities; new/reworked surfaces should prefer these so the look stays
-   consistent as screens get reworked. */
+:root {
+  --color-bg: #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-text: #201e1d;
+  --color-divider: color-mix(in srgb, #201e1d 40%, transparent);
+
+  /* Neutral ramp — OKLCH-matched steps shared with the accent ramp. */
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-500: #9b9797;
+  --color-neutral-600: #7d7979;
+  --color-neutral-700: #605d5d;
+  --color-neutral-800: #444141;
+  --color-neutral-900: #2d2b2b;
+
+  /* Accent — Felt green. 400/500/900 are derived on the same scale (the
+     handoff overrides only the steps the screens use). */
+  --color-accent: #0f7a4a;
+  --color-accent-100: #e9f6ef;
+  --color-accent-200: #d3ecdf;
+  --color-accent-300: #a9dcc4;
+  --color-accent-400: #6cbd97;
+  --color-accent-500: #2f9767;
+  --color-accent-600: #0c6a40;
+  --color-accent-700: #085a36;
+  --color-accent-800: #07492c;
+  --color-accent-900: #053a23;
+}
+
+html {
+  background: var(--color-bg);
+}
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'Archivo', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+}
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
 @layer components {
-  .card {
-    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+  /* — muted ink (the design's color-mix text tones) — */
+  .muted-70 { color: color-mix(in srgb, var(--color-text) 70%, transparent); }
+  .muted-60 { color: color-mix(in srgb, var(--color-text) 60%, transparent); }
+  .muted    { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .muted-50 { color: color-mix(in srgb, var(--color-text) 50%, transparent); }
+  .muted-45 { color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+
+  /* — tabular numerals: every time, date, money and count — */
+  .tnum { font-feature-settings: 'tnum' 1; }
+
+  /* — section kicker: 11px uppercase, accent-700 — */
+  .kicker {
+    @apply text-[11px] font-semibold uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-accent-700);
   }
+  /* Kicker row over the 2px rule that opens a section. */
+  .section-head {
+    @apply flex flex-wrap items-baseline justify-between gap-3 pb-2;
+    border-bottom: 2px solid var(--color-divider);
+  }
+
+  /* — rules — */
+  .rule-2 { border-bottom: 2px solid var(--color-divider); }
+  .rule-1 { border-bottom: 1px solid var(--color-divider); }
+  .hr-2 { height: 2px; border: 0; background: var(--color-divider); }
+
+  /* — rows: 1px rule below, 4% ink hover — */
+  .row {
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .row-hover:hover {
+    background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  }
+
+  /* — buttons — */
   .btn {
-    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40;
+    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap border border-transparent px-3.5 py-2 text-sm font-extrabold leading-tight disabled:cursor-not-allowed disabled:opacity-45;
+    color: var(--color-text);
+    background: transparent;
+    flex: none;
   }
   .btn-primary {
-    @apply btn bg-emerald-600 text-white hover:bg-emerald-700;
+    background: var(--color-accent);
+    color: var(--color-bg);
   }
+  .btn-primary:hover { background: var(--color-accent-600); }
+  .btn-primary:active { background: var(--color-accent-700); }
+  .btn-secondary { border-color: var(--color-divider); }
+  .btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+  .btn-secondary:active { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
   .btn-ghost {
-    @apply btn text-slate-600 hover:bg-slate-100;
+    @apply px-1;
+    color: var(--color-accent);
   }
-  .btn-danger {
-    @apply btn bg-rose-600 text-white hover:bg-rose-700;
+  .btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+  .btn-ghost:active { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+  /* Quiet text action ("Mute", "Done", "Clear", "Reject") — 50% ink. */
+  .btn-quiet {
+    @apply cursor-pointer whitespace-nowrap border-0 bg-transparent p-0.5 text-xs;
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+    flex: none;
   }
-  .chip {
-    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4;
-  }
+  .btn-quiet:hover { color: var(--color-text); }
+  .btn-icon { @apply h-9 w-9 p-0; }
+
+  /* — forms — */
   .input {
-    @apply rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100;
+    @apply w-full border px-2.5 py-1.5 text-sm;
+    min-height: 36px;
+    color: var(--color-text);
+    caret-color: var(--color-accent);
+    background: var(--color-surface);
+    border-color: var(--color-divider);
   }
-  .field-label {
-    @apply flex flex-col gap-0.5 text-xs text-slate-500;
+  .input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+  .input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+  .field > label {
+    @apply mb-[5px] block text-xs;
+    color: color-mix(in srgb, var(--color-text) 70%, transparent);
   }
+  .checkbox {
+    accent-color: var(--color-accent);
+    width: 15px;
+    height: 15px;
+    margin: 0;
+  }
+
+  /* — segmented control: bordered 1px, selected = accent fill — */
+  .seg {
+    @apply inline-flex flex-wrap;
+    border: 1px solid var(--color-divider);
+  }
+  .seg-btn {
+    @apply -ml-px cursor-pointer whitespace-nowrap border-0 px-3.5 py-1.5 text-[13px];
+    flex: none;
+    border-left: 1px solid var(--color-divider);
+    background: transparent;
+    color: var(--color-text);
+    font-family: inherit;
+  }
+  .seg-btn:first-child { border-left: 0; margin-left: 0; }
+  .seg-btn[aria-pressed='true'] {
+    background: var(--color-accent);
+    color: var(--color-bg);
+  }
+  .seg-btn[aria-pressed='false']:hover {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+  .seg-btn:focus-visible { outline-offset: -2px; }
+  /* Compact variant for range pickers (1w/4w/…): 12px, tnum. */
+  .seg-btn-sm { @apply px-[11px] py-[5px] text-xs tnum; }
+
+  /* — tags — */
+  .tag {
+    @apply inline-flex items-center whitespace-nowrap px-2.5 py-[3px] text-[11px];
+    letter-spacing: 0.02em;
+    flex: none;
+  }
+  .tag-accent { background: var(--color-accent-100); color: var(--color-accent-800); }
+  .tag-neutral { background: var(--color-neutral-200); color: var(--color-neutral-800); }
+  .tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); padding-top: 2px; padding-bottom: 2px; }
+  /* Network tag on conversation rows: 9px. */
+  .tag-net { @apply px-1.5 text-[9px]; letter-spacing: 0.04em; }
+
+  /* — status square (health strip, auto-reply status) — */
+  .sq { @apply inline-block flex-none; width: 8px; height: 8px; }
+  .sq-sm { @apply inline-block flex-none; width: 6px; height: 6px; }
 }

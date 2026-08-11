@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { IconChevronRight } from './icons'
 import type { Database } from '../types/database'
 
 type Cov = Database['public']['Views']['inbox_td_coverage']['Row']
@@ -48,58 +49,79 @@ export function SheetCoverage() {
   const shownMonths = showAll ? byMonth : byMonth.slice(0, 8)
 
   return (
-    <div className="card mb-4 p-3 sm:p-4">
-      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between text-left">
-        <span className="text-sm font-semibold">
-          TD sheet coverage
-          <span className="ml-2 font-normal text-slate-400">
+    <section className="mb-7">
+      <div className="section-head">
+        <span className="kicker tnum">TD sheet coverage{missing.length > 0 ? ` · ${missing.length} missing` : ''}</span>
+        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span className="text-xs muted tnum">
             {have}/{rows.length} paid games have a sheet ({pct}%)
-            {missing.length > 0 && <span className="text-amber-600"> · {missing.length} missing</span>}
           </span>
+          <button
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="btn-quiet inline-flex items-center gap-1"
+          >
+            <span className={`flex-none transition-transform ${open ? 'rotate-90' : ''}`}>
+              <IconChevronRight size={13} />
+            </span>
+            {open ? 'Hide' : 'Detail'}
+          </button>
         </span>
-        <span className="text-xs text-slate-400">{open ? '▾' : '▸'}</span>
-      </button>
+      </div>
 
       {open && (
         <div className="mt-3">
-          {/* coverage bar */}
-          <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-            <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+          {/* coverage bar — one accent, no traffic light */}
+          <div className="mb-4 h-[3px] w-full" style={{ background: 'color-mix(in srgb, var(--color-text) 12%, transparent)' }}>
+            <div className="h-full" style={{ width: `${pct}%`, background: 'var(--color-accent)' }} />
           </div>
 
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Gaps by month</p>
-          <div className="mb-3 flex flex-wrap gap-1.5">
+          <p className="m-0 py-1 text-[11px] uppercase muted-50" style={{ letterSpacing: '0.08em' }}>Gaps by month</p>
+          <ul className="m-0 list-none p-0">
             {shownMonths.map(([ym, v]) => (
-              <span key={ym} className="chip bg-amber-50 text-amber-700 ring-1 ring-amber-200"
-                title={`${v.miss} of ${v.total} games missing a sheet`}>
-                {new Date(`${ym}-01T12:00:00`).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' })}: {v.miss}
-              </span>
-            ))}
-            {byMonth.length > 8 && (
-              <button onClick={() => setShowAll((v) => !v)} className="text-xs text-slate-500 hover:underline">
-                {showAll ? 'fewer' : `+${byMonth.length - 8} more months`}
-              </button>
-            )}
-          </div>
-
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Recent missing games</p>
-          <ul className="space-y-1">
-            {missing.slice(0, 15).map((r, i) => (
-              <li key={`${r.event_date}-${i}`} className="flex items-center gap-2 rounded border border-slate-100 bg-slate-50/50 px-2 py-1 text-xs">
-                <span className="chip bg-amber-100 text-amber-700">no sheet</span>
-                <span className="shrink-0 font-medium">{r.event_date}</span>
-                <span className="shrink-0 text-slate-500">{r.venue ?? '?'}</span>
-                <span className="min-w-0 flex-1 truncate text-slate-400">{r.event_name}</span>
-                <span className="shrink-0 text-slate-400">{r.entries} entries</span>
+              <li
+                key={ym}
+                className="row row-hover grid grid-cols-[minmax(0,1fr)_max-content] items-baseline gap-x-4 py-3"
+                title={`${v.miss} of ${v.total} games missing a sheet`}
+              >
+                <span className="min-w-0 truncate text-sm font-semibold tnum">
+                  {new Date(`${ym}-01T12:00:00`).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' })}
+                  <span className="ml-2 text-xs font-normal muted tnum">{v.miss} of {v.total} missing a sheet</span>
+                </span>
+                <span className="text-[15px] font-extrabold tnum" style={{ color: 'var(--color-accent-700)' }}>{v.miss}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-[11px] text-slate-400">
+          {byMonth.length > 8 && (
+            <button onClick={() => setShowAll((v) => !v)} className="btn-quiet mt-1.5 tnum">
+              {showAll ? 'fewer' : `+${byMonth.length - 8} more months`}
+            </button>
+          )}
+
+          <p className="m-0 mt-6 py-1 text-[11px] uppercase muted-50" style={{ letterSpacing: '0.08em' }}>Recent missing games</p>
+          <ul className="m-0 list-none p-0">
+            {missing.slice(0, 15).map((r, i) => (
+              <li
+                key={`${r.event_date}-${i}`}
+                className="row row-hover grid grid-cols-[minmax(0,1fr)_max-content] items-baseline gap-x-4 gap-y-1 py-3 [grid-template-areas:'name_figs'_'meta_meta'] dt:grid-cols-[150px_minmax(0,1fr)_max-content] dt:[grid-template-areas:'name_meta_figs']"
+              >
+                <span className="flex min-w-0 items-baseline gap-2 [grid-area:name]">
+                  <span className="truncate text-sm font-semibold tnum">{r.event_date}</span>
+                  <span className="tag tag-accent tag-net">no sheet</span>
+                </span>
+                <span className="min-w-0 truncate text-xs muted [grid-area:meta]">
+                  {r.venue ?? '?'} · {r.event_name}
+                </span>
+                <span className="text-xs muted tnum [grid-area:figs]">{r.entries} entries</span>
+              </li>
+            ))}
+          </ul>
+          <p className="m-0 mt-2 text-[11px] muted">
             Missing = a paid LP tournament with no harvested TD sheet for that date + venue. Most gaps are
             older sheets owned by other staff accounts — the backfill now sweeps every connected Google account.
           </p>
         </div>
       )}
-    </div>
+    </section>
   )
 }

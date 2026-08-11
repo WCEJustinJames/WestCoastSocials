@@ -104,19 +104,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (stage === 'ready') return <>{children}</>
 
   const shell = (inner: ReactNode) => (
-    <div className="flex h-screen items-center justify-center bg-slate-50 p-4">
+    <div className="flex h-screen items-center justify-center bg-paper p-4">
       <form
         onSubmit={stage === 'code' ? submitCode : signIn}
-        className="w-full max-w-xs space-y-3 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+        className="w-full max-w-xs space-y-3 border-t-2 border-divider bg-surface p-6"
       >
-        <div className="text-center text-lg font-semibold">West Coast Poker</div>
+        <div className="flex items-center gap-2.5 text-lg font-extrabold" style={{ letterSpacing: '-0.015em' }}>
+          <span className="inline-block h-3 w-3 flex-none" style={{ background: 'var(--color-accent)' }} />
+          West Coast Poker
+        </div>
+        <div className="kicker">Unified inbox &amp; CRM</div>
         {inner}
-        {error && <div className="text-sm text-red-600">{error}</div>}
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded bg-emerald-600 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-        >
+        {error && <div className="text-sm font-semibold" style={{ color: 'var(--color-accent-700)' }}>{error}</div>}
+        <button type="submit" disabled={busy} className="btn btn-primary w-full">
           {busy ? (stage === 'code' ? 'Checking…' : 'Signing in…') : stage === 'code' ? 'Verify' : 'Sign in'}
         </button>
       </form>
@@ -126,12 +126,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (stage === 'code') {
     return shell(
       <>
-        <p className="text-center text-xs text-slate-500">
+        <p className="text-xs muted">
           Enter the 6-digit code from your authenticator app. The inbox can&rsquo;t read anything
           until this step is done.
         </p>
         <input
-          className="w-full rounded border border-slate-300 px-3 py-2 text-center text-lg tracking-[0.3em]"
+          className="input text-center !text-lg tracking-[0.3em] tnum"
           type="text"
           inputMode="numeric"
           autoComplete="one-time-code"
@@ -144,7 +144,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <button
           type="button"
           onClick={() => { void supabase.auth.signOut(); setStage('password') }}
-          className="w-full text-center text-xs text-slate-400 hover:text-slate-600"
+          className="btn-quiet w-full text-left"
         >
           Sign in as someone else
         </button>
@@ -155,7 +155,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   return shell(
     <>
       <input
-        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+        className="input"
         type="email"
         placeholder="Email"
         autoComplete="username"
@@ -163,7 +163,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         onChange={(e) => setEmail(e.target.value)}
       />
       <input
-        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+        className="input"
         type="password"
         placeholder="Password"
         autoComplete="current-password"
@@ -177,11 +177,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 /** Sign-out button for the nav. */
 export function SignOut() {
   return (
-    <button
-      onClick={() => supabase.auth.signOut()}
-      className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-100"
-      title="Sign out"
-    >
+    <button onClick={() => supabase.auth.signOut()} className="btn-quiet" title="Sign out">
       Sign out
     </button>
   )

@@ -51,6 +51,11 @@ interface AwaitedTransfer {
 // landing page a to-do list, not a wall.
 const CAP = 6
 
+// The shared queue-row pattern: desktop [from | subj | actions]; phone stacks
+// the subject under a [from | actions] top line via grid areas.
+const ROW =
+  "row row-hover grid grid-cols-[minmax(0,1fr)_max-content] items-start gap-x-5 gap-y-1 py-3 [grid-template-areas:'from_actions'_'subj_subj'] dt:grid-cols-[170px_minmax(0,1fr)_max-content] dt:[grid-template-areas:'from_subj_actions']"
+
 /**
  * Home action queue — everything needing Justin himself, at the top of Home and
  * hidden when empty. Three sources: replies the classifier flagged "needs you",
@@ -135,7 +140,7 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
     // A thread is a PLAYER'S when it's linked to a CRM record (by thread id or a
     // phone-number title match). Everything else — marketing SMS, group rooms,
     // unknown numbers — goes to the collapsed tier. PRIORITY contacts (Carla,
-    // Leon, ...) pin to the top with a star, matched on any of their channels.
+    // Leon, ...) pin to the top with a "priority" tag, matched on any channel.
     const { data: linked } = await supabase
       .from('inbox_outreach')
       .select('beeper_chat_id, phone, priority')
@@ -275,82 +280,119 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
   const total = needsYou.length + playerUnread.length + primaryEmails.length + awaited.length
   if (total === 0 && otherUnread.length === 0 && !bridgeDown) return null // nothing needs attention
 
-  const chip = (text: string, cls: string) => (
-    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${cls}`}>{text}</span>
-  )
-  const openBtn = (onClick: () => void, label = 'open') => (
-    <button onClick={onClick} className="rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700">{label}</button>
+  const openBtn = (onClick: () => void) => (
+    <button onClick={onClick} className="btn btn-ghost py-0.5 text-xs">Open</button>
   )
   const doneBtn = (onClick: () => void) => (
-    <button onClick={onClick} disabled={busy} className="text-xs text-slate-400 hover:text-rose-600 disabled:opacity-40">done</button>
+    <button onClick={onClick} disabled={busy} className="btn-quiet">Done</button>
+  )
+  const groupLabel = (text: string) => (
+    <p className="m-0 py-1 text-[11px] uppercase muted-50 tnum" style={{ letterSpacing: '0.08em' }}>{text}</p>
   )
 
   const shownPlayers = showAllPlayers ? playerUnread : playerUnread.slice(0, CAP)
   const shownEmails = showAllEmails ? primaryEmails : primaryEmails.slice(0, CAP)
 
   const emailRow = (e: Email) => (
-    <li key={e.id} className="flex items-center gap-2 rounded border border-rose-100 bg-white p-1.5 text-sm">
-      {chip('email', 'bg-sky-100 text-sky-700')}
-      <span className="min-w-0 flex-1 truncate">
-        <span className="font-medium">{e.from_name || e.from_email || 'Unknown sender'}</span>
-        {e.subject ? <span className="text-slate-600"> — {e.subject}</span> : null}
-        {e.snippet ? <span className="text-slate-400"> · {snippet(e.snippet, 60)}</span> : null}
+    <li key={e.id} className={ROW}>
+      <span className="min-w-0 truncate text-sm font-semibold [grid-area:from]">
+        {e.from_name || e.from_email || 'Unknown sender'}
       </span>
-      <a
-        href={`https://mail.google.com/mail/u/0/#inbox/${e.gmail_id}`}
-        target="_blank"
-        rel="noreferrer"
-        className="rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700"
-      >open</a>
-      <button onClick={() => void muteSender(e)} disabled={busy}
-        title={`Never show ${e.from_email ?? 'this sender'} here again`}
-        className="text-xs text-slate-400 hover:text-amber-600 disabled:opacity-40">mute</button>
-      {doneBtn(() => void resolveEmail(e.id))}
+      <span className="min-w-0 [grid-area:subj]">
+        <span className="block truncate text-sm leading-[1.45]">{e.subject || '(no subject)'}</span>
+        {e.snippet ? <span className="mt-0.5 block truncate text-xs muted">{snippet(e.snippet, 90)}</span> : null}
+      </span>
+      <span className="flex items-center gap-2.5 [grid-area:actions]">
+        <a
+          href={`https://mail.google.com/mail/u/0/#inbox/${e.gmail_id}`}
+          target="_blank"
+          rel="noreferrer"
+          className="btn btn-ghost py-0.5 text-xs"
+        >Open</a>
+        <button
+          onClick={() => void muteSender(e)}
+          disabled={busy}
+          title={`Never show ${e.from_email ?? 'this sender'} here again`}
+          className="btn-quiet"
+        >Mute</button>
+        {doneBtn(() => void resolveEmail(e.id))}
+      </span>
+    </li>
+  )
+
+  const threadRow = (c: Unread) => (
+    <li key={c.id} className={ROW}>
+      <span className="flex min-w-0 items-center gap-2 [grid-area:from]">
+        <span className="min-w-0 truncate text-sm font-semibold">{c.title ?? 'Conversation'}</span>
+        {c.priority && <span className="tag tag-accent tag-net" title="Priority contact">priority</span>}
+      </span>
+      <span className="min-w-0 [grid-area:subj]">
+        {lastMsg.has(c.id) && (
+          <span className="block truncate text-sm leading-[1.45]">{snippet(lastMsg.get(c.id) ?? '', 160)}</span>
+        )}
+        <span className="mt-0.5 block text-xs muted tnum">{c.unread_count} unread · {c.network}</span>
+      </span>
+      <span className="flex items-center gap-2.5 [grid-area:actions]">
+        {openBtn(() => onOpen(c.id))}
+        {doneBtn(() => void resolveThread(c.id))}
+      </span>
     </li>
   )
 
   return (
-    <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50/60 p-3">
+    <section className="mb-7">
       {bridgeDown && (
-        <div className="mb-2 rounded-md border border-rose-400 bg-rose-600 p-2 text-sm font-medium text-white">
-          ⚠ Google Messages bridge is DOWN — SMS sends are held (not failed) until it reconnects.
-          Messenger is unaffected. Fix: Beeper → Google Messages → reconnect (phone paired &amp; online).
+        <div className="mb-3 flex items-start gap-2.5 text-[13px] font-extrabold" style={{ color: 'var(--color-accent-700)' }}>
+          <span className="sq mt-1" style={{ background: 'var(--color-accent)' }} />
+          <span>
+            Google Messages bridge is DOWN — SMS sends are held (not failed) until it reconnects.
+            Messenger is unaffected. Fix: Beeper → Google Messages → reconnect (phone paired &amp; online).
+          </span>
         </div>
       )}
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-rose-800">Needs you · {total}</h3>
-        <button onClick={() => void load()} className="text-xs text-rose-700 hover:underline">Refresh</button>
+      <div className="section-head">
+        <span className="kicker tnum">Needs you · {total}</span>
+        <button onClick={() => void load()} className="btn btn-ghost py-0.5 text-xs">Refresh</button>
       </div>
 
       {needsYou.length > 0 && (
-        <ul className="mb-2 space-y-1">
-          {needsYou.map((m) => (
-            <li key={m.id} className="flex items-center gap-2 rounded border border-rose-100 bg-white p-1.5 text-sm">
-              {chip('reply', 'bg-rose-100 text-rose-700')}
-              <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium">{m.sender_name ?? 'Someone'}</span>
-                {m.text ? <span className="text-slate-500"> — {snippet(m.text)}</span> : null}
-              </span>
-              {openBtn(() => onOpen(m.conversation_id))}
-              {doneBtn(() => void resolveReply(m.id))}
-            </li>
-          ))}
-        </ul>
+        <>
+          {groupLabel(`Replies · ${needsYou.length}`)}
+          <ul className="m-0 list-none p-0">
+            {needsYou.map((m) => (
+              <li key={m.id} className={ROW}>
+                <span className="min-w-0 truncate text-sm font-semibold [grid-area:from]">{m.sender_name ?? 'Someone'}</span>
+                <span className="min-w-0 [grid-area:subj]">
+                  <span className="block text-sm leading-[1.45]">{m.text ? snippet(m.text) : '—'}</span>
+                </span>
+                <span className="flex items-center gap-2.5 [grid-area:actions]">
+                  {openBtn(() => onOpen(m.conversation_id))}
+                  {doneBtn(() => void resolveReply(m.id))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {awaited.length > 0 && (
         <>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Transfers awaited · {awaited.length}</p>
-          <ul className="mb-2 space-y-1">
+          {groupLabel(`Transfers awaited · ${awaited.length}`)}
+          <ul className="m-0 list-none p-0">
             {awaited.map((t) => (
-              <li key={t.id} className="flex items-center gap-2 rounded border border-rose-100 bg-white p-1.5 text-sm">
-                {chip('⏳ transfer', 'bg-amber-100 text-amber-700')}
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-medium">{t.name ?? '(no name)'}</span>
-                  <span className="text-slate-500"> {t.amount ?? ''}</span>
-                  <span className="text-[11px] text-slate-400"> · {t.venue ?? ''} {t.game_date ?? ''}</span>
+              <li key={t.id} className={ROW}>
+                <span className="min-w-0 truncate text-sm font-semibold [grid-area:from]">{t.name ?? '(no name)'}</span>
+                <span className="min-w-0 [grid-area:subj]">
+                  <span className="block text-sm leading-[1.45] tnum">{t.amount ?? '—'}</span>
+                  {(t.venue || t.game_date) && (
+                    <span className="mt-0.5 block truncate text-xs muted tnum">
+                      {[t.venue, t.game_date].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
                 </span>
-                {doneBtn(() => void resolveAwaited(t.id))}
+                <span className="flex items-center gap-2.5 [grid-area:actions]">
+                  {doneBtn(() => void resolveAwaited(t.id))}
+                </span>
               </li>
             ))}
           </ul>
@@ -359,34 +401,11 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
 
       {playerUnread.length > 0 && (
         <>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Players · {playerUnread.length}</p>
-          <ul className="mb-1 space-y-1">
-            {shownPlayers.map((c) => (
-              <li
-                key={c.id}
-                className={`flex items-center gap-2 rounded border p-1.5 text-sm ${
-                  c.priority ? 'border-amber-400 bg-amber-50' : 'border-rose-100 bg-white'
-                }`}
-              >
-                {c.priority && <span title="Priority contact" className="shrink-0 text-amber-500">★</span>}
-                {chip(`${c.unread_count} unread`, 'bg-amber-100 text-amber-700')}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">
-                    <span className="font-medium">{c.title ?? 'Conversation'}</span>
-                    <span className="text-[11px] text-slate-400"> · {c.network}</span>
-                  </span>
-                  {lastMsg.has(c.id) && (
-                    <span className="block text-xs text-slate-500">{snippet(lastMsg.get(c.id) ?? '', 160)}</span>
-                  )}
-                </span>
-                {openBtn(() => onOpen(c.id))}
-                {doneBtn(() => void resolveThread(c.id))}
-              </li>
-            ))}
-          </ul>
+          {groupLabel(`Players · ${playerUnread.length}`)}
+          <ul className="m-0 list-none p-0">{shownPlayers.map(threadRow)}</ul>
           {playerUnread.length > CAP && (
-            <button onClick={() => setShowAllPlayers((v) => !v)} className="mb-2 text-xs text-slate-500 hover:underline">
-              {showAllPlayers ? 'show fewer' : `show all ${playerUnread.length}`}
+            <button onClick={() => setShowAllPlayers((v) => !v)} className="btn btn-ghost mt-1 text-xs tnum">
+              {showAllPlayers ? 'Show fewer' : `Show all ${playerUnread.length}`}
             </button>
           )}
         </>
@@ -394,64 +413,39 @@ export function ActionQueue({ onOpen }: { onOpen: (conversationId: string) => vo
 
       {primaryEmails.length > 0 && (
         <>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Email · {primaryEmails.length}</p>
-          <ul className="mb-1 space-y-1">{shownEmails.map(emailRow)}</ul>
+          {groupLabel(`Email · ${primaryEmails.length}`)}
+          <ul className="m-0 list-none p-0">{shownEmails.map(emailRow)}</ul>
           {primaryEmails.length > CAP && (
-            <button onClick={() => setShowAllEmails((v) => !v)} className="mb-2 text-xs text-slate-500 hover:underline">
-              {showAllEmails ? 'show fewer' : `show all ${primaryEmails.length}`}
+            <button onClick={() => setShowAllEmails((v) => !v)} className="btn btn-ghost mt-1 text-xs tnum">
+              {showAllEmails ? 'Show fewer' : `Show all ${primaryEmails.length}`}
             </button>
           )}
         </>
       )}
 
       {automatedEmails.length > 0 && (
-        <details className="mb-1" open={showAutomated} onToggle={(e) => setShowAutomated((e.target as HTMLDetailsElement).open)}>
-          <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-700">
-            {automatedEmails.length} automated email(s) (alerts, receipts, no-reply){mutes.length ? ` · ${mutes.length} sender(s) muted` : ''}
+        <details className="mt-1" open={showAutomated} onToggle={(e) => setShowAutomated((e.target as HTMLDetailsElement).open)}>
+          <summary className="cursor-pointer list-none py-2 text-xs muted tnum [&::-webkit-details-marker]:hidden">
+            {automatedEmails.length} automated emails (alerts, receipts, no-reply){mutes.length ? ` · ${mutes.length} senders muted` : ''}
           </summary>
-          <button
-            onClick={() => void resolveAllAutomated()}
-            disabled={busy}
-            className="my-1 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40"
-          >
-            ✓ clear all {automatedEmails.length}
+          <button onClick={() => void resolveAllAutomated()} disabled={busy} className="btn-quiet mb-1 tnum">
+            clear all {automatedEmails.length}
           </button>
-          <ul className="space-y-1">{automatedEmails.map(emailRow)}</ul>
+          <ul className="m-0 list-none p-0">{automatedEmails.map(emailRow)}</ul>
         </details>
       )}
 
       {otherUnread.length > 0 && (
         <details className="mt-1">
-          <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-700">
+          <summary className="cursor-pointer list-none py-2 text-xs muted tnum [&::-webkit-details-marker]:hidden">
             {otherUnread.length} other unread (marketing, groups, unknown numbers)
           </summary>
-          <button
-            onClick={() => void resolveAllOther()}
-            disabled={busy}
-            className="my-1 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40"
-          >
-            ✓ clear all {otherUnread.length}
+          <button onClick={() => void resolveAllOther()} disabled={busy} className="btn-quiet mb-1 tnum">
+            clear all {otherUnread.length}
           </button>
-          <ul className="space-y-1">
-            {otherUnread.map((c) => (
-              <li key={c.id} className="flex items-center gap-2 rounded border border-slate-100 bg-white/70 p-1.5 text-sm">
-                {chip(`${c.unread_count}`, 'bg-slate-100 text-slate-500')}
-                <span className="min-w-0 flex-1 text-slate-600">
-                  <span className="block truncate">
-                    {c.title ?? 'Conversation'}
-                    <span className="text-[11px] text-slate-400"> · {c.network}</span>
-                  </span>
-                  {lastMsg.has(c.id) && (
-                    <span className="block truncate text-xs text-slate-400">{snippet(lastMsg.get(c.id) ?? '', 120)}</span>
-                  )}
-                </span>
-                {openBtn(() => onOpen(c.id))}
-                {doneBtn(() => void resolveThread(c.id))}
-              </li>
-            ))}
-          </ul>
+          <ul className="m-0 list-none p-0">{otherUnread.map(threadRow)}</ul>
         </details>
       )}
-    </div>
+    </section>
   )
 }

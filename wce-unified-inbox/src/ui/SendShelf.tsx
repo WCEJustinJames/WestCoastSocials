@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { IconChevronRight } from './icons'
 
 interface Item {
   id: string
@@ -21,8 +22,9 @@ const ORDER: Record<string, number> = {
 /**
  * Live send shelf — a slim panel pinned to the right that appears only while a
  * batch is approved/sending. It polls the batch's items every couple of seconds:
- * failed recipients pin to the top (red), in-flight pulse, queued sit below, and
- * each name fades + strikes through the moment it sends. Disappears when done.
+ * failed recipients pin to the top (accent + weight), in-flight pulse, queued
+ * sit below, and each name fades + strikes through the moment it sends.
+ * Disappears when done.
  */
 export function SendShelf() {
   const [batch, setBatch] = useState<{ name: string; status: string; scheduledFor: string | null } | null>(null)
@@ -83,44 +85,64 @@ export function SendShelf() {
       : 'queued'
 
   return (
-    <div className="fixed right-0 top-12 z-40 flex max-h-[80vh] w-56 flex-col overflow-hidden rounded-l-lg border border-slate-200 bg-white/95 shadow-lg backdrop-blur">
+    <div
+      className="fixed bottom-24 right-0 z-40 flex max-h-[70vh] w-60 flex-col overflow-hidden bg-paper dt:bottom-6"
+      style={{ border: '2px solid var(--color-divider)', borderRight: 0 }}
+    >
       <button
         onClick={() => setOpen((v) => !v)}
         title={open ? 'Collapse' : 'Expand to see each recipient'}
-        className="shrink-0 border-b border-slate-100 px-3 py-2 text-left hover:bg-slate-50"
+        className="row-hover shrink-0 px-3 py-2 text-left"
+        style={{ borderBottom: open ? '1px solid var(--color-divider)' : undefined }}
       >
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-slate-400">{open ? '▾' : '▸'}</span>
-          <span className="flex-1 truncate text-xs font-semibold text-slate-700">
+        <div className="flex items-center gap-1.5">
+          <span className={`flex-none muted-45 transition-transform ${open ? 'rotate-90' : ''}`}>
+            <IconChevronRight size={12} />
+          </span>
+          <span className="flex-1 truncate text-xs font-semibold">
             {sending ? 'Sending' : 'Queued'}: {batch.name}
           </span>
         </div>
-        <div className="pl-3.5 text-[11px] text-slate-500">
+        <div className="pl-4 text-[11px] muted tnum">
           {sent}/{items.length} sent{failed ? ` · ${failed} failed` : ''} · {sendTime}
         </div>
       </button>
       {open && (
-      <ul className="overflow-y-auto px-2 py-1 text-sm">
-        {items.map((i) => (
-          <li
-            key={i.id}
-            className={`flex items-center gap-2 rounded px-2 py-0.5 ${
-              i.status === 'failed'
-                ? 'bg-rose-50 font-medium text-rose-700'
-                : i.status === 'sent'
-                  ? 'text-slate-300 line-through'
-                  : i.status === 'sending'
-                    ? 'animate-pulse text-sky-700'
-                    : 'text-slate-700'
-            }`}
-          >
-            <span className="w-3 text-center text-[10px]">
-              {i.status === 'failed' ? '✗' : i.status === 'sent' ? '✓' : i.status === 'sending' ? '➤' : '·'}
-            </span>
-            <span className="flex-1 truncate">{i.name}</span>
-          </li>
-        ))}
-      </ul>
+        <ul className="overflow-y-auto px-3 py-1 text-sm">
+          {items.map((i) => (
+            <li
+              key={i.id}
+              className={`flex items-center gap-2 py-0.5 ${
+                i.status === 'failed'
+                  ? 'font-semibold'
+                  : i.status === 'sent'
+                    ? 'line-through muted-45'
+                    : i.status === 'sending'
+                      ? 'animate-pulse'
+                      : ''
+              }`}
+              style={i.status === 'failed' ? { color: 'var(--color-accent-700)' } : undefined}
+            >
+              {/* Status reads off the square, as it does in the health strip:
+                  accent = live or failed, neutral = queued, hollow = sent. */}
+              <span
+                className="sq-sm"
+                title={i.status}
+                style={{
+                  background:
+                    i.status === 'failed' || i.status === 'sending'
+                      ? 'var(--color-accent)'
+                      : i.status === 'sent'
+                        ? 'transparent'
+                        : 'var(--color-neutral-400)',
+                  boxShadow: i.status === 'sent' ? 'inset 0 0 0 1px var(--color-neutral-400)' : undefined,
+                }}
+              />
+              <span className="flex-1 truncate">{i.name}</span>
+              {i.status === 'failed' && <span className="text-[10px] font-semibold">failed</span>}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )

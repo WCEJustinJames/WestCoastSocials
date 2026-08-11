@@ -73,71 +73,82 @@ export function Receipts() {
     setRows((prev) => prev.filter((x) => x.id !== r.id))
   }
 
-  return (
-    <div className="mx-auto h-full w-full max-w-3xl overflow-y-auto p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Receipts to review</h2>
-        <button onClick={load} className="text-sm text-emerald-700 hover:underline">
-          Refresh
-        </button>
-      </div>
-      <p className="mb-4 text-sm text-slate-500">
-        Extracted from the “Poker Banking and Cash Chips” chat by{' '}
-        <code className="rounded bg-slate-100 px-1">npm run receipts</code>. Fix any misread field,
-        then Confirm to add the player to the CRM.
-      </p>
-      {status && <p className="mb-3 text-sm text-emerald-700">{status}</p>}
+  const fmtDate = (r: ReceiptRow) => {
+    if (r.receipt_date) return r.receipt_date
+    if (r.captured_at) return new Date(r.captured_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+    return '—'
+  }
 
-      {rows.length === 0 && (
-        <p className="text-sm text-slate-400">
-          Nothing pending. Run <code className="rounded bg-slate-100 px-1">npm run receipts</code> to
-          pull more, then Refresh.
-        </p>
+  return (
+    <div className="max-w-[760px]">
+      <p className="m-0 mb-4 text-[13px] muted">
+        Extracted from the “Poker Banking and Cash Chips” chat by{' '}
+        <code>npm run receipts</code>. Fix any misread field, then Confirm to add the player to the CRM.
+      </p>
+      {status && (
+        <p className="m-0 mb-3 text-[13px] font-semibold" style={{ color: 'var(--color-accent-700)' }}>{status}</p>
       )}
 
-      <ul className="space-y-3">
-        {rows.map((r) => (
-          <li key={r.id} className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="mb-2 flex flex-wrap gap-3 text-xs text-slate-500">
-              <span>{r.venue ?? 'venue ?'}</span>
-              {r.club && <span>· {r.club}</span>}
-              {r.game_type && <span>· {r.game_type}</span>}
-              {r.total_winnings != null && <span>· win ${r.total_winnings}</span>}
-              {r.receipt_date && <span>· {r.receipt_date}</span>}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                value={edits[r.id]?.name ?? ''}
-                onChange={(ev) =>
-                  setEdits((p) => ({ ...p, [r.id]: { ...p[r.id], name: ev.target.value } }))
-                }
-                placeholder="Player name"
-                className="min-w-[12rem] flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
-              />
-              <input
-                value={edits[r.id]?.mobile ?? ''}
-                onChange={(ev) =>
-                  setEdits((p) => ({ ...p, [r.id]: { ...p[r.id], mobile: ev.target.value } }))
-                }
-                placeholder="Mobile"
-                className="w-40 rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
-              />
-              <button
-                onClick={() => void confirm(r)}
-                className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-              >
-                Confirm → CRM
-              </button>
-              <button
-                onClick={() => void reject(r)}
-                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100"
-              >
-                Reject
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+      <div style={{ borderTop: '2px solid var(--color-divider)' }}>
+        {rows.length === 0 && (
+          <p className="row m-0 py-3 text-[13px] muted">
+            Nothing pending. Run <code>npm run receipts</code> to pull more, then Refresh.
+          </p>
+        )}
+        <ul className="m-0 list-none p-0">
+          {rows.map((r) => (
+            <li key={r.id} className="row grid grid-cols-[96px_minmax(0,1fr)_max-content] items-baseline gap-x-4 py-3">
+              <span className="text-xs muted-60 tnum">{fmtDate(r)}</span>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">{r.player_name || 'Unmatched receipt'}</div>
+                <div className="mt-0.5 text-xs muted tnum">
+                  {[
+                    r.venue ?? 'venue ?',
+                    r.club,
+                    r.game_type,
+                    r.total_winnings != null ? `win $${r.total_winnings}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    value={edits[r.id]?.name ?? ''}
+                    onChange={(ev) =>
+                      setEdits((p) => ({ ...p, [r.id]: { ...p[r.id], name: ev.target.value } }))
+                    }
+                    placeholder="Player name"
+                    className="input min-w-[11rem] flex-1"
+                  />
+                  <input
+                    value={edits[r.id]?.mobile ?? ''}
+                    onChange={(ev) =>
+                      setEdits((p) => ({ ...p, [r.id]: { ...p[r.id], mobile: ev.target.value } }))
+                    }
+                    placeholder="Mobile"
+                    className="input !w-36 tnum"
+                  />
+                  <button onClick={() => void confirm(r)} className="btn btn-secondary !text-xs">
+                    Confirm to CRM
+                  </button>
+                  <button onClick={() => void reject(r)} className="btn-quiet">
+                    Reject
+                  </button>
+                </div>
+              </div>
+              <span className="text-base font-extrabold tnum">
+                {r.amount != null ? `$${r.amount.toLocaleString()}` : '—'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* The capture itself runs on the PC (`npm run receipts` against the Beeper
+          cache) — this button re-pulls whatever that pass has landed. */}
+      <button onClick={load} className="btn btn-secondary mt-3.5 text-[13px]">
+        Refresh captures
+      </button>
     </div>
   )
 }

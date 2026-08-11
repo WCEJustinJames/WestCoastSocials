@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Database } from '../types/database'
+import { IconChevronRight } from './icons'
+import { useInboxSettings } from './useInboxSettings'
+import { ReplyQueue } from './ReplyQueue'
 
 type BatchRow = {
   id: string
@@ -18,28 +21,30 @@ type ItemRow = Pick<
 // (approved/sending), and recently finished (sent) so you can confirm delivery.
 const SHOWN = ['draft', 'approved', 'sending', 'sent'] as const
 
-const BATCH_STYLE: Record<string, string> = {
-  draft: 'bg-slate-200 text-slate-700',
-  approved: 'bg-emerald-100 text-emerald-700',
-  sending: 'bg-sky-100 text-sky-700',
-  sent: 'bg-emerald-600 text-white',
+// One accent, no traffic lights: sent earns the accent tint, queued states
+// stay neutral, and failure is accent + weight in the tallies/badges below.
+const BATCH_TAG: Record<string, string> = {
+  draft: 'tag tag-neutral',
+  approved: 'tag tag-outline',
+  sending: 'tag tag-neutral',
+  sent: 'tag tag-accent',
 }
 
 // Per-recipient send result. 'sent' = the text/Messenger send succeeded.
 const ITEM_BADGE: Record<string, { cls: string; label: string }> = {
-  sent: { cls: 'bg-emerald-100 text-emerald-700', label: '✓ sent' },
-  failed: { cls: 'bg-rose-100 text-rose-700', label: '✗ failed' },
-  sending: { cls: 'bg-sky-100 text-sky-700', label: '… sending' },
-  skipped: { cls: 'bg-slate-100 text-slate-500', label: 'skipped' },
-  approved: { cls: 'bg-amber-50 text-amber-700', label: 'queued' },
-  pending: { cls: 'bg-slate-100 text-slate-600', label: 'draft' },
+  sent: { cls: 'tag tag-accent', label: 'sent' },
+  failed: { cls: '', label: 'failed' }, // rendered as accent + weight, not a tag
+  sending: { cls: 'tag tag-neutral', label: 'sending' },
+  skipped: { cls: 'tag tag-neutral', label: 'skipped' },
+  approved: { cls: 'tag tag-neutral', label: 'queued' },
+  pending: { cls: 'tag tag-neutral', label: 'draft' },
 }
 
 /**
  * Drafted + sent lists. Build a list and it's saved here the moment you Build
  * preview: come back to pull a player out (even after it's approved/queued),
  * approve it, or cancel it. Sent lists stay here too, with a per-recipient
- * sent ✓ / failed ✗ indicator so you can confirm every message actually went.
+ * sent / failed indicator so you can confirm every message actually went.
  */
 export function Drafts() {
   const [batches, setBatches] = useState<BatchRow[]>([])
@@ -48,6 +53,7 @@ export function Drafts() {
   const [include, setInclude] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const { settings: rail, loaded: railLoaded } = useInboxSettings()
 
   async function load() {
     const { data: bs } = await supabase
@@ -125,7 +131,7 @@ export function Drafts() {
     await supabase.from('inbox_batches').update({ status: 'approved' }).eq('id', b.id)
     setBusy(false)
     setOpenId(null)
-    setStatus(`Approved ✓ — ${inc.length} will send on the next sync.`)
+    setStatus(`Approved — ${inc.length} will send on the next sync.`)
     await load()
     setTimeout(() => setStatus(null), 6000)
   }
@@ -145,92 +151,98 @@ export function Drafts() {
   }
 
   return (
-    <div className="mx-auto h-full w-full max-w-3xl overflow-y-auto p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Drafted &amp; sent lists</h2>
-        <button onClick={() => void load()} className="text-sm text-emerald-700 hover:underline">
+    <div className="max-w-[760px]">
+      {/* The approval queue proper: every AI reply waiting on you, across all
+          threads. Batch lists follow below — a different kind of draft. */}
+      <ReplyQueue />
+
+      <div className="section-head">
+        <span className="kicker">Lists — drafted &amp; sent</span>
+        <button onClick={() => void load()} className="btn btn-ghost !text-xs">
           Refresh
         </button>
       </div>
-      <p className="mb-4 text-sm text-slate-500">
+      <p className="mb-3 mt-3 max-w-[62ch] text-xs muted">
         Lists you've built — drafts to finish, queued lists to review, and sent lists with a
-        per-player ✓ sent / ✗ failed indicator so you can confirm every message went. Approving
-        still respects the STOP switch and every send guardrail.
+        per-player sent / failed result so you can confirm every message went. Approving still
+        respects the STOP switch and every send guardrail.
       </p>
-      {status && <p className="mb-3 text-sm text-emerald-700">{status}</p>}
-
-      {batches.length === 0 && (
-        <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-400">
-          No drafted, queued or recently-sent lists. Build one in the Batches tab and it'll show here.
+      {status && (
+        <p className="mb-3 text-sm font-semibold" style={{ color: 'var(--color-accent-700)' }}>
+          {status}
         </p>
       )}
 
-      <ul className="space-y-2">
+      <div style={{ borderTop: '2px solid var(--color-divider)' }}>
+        {batches.length === 0 && (
+          <p className="m-0 py-4 text-sm muted">
+            No drafted, queued or recently-sent lists. Build one in the Batches tab and it'll show here.
+          </p>
+        )}
+
         {batches.map((b) => {
           const s = summary(b.id)
           const open = openId === b.id
           const editable = b.status === 'draft' || b.status === 'approved' || b.status === 'sending'
           return (
-            <li key={b.id} className="rounded-lg border border-slate-200 bg-white">
-              <div className="flex flex-wrap items-center gap-2 p-3">
+            <div key={b.id} className="row py-4">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <button
                   onClick={() => setOpenId(open ? null : b.id)}
-                  className="flex-1 text-left text-sm font-medium hover:underline"
+                  aria-expanded={open}
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-left text-sm font-semibold"
                 >
-                  {open ? '▾' : '▸'} {b.name || '(unnamed list)'}
+                  <span className={`flex-none transition-transform ${open ? 'rotate-90' : ''}`}>
+                    <IconChevronRight size={14} />
+                  </span>
+                  <span className="truncate">{b.name || '(unnamed list)'}</span>
                 </button>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] ${BATCH_STYLE[b.status] ?? 'bg-slate-100 text-slate-600'}`}>
-                  {b.status}
-                </span>
+                <span className={BATCH_TAG[b.status] ?? 'tag tag-neutral'}>{b.status}</span>
                 {/* sent / failed / queued tally */}
-                <span className="text-xs text-slate-500">
-                  {s.sent > 0 && <span className="text-emerald-700">{s.sent} sent</span>}
+                <span className="text-xs muted tnum">
+                  {s.sent > 0 && <span style={{ color: 'var(--color-accent-700)' }}>{s.sent} sent</span>}
                   {s.sent > 0 && (s.failed > 0 || s.queued > 0) && ' · '}
-                  {s.failed > 0 && <span className="text-rose-700">{s.failed} failed</span>}
+                  {s.failed > 0 && (
+                    <span className="font-semibold" style={{ color: 'var(--color-accent-700)' }}>
+                      {s.failed} failed
+                    </span>
+                  )}
                   {s.failed > 0 && s.queued > 0 && ' · '}
                   {s.queued > 0 && <span>{s.queued} to go</span>}
                 </span>
-                <span className="text-xs text-slate-400">{new Date(b.created_at).toLocaleDateString()}</span>
+                <span className="text-[11px] muted-45 tnum">{new Date(b.created_at).toLocaleDateString()}</span>
                 {b.scheduled_for && (
-                  <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] text-violet-700">
-                    ⏱ {new Date(b.scheduled_for).toLocaleString()}
+                  <span className="tag tag-neutral tnum">
+                    Scheduled {new Date(b.scheduled_for).toLocaleString()}
                   </span>
                 )}
                 {b.status === 'draft' && (
-                  <button
-                    onClick={() => void approve(b)}
-                    disabled={busy}
-                    className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
-                  >
+                  <button onClick={() => void approve(b)} disabled={busy} className="btn btn-primary !text-xs">
                     Approve &amp; send
                   </button>
                 )}
                 {editable && (
-                  <button
-                    onClick={() => void cancel(b)}
-                    disabled={busy}
-                    className="rounded-md border border-slate-300 px-3 py-1 text-xs hover:bg-rose-50 hover:text-rose-700 disabled:opacity-40"
-                  >
+                  <button onClick={() => void cancel(b)} disabled={busy} className="btn-quiet">
                     Cancel list
                   </button>
                 )}
               </div>
 
               {open && (
-                <ul className="space-y-1 border-t border-slate-100 p-3">
+                <div className="mt-2.5">
                   {itemsOf(b.id).length === 0 && (
-                    <li className="text-xs text-slate-400">No players in this list.</li>
+                    <p className="m-0 py-1 text-xs muted">No players in this list.</p>
                   )}
                   {itemsOf(b.id).map((it) => {
                     const badge = ITEM_BADGE[it.status] ?? ITEM_BADGE.pending
                     const canRemove = editable && it.status !== 'sent' && it.status !== 'sending'
                     const canInclude = b.status === 'draft' && it.status === 'pending'
                     return (
-                      <li key={it.id} className="flex items-start gap-2 rounded-md border border-slate-100 bg-slate-50/60 p-2">
+                      <div key={it.id} className="flex items-start gap-2.5 py-2">
                         {canInclude && (
                           <input
                             type="checkbox"
-                            className="mt-1"
+                            className="checkbox mt-1"
                             checked={include[it.id] ?? false}
                             onChange={() => setInclude((p) => ({ ...p, [it.id]: !p[it.id] }))}
                             title="Include in the send"
@@ -238,34 +250,61 @@ export function Drafts() {
                         )}
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium">{nameOf(it)}</span>
-                            <span className={`rounded-full px-2 py-0.5 text-[11px] ${badge.cls}`}>{badge.label}</span>
+                            <span className="text-sm font-semibold">{nameOf(it)}</span>
+                            {it.status === 'failed' ? (
+                              <span
+                                className="text-[11px] font-semibold"
+                                style={{ color: 'var(--color-accent-700)' }}
+                              >
+                                failed
+                              </span>
+                            ) : (
+                              <span className={badge.cls}>{badge.label}</span>
+                            )}
                             {it.guard_flag && it.status !== 'sent' && (
-                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
-                                ⚠ {it.guard_reason}
+                              <span
+                                className="text-[11px] font-semibold"
+                                style={{ color: 'var(--color-accent-700)' }}
+                              >
+                                {it.guard_reason ?? 'guarded'}
                               </span>
                             )}
+                            {canRemove && (
+                              <button
+                                onClick={() => void removeItem(it)}
+                                title="Remove from this list"
+                                className="btn-quiet ml-auto"
+                              >
+                                Remove
+                              </button>
+                            )}
                           </div>
-                          <p className="truncate text-xs text-slate-500">{it.rendered_text}</p>
-                        </div>
-                        {canRemove && (
-                          <button
-                            onClick={() => void removeItem(it)}
-                            title="Remove from this list"
-                            className="text-xs text-slate-300 hover:text-rose-600"
+                          <p
+                            className="m-0 mt-2 max-w-[62ch] whitespace-pre-wrap bg-surface text-sm leading-[1.5]"
+                            style={{ borderLeft: '3px solid var(--color-accent)', padding: '8px 12px' }}
                           >
-                            remove
-                          </button>
-                        )}
-                      </li>
+                            {it.rendered_text}
+                          </p>
+                        </div>
+                      </div>
                     )
                   })}
-                </ul>
+                </div>
               )}
-            </li>
+            </div>
           )
         })}
-      </ul>
+      </div>
+
+      {railLoaded && (
+        <p className="mt-3 text-xs muted">
+          {rail.sendsPaused
+            ? 'All sends are stopped — approved lists will not go out until the STOP switch is released.'
+            : rail.repliesPaused
+              ? 'Auto-reply is paused — no new drafts are being generated.'
+              : 'New lists land here the moment you build a preview — approve from anywhere.'}
+        </p>
+      )}
     </div>
   )
 }

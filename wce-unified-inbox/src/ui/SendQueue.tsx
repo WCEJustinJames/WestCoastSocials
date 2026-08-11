@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { IconChevronRight } from './icons'
 
 interface QueuedBatch {
   id: string
@@ -17,6 +18,12 @@ interface QueuedBatch {
 // EXPLAIN why a queue is held — the sync is the source of truth on actual gating.
 const QUIET_START = 21, QUIET_END = 9
 const OUT_START = 10 * 60, OUT_END = 17 * 60 + 15
+
+// Queue row: desktop [name | meta | figures]; phone stacks the meta under a
+// [name | figures] top line via grid areas. The rule lives on the <li> so an
+// expanded name list sits inside the same row.
+const ROW_GRID =
+  "row-hover grid grid-cols-[minmax(0,1fr)_max-content] items-baseline gap-x-4 gap-y-1 py-3 [grid-template-areas:'name_figs'_'meta_meta'] dt:grid-cols-[minmax(0,1fr)_minmax(0,220px)_max-content] dt:[grid-template-areas:'name_meta_figs']"
 
 /**
  * Send queue — a persistent Home panel of everything APPROVED/PENDING to go out,
@@ -95,58 +102,84 @@ export function SendQueue() {
     : null
 
   const totalFailed = batches.reduce((n, b) => n + b.failed, 0)
+  const anySending = batches.some((b) => b.sending)
 
   return (
-    <div className={`card mb-4 p-3 sm:p-4 ${held ? 'border-amber-300 bg-amber-50/50' : ''}`}>
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold">📤 Queued to send</span>
-        <span className="chip bg-slate-800 text-white">{totalWaiting} waiting</span>
-        {batches.some((b) => b.sending) && <span className="chip animate-pulse bg-sky-100 text-sky-700">sending now…</span>}
-        {totalFailed > 0 && <span className="chip bg-rose-100 text-rose-700">{totalFailed} failed</span>}
-        <button onClick={() => void load()} className="ml-auto text-xs text-emerald-700 hover:underline">Refresh</button>
+    <section className="mb-7">
+      <div className="section-head">
+        <span className="kicker tnum">Queued to send · {totalWaiting}</span>
+        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          {anySending && <span className="tag tag-accent tag-net">sending now</span>}
+          {totalFailed > 0 && <span className="tag tag-accent tag-net tnum">{totalFailed} failed</span>}
+          <button onClick={() => void load()} className="btn btn-ghost !text-xs">Refresh</button>
+        </span>
       </div>
 
-      {held && (
-        <div className="mb-2 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-100/70 px-2.5 py-1.5 text-xs text-amber-800">
-          <span className="font-semibold">⏸ Held · {held.label}</span>
-          <span className="text-amber-700">— {held.detail}</span>
+      {/* Why the queue is held right now — STOP is an alarm, the windows are
+          scheduled behaviour, so they get the alarm and the quiet treatment. */}
+      {held && (paused ? (
+        <div className="mt-3 flex items-start gap-2.5 text-[13px] font-extrabold" style={{ color: 'var(--color-accent-700)' }}>
+          <span className="sq mt-1.5" style={{ background: 'var(--color-accent)' }} />
+          <span>Held · {held.label} — {held.detail}</span>
         </div>
-      )}
+      ) : (
+        <p className="m-0 mt-3 text-xs muted tnum">Held · {held.label} — {held.detail}</p>
+      ))}
 
-      <ul className="space-y-1.5">
+      <ul className="m-0 mt-1 list-none p-0">
         {batches.map((b) => {
           const isOpen = open[b.id]
           return (
-            <li key={b.id} className="rounded-lg border border-slate-100 bg-white p-2">
-              <button onClick={() => setOpen((o) => ({ ...o, [b.id]: !o[b.id] }))} className="flex w-full items-center gap-2 text-left">
-                <span className="text-[10px] text-slate-400">{isOpen ? '▾' : '▸'}</span>
-                <span className="text-sm font-medium">{b.name}</span>
-                <span className="chip bg-slate-100 text-slate-500">{b.isOutreach ? 'outreach' : 'replies'}</span>
-                <span className="ml-auto text-xs tabular-nums text-slate-500">
-                  {b.sending ? `${b.sending} sending · ` : ''}{b.waiting} to go{b.failed ? ` · ${b.failed} failed` : ''}
+            <li key={b.id} className="row">
+              <div className={ROW_GRID}>
+                <span className="flex min-w-0 flex-wrap items-baseline gap-2 [grid-area:name]">
+                  <span className="min-w-0 truncate text-sm font-semibold">{b.name}</span>
+                  <span className="tag tag-neutral tag-net">{b.isOutreach ? 'outreach' : 'replies'}</span>
+                  {b.sending > 0 && <span className="tag tag-accent tag-net tnum">{b.sending} sending</span>}
+                  {b.failed > 0 && <span className="tag tag-accent tag-net tnum">{b.failed} failed</span>}
                 </span>
-                {b.scheduledFor && new Date(b.scheduledFor) > now && (
-                  <span className="chip bg-sky-50 text-sky-700">⏰ {new Date(b.scheduledFor).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>
-                )}
-              </button>
+                <span className="min-w-0 truncate text-xs muted tnum [grid-area:meta]">
+                  {b.scheduledFor && new Date(b.scheduledFor) > now
+                    ? `scheduled ${new Date(b.scheduledFor).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+                    : ''}
+                </span>
+                <span className="flex items-baseline gap-2.5 [grid-area:figs]">
+                  <span className="text-[15px] font-extrabold tnum">{b.waiting}</span>
+                  <span className="text-xs muted">to go</span>
+                  <button
+                    onClick={() => setOpen((o) => ({ ...o, [b.id]: !o[b.id] }))}
+                    aria-expanded={!!isOpen}
+                    className="btn-quiet inline-flex items-center gap-1"
+                  >
+                    <span className={`flex-none transition-transform ${isOpen ? 'rotate-90' : ''}`}>
+                      <IconChevronRight size={13} />
+                    </span>
+                    {isOpen ? 'Hide' : 'Names'}
+                  </button>
+                </span>
+              </div>
               {isOpen && (
-                <div className="mt-1.5 flex flex-wrap gap-1 pl-4">
+                <div className="flex flex-wrap gap-x-3 gap-y-1 pb-3 text-[13px]">
                   {b.names.slice(0, 60).map((n, i) => (
-                    <span key={i} className="chip bg-slate-50 text-slate-600 ring-1 ring-inset ring-slate-100">{n}</span>
+                    <span key={i}>{n}</span>
                   ))}
-                  {b.names.length > 60 && <span className="text-xs text-slate-400">+{b.names.length - 60} more</span>}
+                  {b.names.length > 60 && <span className="muted-45 tnum">+{b.names.length - 60} more</span>}
                 </div>
               )}
             </li>
           )
         })}
         {drafts > 0 && (
-          <li className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white p-2 text-sm">
-            <span className="font-medium">Approved 1:1 replies</span>
-            <span className="ml-auto text-xs text-slate-500">{drafts} to go</span>
+          <li className={`row ${ROW_GRID}`}>
+            <span className="min-w-0 truncate text-sm font-semibold [grid-area:name]">Approved 1:1 replies</span>
+            <span className="text-xs muted [grid-area:meta]" />
+            <span className="flex items-baseline gap-2.5 [grid-area:figs]">
+              <span className="text-[15px] font-extrabold tnum">{drafts}</span>
+              <span className="text-xs muted">to go</span>
+            </span>
           </li>
         )}
       </ul>
-    </div>
+    </section>
   )
 }
