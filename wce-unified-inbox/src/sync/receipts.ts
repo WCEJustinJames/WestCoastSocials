@@ -12,6 +12,18 @@ const phoneCore = (raw: string): string => raw.replace(/\D/g, '').replace(/^61/,
 export interface ReceiptResult {
   processed: number
   skipped: number
+  /** False when the banking group could not be found at all — see below. */
+  chatFound: boolean
+  /** Unprocessed image messages this run set out to handle. */
+  candidates: number
+  /** Of those, how many failed on a fetch/vision/insert error.
+   *
+   *  `skipped` is close to this already — a not-a-receipt or a duplicate is
+   *  inserted and counted in `processed`, not skipped — but it also absorbs
+   *  images with no usable srcURL, which are not failures, and it carries that
+   *  meaning only by implication. A caller deciding whether to publish a health
+   *  signal should not have to infer it, so it is counted openly. */
+  errors: number
 }
 
 const PROMPT = `You are reading a photo that MIGHT be a West Coast Poker (WCP) "Banking / Cash Chips" payout form: a printed template with handwritten entries, fields stacked top-to-bottom (Date, Venue, Club, then "Player Details" with First Name / Surname / Mobile Number / Recipient Signature, then Payment Details with Total Winnings / TOTAL BANK TRANSFER AMOUNT).
@@ -83,8 +95,15 @@ export async function extractReceipts(
     (c.title ?? '').toLowerCase().includes(chatNeedle),
   )
   if (!chat) {
+    // Reported as chatFound:false rather than as an empty-but-successful run.
+    // A caller that stamps a health signal off {processed:0, skipped:0} would
+    // otherwise read this as "swept, nothing to do" and go green forever while
+    // nothing reaches the CRM — the exact silent failure the nightly sweep and
+    // its watchdog check exist to end. This is a live failure mode, not a
+    // theoretical one: the lookup only scans the 20 most recent group chats,
+    // so a quiet week or a rename drops the banking group out of range.
     console.error(`[receipts] no group chat matching "${chatNeedle}" in recent results`)
-    return { processed: 0, skipped: 0 }
+    return { processed: 0, skipped: 0, chatFound: false, candidates: 0, errors: 0 }
   }
 
   // Page backwards through the whole chat history, collecting image messages we
@@ -128,6 +147,7 @@ export async function extractReceipts(
 
   let processed = 0
   let skipped = 0
+  let errors = 0
 
   for (const m of todo) {
     const att = (m.attachments as { type?: string; srcURL?: string; mimeType?: string }[]).find(
@@ -146,6 +166,7 @@ export async function extractReceipts(
     } catch {
       console.warn(`[receipts] couldn't fetch image for message ${m.id}`)
       skipped++
+      errors++
       continue
     }
 
@@ -241,8 +262,9 @@ export async function extractReceipts(
     } catch (e) {
       console.error(`[receipts] error on message ${m.id}:`, e instanceof Error ? e.message : e)
       skipped++
+      errors++
     }
   }
 
-  return { processed, skipped }
+  return { processed, skipped, chatFound: true, candidates: todo.length, errors }
 }

@@ -764,7 +764,18 @@ const RECEIPTS_FORCE_H = 26 // machine was off overnight — sweep on sight
 // stored, newest first, so successive nights walk further back on their own.
 // The 5 Jun - 30 Jul gap left by the outage above closes over roughly a
 // fortnight of nightly runs without anyone backfilling it by hand.
-const RECEIPTS_LIMIT = Number(process.env.RECEIPTS_SWEEP_LIMIT ?? 60)
+// Validated rather than trusted: an empty or malformed RECEIPTS_SWEEP_LIMIT
+// would make this NaN, `todo.length < NaN` is false on the first test, and the
+// sweep would collect nothing, process nothing, and stamp itself green forever.
+const RECEIPTS_LIMIT = (() => {
+  const raw = process.env.RECEIPTS_SWEEP_LIMIT
+  const n = raw === undefined || raw.trim() === '' ? NaN : Number(raw)
+  if (Number.isFinite(n) && n > 0) return Math.floor(n)
+  if (raw !== undefined && raw.trim() !== '') {
+    console.error(`[receipts] ignoring invalid RECEIPTS_SWEEP_LIMIT=${JSON.stringify(raw)} — using 60`)
+  }
+  return 60
+})()
 
 let receiptsSweepRunning = false
 
@@ -812,17 +823,50 @@ async function receiptsSweep(): Promise<void> {
       RECEIPTS_LIMIT,
     )
     const secs = Math.round((Date.now() - started) / 1000)
-    console.log(`[receipts] processed=${r.processed} skipped=${r.skipped} in ${secs}s`)
-    // Stamped only on success, exactly as the deep sweep does: a failed sweep
-    // must leave the clock where it was so the next check retries, rather than
-    // recording a sweep that read nothing. Stamped even when processed=0 —
-    // that is a real "I ran and the chat was quiet", and it is the difference
-    // the watchdog needs between a quiet week and a dead scanner.
+    console.log(`[receipts] processed=${r.processed} skipped=${r.skipped} errors=${r.errors} in ${secs}s`)
+
+    // What counts as "this sweep worked" is the whole point of the heartbeat,
+    // so it is decided explicitly rather than inferred from "didn't throw".
+    //
+    // Two ways a sweep can do nothing while looking perfectly fine:
+    //
+    //  - The banking group isn't in the 20 most recent group chats (a quiet
+    //    week, or a rename), so extractReceipts never finds it. It used to
+    //    report that as {processed:0, skipped:0}, indistinguishable from a
+    //    genuinely quiet night.
+    //  - Every candidate image failed — Beeper media unreachable, the vision
+    //    API down, the key rotated. A not-a-receipt or a duplicate is inserted
+    //    and counted in `processed`, so `skipped` was already close to an error
+    //    count, but it also absorbs images with no usable srcURL and says so
+    //    only by implication. extractReceipts now returns `errors` outright
+    //    rather than leaving this decision resting on an inference.
+    //
+    // Both leave the clock alone, so id=7 goes stale and the watchdog raises
+    // it. Stamping green here would rebuild the exact silent failure this
+    // sweep was written to end, one level further in.
+    if (!r.chatFound) {
+      console.error(
+        "[receipts] banking group not found — NOT stamping the heartbeat, so the watchdog will raise this. " +
+        'Check the group still exists in Beeper and has recent activity.',
+      )
+      return
+    }
+    if (r.candidates > 0 && r.processed === 0 && r.errors > 0) {
+      console.error(
+        `[receipts] all ${r.candidates} candidate image(s) failed — NOT stamping the heartbeat. ` +
+        'Check Beeper media access and ANTHROPIC_API_KEY.',
+      )
+      return
+    }
+
+    // Stamped even when processed=0 with no errors — that is a real "I ran and
+    // the chat was quiet", and it is the difference the watchdog needs between
+    // a quiet week and a dead scanner.
     const { error } = await supabaseAdmin.from('inbox_sync_heartbeat').upsert({
       id: RECEIPTS_SWEEP_ID,
       last_run: new Date().toISOString(),
       host: os.hostname(),
-      note: `receipts · ${r.processed} processed / ${r.skipped} skipped in ${secs}s`,
+      note: `receipts · ${r.processed} processed / ${r.skipped} skipped / ${r.errors} error(s) in ${secs}s`,
     })
     if (error) console.error('[receipts] heartbeat write failed:', error.message)
   } catch (e) {
