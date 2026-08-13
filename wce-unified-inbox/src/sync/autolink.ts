@@ -34,25 +34,9 @@ const phoneCore = (p: string | null): string =>
 // lines up with the "Joshua Dawson" Messenger thread. Only the FIRST word of a
 // name is mapped, and the both-sides-unique rule below still applies — an
 // ambiguous fold (e.g. a Josh Dawson AND a Joshua Dawson in the CRM) collides to
-// one key with two owners and is dropped, never guessed.
-const DIMINUTIVES: Record<string, string> = {
-  josh: 'joshua', rob: 'robert', robbie: 'robert', bob: 'robert', bobby: 'robert',
-  dave: 'david', matt: 'matthew', mike: 'michael', mick: 'michael', tom: 'thomas',
-  tommy: 'thomas', tony: 'anthony', chris: 'christopher', nick: 'nicholas',
-  dan: 'daniel', danny: 'daniel', jim: 'james', jimmy: 'james', jamie: 'james',
-  bill: 'william', billy: 'william', will: 'william', rick: 'richard',
-  ricky: 'richard', dick: 'richard', steve: 'steven', andy: 'andrew',
-  drew: 'andrew', tim: 'timothy', sam: 'samuel', ben: 'benjamin',
-  alex: 'alexander', ed: 'edward', eddie: 'edward', ted: 'edward',
-  greg: 'gregory', jeff: 'jeffrey', ken: 'kenneth', kenny: 'kenneth',
-  pat: 'patrick', paddy: 'patrick', pete: 'peter', ray: 'raymond',
-  ron: 'ronald', ronnie: 'ronald', terry: 'terence', vince: 'vincent',
-  joe: 'joseph', joey: 'joseph', jon: 'jonathan', johnny: 'john',
-  frank: 'francis', frankie: 'francis', gerry: 'gerard', jerry: 'gerard',
-  larry: 'lawrence', laurie: 'lawrence', stu: 'stuart', gaz: 'gary',
-  baz: 'barry', shaz: 'sharon', kev: 'kevin', trev: 'trevor', gav: 'gavin',
-  nath: 'nathan', jono: 'jonathan', davo: 'david', stevo: 'steven',
-}
+// one key with two owners and is dropped, never guessed. The map itself is
+// shared with the Players merge guard (lib/nameMatch.ts) so both features agree.
+import { DIMINUTIVES } from '../lib/nameMatch'
 
 /** Fold the first name through the diminutive map: "josh dawson" -> "joshua dawson". */
 function canonName(normed: string): string {

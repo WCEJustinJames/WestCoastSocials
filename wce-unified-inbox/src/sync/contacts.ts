@@ -170,19 +170,45 @@ export async function syncGoogleContacts(
     scanned = rows.length
     if (rows.length) {
       const ids = rows.map((r) => r.airtable_id)
+
+      // Never re-import a contact a merge retired: its source key is tombstoned
+      // (inbox_merge_tombstones). Without this, an expired sync token forces a
+      // full resync that re-inserts every merged-away duplicate — the merges
+      // quietly un-did themselves within days. Tolerates the table not existing
+      // yet (migration 0068 unapplied): behaves exactly as before.
+      const tombstoned = new Set<string>()
+      const t = db as unknown as {
+        from: (x: string) => {
+          select: (c: string) => {
+            in: (col: string, v: string[]) => Promise<{ data: { airtable_id: string }[] | null; error: unknown }>
+          }
+        }
+      }
+      for (let i = 0; i < ids.length; i += 500) {
+        const { data: ts, error: tErr } = await t
+          .from('inbox_merge_tombstones')
+          .select('airtable_id')
+          .in('airtable_id', ids.slice(i, i + 500))
+        if (tErr) break // table missing / unreadable: import everything as before
+        for (const r of ts ?? []) tombstoned.add(r.airtable_id)
+      }
+      const keep = rows.filter((r) => !tombstoned.has(r.airtable_id))
+
       const { data: existing } = await db
         .from('inbox_outreach')
         .select('airtable_id')
         .in('airtable_id', ids)
       const have = new Set((existing ?? []).map((e) => e.airtable_id))
-      const newRows = rows.filter((r) => !have.has(r.airtable_id))
+      const newRows = keep.filter((r) => !have.has(r.airtable_id))
       created = newRows.length
       autoHidden = newRows.filter((r) => r.hidden).length
 
-      const { error } = await db
-        .from('inbox_outreach')
-        .upsert(rows, { onConflict: 'airtable_id', ignoreDuplicates: true })
-      if (error) throw error
+      if (keep.length) {
+        const { error } = await db
+          .from('inbox_outreach')
+          .upsert(keep, { onConflict: 'airtable_id', ignoreDuplicates: true })
+        if (error) throw error
+      }
     }
     await saveSyncToken(db, slot, nextSyncToken)
     break

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { usePlayers, mergeRows, phoneCore, normCore, sourceLabel, type PlayerRow as Row } from './usePlayers'
+import { usePlayers, mergeRows, phoneCore, normCore, sourceLabel, phoneStatus, phoneStatusLabel, type PlayerRow as Row } from './usePlayers'
 import { PlayerCard } from './PlayerRow'
 
 /** Merge & Review tab — dedupe (region values + phone duplicates + manual merge)
@@ -61,14 +61,18 @@ export function MergeReview() {
       {p.dupGroups.length > 0 && (
         <details className="mb-4 rounded-lg border border-slate-200 bg-white p-3" open>
           <summary className="cursor-pointer text-sm font-medium">
-            Phone duplicates ({p.dupGroups.length}) — pick the correct name, then Merge
+            Phone duplicates ({p.dupGroups.length}) — pick the record to keep, then Merge
           </summary>
+          <p className="my-1 text-xs text-slate-500">
+            The picked record&apos;s name and number win; everything else (flags, venues, stakes, lists) is combined.
+          </p>
           <button
-            onClick={() => void p.mergeAllDuplicates()}
+            onClick={() => void p.mergePhoneDuplicates()}
             disabled={p.busy}
+            title="Merges only the groups whose names clearly agree (nicknames, initials and one-letter typos count as agreeing); clashing names stay here for manual review"
             className="my-2 rounded-md border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100 disabled:opacity-40"
           >
-            Merge all (auto-pick the most complete name)
+            Auto-merge the compatible groups
           </button>
           <ul className="space-y-2">
             {p.dupGroups.slice(0, 50).map((g) => {
@@ -117,7 +121,9 @@ export function MergeReview() {
             Possible duplicates by name ({p.nameDupGroups.length}) — same name, different / no phone
           </summary>
           <p className="my-2 text-xs text-slate-500">
-            Suggested matches the phone dedup misses. Check they&apos;re really the same person, pick the name to keep, then Merge.
+            Suggested matches the phone dedup misses. Check they&apos;re really the same person, pick the record
+            whose name <em>and number</em> are right, then Merge. ⚠ marks a number that is the wrong length or
+            whose last SMS failed — don&apos;t pick those.
           </p>
           <ul className="space-y-2">
             {p.nameDupGroups.slice(0, 40).map((g) => {
@@ -127,18 +133,33 @@ export function MergeReview() {
                 <li key={key} className="rounded border border-slate-100 p-2">
                   <div className="mb-1 text-xs text-slate-400">“{g[0].player_name}”</div>
                   <div className="flex flex-wrap items-center gap-3">
-                    {g.map((r) => (
-                      <label key={r.id} className="flex items-center gap-1 text-sm">
-                        <input
-                          type="radio"
-                          name={`name-${key}`}
-                          checked={chosen === r.id}
-                          onChange={() => p.setGroupKeeper((prev) => ({ ...prev, [key]: r.id }))}
-                        />
-                        {r.player_name ?? '(no name)'}
-                        <span className="text-[10px] text-slate-400">{r.phone ?? 'no phone'} · {tag(r)}</span>
-                      </label>
-                    ))}
+                    {g.map((r) => {
+                      const st = phoneStatus(r.phone)
+                      const numberWarn = r.phone
+                        ? st !== 'ok' && st !== 'empty'
+                          ? phoneStatusLabel[st]
+                          : p.failedSends.has(r.id)
+                            ? 'last SMS failed'
+                            : ''
+                        : ''
+                      return (
+                        <label key={r.id} className="flex items-center gap-1 text-sm">
+                          <input
+                            type="radio"
+                            name={`name-${key}`}
+                            checked={chosen === r.id}
+                            onChange={() => p.setGroupKeeper((prev) => ({ ...prev, [key]: r.id }))}
+                          />
+                          {r.player_name ?? '(no name)'}
+                          <span className="text-[10px] text-slate-400">{r.phone ?? 'no phone'} · {tag(r)}</span>
+                          {numberWarn && (
+                            <span title={numberWarn} className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] text-rose-700">
+                              ⚠ {numberWarn}
+                            </span>
+                          )}
+                        </label>
+                      )
+                    })}
                     <button
                       onClick={() => void p.mergeNameGroup(g)}
                       disabled={p.busy}
