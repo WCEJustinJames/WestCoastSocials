@@ -67,7 +67,10 @@ export async function guardSend(
     .select('do_not_message, hidden, staff, last_contacted, contact_frequency_days, beeper_chat_id, snooze_until')
     .eq('id', args.outreachId)
     .maybeSingle()
-  if (!row) return { ok: true }
+  // The item names a CRM row that no longer exists (deleted by a merge after the
+  // batch was approved). Sending blind would bypass EVERY per-player guard — the
+  // ban/hidden/staff flags live on the row we can't find — so skip, never send.
+  if (!row) return { ok: false, reason: 'crm_row_missing' }
 
   if (row.do_not_message) return { ok: false, reason: 'do_not_message' }
   if (row.hidden) return { ok: false, reason: 'hidden' }

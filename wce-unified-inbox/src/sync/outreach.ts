@@ -72,13 +72,35 @@ export async function syncOutreach(
     })
 
     if (rows.length) {
+      // Skip records a merge retired (inbox_merge_tombstones): re-upserting them
+      // resurrects the deleted duplicate — and the source-refresh upsert below
+      // has no ignoreDuplicates, so it would re-insert a merged-away row as a
+      // near-empty skeleton (just airtable_id + source). Tolerates the table
+      // not existing yet (migration 0068 unapplied).
+      const tombstoned = new Set<string>()
+      const t = db as unknown as {
+        from: (x: string) => {
+          select: (c: string) => {
+            in: (col: string, v: string[]) => Promise<{ data: { airtable_id: string }[] | null; error: unknown }>
+          }
+        }
+      }
+      const { data: ts, error: tErr } = await t
+        .from('inbox_merge_tombstones')
+        .select('airtable_id')
+        .in('airtable_id', rows.map((r) => r.airtable_id))
+      if (!tErr) for (const x of ts ?? []) tombstoned.add(x.airtable_id)
+      const keep = rows.filter((r) => !tombstoned.has(r.airtable_id))
+
       // Insert new players only; never overwrite existing rows, so manual CRM
       // edits (region tidy-ups, tags, bans) persist across syncs.
-      const { error } = await db
-        .from('inbox_outreach')
-        .upsert(rows, { onConflict: 'airtable_id', ignoreDuplicates: true })
-      if (error) throw error
-      synced += rows.length
+      if (keep.length) {
+        const { error } = await db
+          .from('inbox_outreach')
+          .upsert(keep, { onConflict: 'airtable_id', ignoreDuplicates: true })
+        if (error) throw error
+      }
+      synced += keep.length
 
       // The "Source" (real origin: Facebook Messenger / Google Contacts / raffle
       // cards / reservation PDF …) IS allowed to refresh on existing rows — it's
@@ -86,7 +108,7 @@ export async function syncOutreach(
       // useless without it. Upsert just airtable_id + source (no ignoreDuplicates),
       // which updates source while leaving every other field — and his edits —
       // untouched.
-      const srcRows = rows
+      const srcRows = keep
         .filter((r) => r.source)
         .map((r) => ({ airtable_id: r.airtable_id, source: r.source }))
       if (srcRows.length) {

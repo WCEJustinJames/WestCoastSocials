@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { namesCompatible } from '../lib/nameMatch'
 import type { Database } from '../types/database'
 
 export type PlayerRow = Database['public']['Tables']['inbox_outreach']['Row']
@@ -94,7 +95,7 @@ export function sourceLabel(r: { airtable_id: string | null; source?: string | n
 // Poker/venue noise operators append to CRM names (e.g. "Chris Pavitt $2/5/10
 // MCT Woodvale"). Stripped so a clean Facebook name still lines up with the record.
 const NAME_NOISE =
-  /\b(poker|holdem|cash|tourney|tournament|nlh|plo|mtt|mct|woodvale|kenwick|bentley|kingsley|leederville|leedy|stirling|adriatic|kwinana|southside|north|south|central|east|west|hotel|tavern|club|bowls|president|dealer|reserve|home|game|games|player)\b/g
+  /\b(poker|holdem|cash|tourney|tournament|nlh|plo|mtt|mct|short|deck|homegame|hg|woodvale|kenwick|bentley|kingsley|leederville|leedy|stirling|adriatic|kwinana|southside|north|south|central|east|west|hotel|tavern|club|bowls|president|dealer|reserve|home|game|games|player)\b/g
 export const normFull = (raw: string): string =>
   raw.toLowerCase().replace(/\$\s*\d[\d/]*/g, ' ').replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim()
 export const normCore = (raw: string): string =>
@@ -190,15 +191,23 @@ export function mergeRows(
     const keep = ordered.find((r) => r.id === keeperId)
     if (keep) ordered = [keep, ...ordered.filter((r) => r.id !== keeperId)]
   }
+  // Which number survives the merge, in order:
+  //  1. the record the user explicitly chose as keeper (their pick is the call);
+  //  2. a VALID mobile from the phone contacts (gcsv: upload or the live
+  //     gcontact: Google sync — both are "the number saved in Justin's phone");
+  //  3. any phone-contacts number, then any valid mobile, then anything at all.
+  const isContactSrc = (r: PlayerRow) =>
+    r.airtable_id.startsWith('gcsv:') || r.airtable_id.startsWith('gcontact:')
+  const keeperPhone = keeperId && ordered[0].id === keeperId ? ordered[0].phone : null
   const merged: Partial<PlayerRow> = {
     player_name: firstNonEmpty(ordered.map((r) => r.player_name)),
     first_name: firstNonEmpty(ordered.map((r) => r.first_name)),
     last_name: firstNonEmpty(ordered.map((r) => r.last_name)),
-    // Phone MUST come from the contacts upload (gcsv:) when the person has one
-    // there — that's the number saved in Justin's phone. Only fall back to other
-    // sources (receipts, TD sheets, Airtable) when there's no contacts number.
     phone:
-      firstNonEmpty(ordered.filter((r) => r.airtable_id.startsWith('gcsv:')).map((r) => r.phone)) ??
+      firstNonEmpty([keeperPhone]) ??
+      firstNonEmpty(ordered.filter((r) => isContactSrc(r) && phoneStatus(r.phone) === 'ok').map((r) => r.phone)) ??
+      firstNonEmpty(ordered.filter(isContactSrc).map((r) => r.phone)) ??
+      firstNonEmpty(ordered.filter((r) => phoneStatus(r.phone) === 'ok').map((r) => r.phone)) ??
       firstNonEmpty(ordered.map((r) => r.phone)),
     email: firstNonEmpty(ordered.map((r) => r.email)),
     beeper_chat_id: firstNonEmpty(ordered.map((r) => r.beeper_chat_id)),
@@ -270,6 +279,9 @@ const toEdit = (r: PlayerRow): Edit => ({
 export function usePlayers(initialFilter?: string) {
   const [rows, setRows] = useState<PlayerRow[]>([])
   const [edits, setEdits] = useState<Record<string, Edit>>({})
+  // Rows as of the last load(), for telling an untouched edit buffer from one
+  // the user has typed in (see load()).
+  const loadedRows = useRef<Map<string, PlayerRow>>(new Map())
   // Per-player attendance scoring (full LP+TD history; live view, keyed by the
   // SQL name-norm). Powers the games count/rank, venue filter and sort modes.
   const [att, setAtt] = useState<Map<string, AttStats>>(new Map())
@@ -366,7 +378,21 @@ export function usePlayers(initialFilter?: string) {
       if (rows.length < PAGE) break
     }
     setRows(list)
-    setEdits(Object.fromEntries(list.map((r) => [r.id, toEdit(r)])))
+    // Refresh the edit buffers WITHOUT clobbering unsaved typing: a buffer that
+    // differs from the row it was loaded from is the user's work-in-progress
+    // (reloads happen behind their back after every merge), so it stays; only
+    // untouched buffers pick up the fresh row.
+    setEdits((prev) => {
+      const next: Record<string, Edit> = {}
+      for (const r of list) {
+        const old = loadedRows.current.get(r.id)
+        const prevE = prev[r.id]
+        const dirty = old && prevE && JSON.stringify(prevE) !== JSON.stringify(toEdit(old))
+        next[r.id] = dirty ? prevE : toEdit(r)
+      }
+      return next
+    })
+    loadedRows.current = new Map(list.map((r) => [r.id, r]))
     setRenames({})
 
     // Resolve each linked thread's network (a Beeper thread is often SMS via
@@ -440,7 +466,10 @@ export function usePlayers(initialFilter?: string) {
     const byPhone = new Map<string, PlayerRow[]>()
     for (const r of rows) {
       const key = phoneCore(r.phone)
-      if (!key) continue
+      // A real AU number is 9 digits once 61/0 are stripped; shorter "numbers"
+      // are carrier codes and typos ("Call Waiting *43#" ended up a duplicate
+      // "group" keyed on 43) — junk to fix by hand, not merge candidates.
+      if (key.length < 9) continue
       ;(byPhone.get(key) ?? byPhone.set(key, []).get(key)!).push(r)
     }
     return [...byPhone.values()].filter((g) => g.length > 1)
@@ -629,28 +658,110 @@ export function usePlayers(initialFilter?: string) {
   // Deleting a duplicate cascades its inbox_list_members rows away — so before a
   // merge deletes the dropped records, their venue-list memberships are re-pointed
   // at the keeper (ignore-duplicates keeps existing memberships intact).
-  async function moveListMemberships(dropIds: string[], keeperId: string) {
-    if (dropIds.length === 0) return
-    const { data: mem } = await supabase
+  async function moveListMemberships(dropIds: string[], keeperId: string): Promise<string | null> {
+    if (dropIds.length === 0) return null
+    const { data: mem, error: mErr } = await supabase
       .from('inbox_list_members')
       .select('list_id')
       .in('outreach_id', dropIds)
+    if (mErr) return mErr.message
     const listIds = [...new Set(((mem ?? []) as { list_id: string }[]).map((m) => m.list_id))]
-    if (listIds.length === 0) return
-    await supabase.from('inbox_list_members').upsert(
+    if (listIds.length === 0) return null
+    const { error } = await supabase.from('inbox_list_members').upsert(
       listIds.map((list_id) => ({ list_id, outreach_id: keeperId })),
       { onConflict: 'list_id,outreach_id', ignoreDuplicates: true },
     )
+    return error?.message ?? null
+  }
+
+  /**
+   * The one safe merge sequence, shared by every merge path. Everything that
+   * points at a dropped duplicate is re-pointed at the keeper BEFORE the delete:
+   *  - the dropped rows' source keys are tombstoned, so the Google Contacts /
+   *    Airtable syncs can never re-import the duplicate (the "merges kept
+   *    coming back" bug — a full resync re-inserted every deleted source key);
+   *  - the send ledger moves across, so the no-reply guard and "messaged Nd
+   *    ago" keep counting sends made under the duplicate's id;
+   *  - queued batch items move across, so send-time guards (ban / on-ice /
+   *    frequency) check the surviving record instead of a deleted id;
+   *  - venue-list memberships move across (the delete would cascade them away).
+   * Every step is error-checked; the delete only runs when all of it landed.
+   * Returns an error message, or null on success.
+   */
+  async function applyMerge(group: PlayerRow[], keeper?: string): Promise<string | null> {
+    if (group.length < 2) return null
+    const { primary, merged, dropIds } = mergeRows(group, keeper)
+    const dropped = group.filter((r) => dropIds.includes(r.id))
+
+    const tomb = dropped
+      .filter((r) => r.airtable_id)
+      .map((r) => ({ airtable_id: r.airtable_id, merged_into: primary.id }))
+    if (tomb.length) {
+      // Cast: the tombstones table post-dates the generated Database types.
+      const t = supabase as unknown as {
+        from: (x: string) => {
+          upsert: (v: unknown, o: unknown) => Promise<{ error: { message: string } | null }>
+        }
+      }
+      const { error } = await t
+        .from('inbox_merge_tombstones')
+        .upsert(tomb, { onConflict: 'airtable_id', ignoreDuplicates: true })
+      // A missing table means migration 0068 isn't applied yet: the merge still
+      // works, it just can't outlive the next Google full resync. Don't block.
+      if (error && !/does not exist|schema cache/i.test(error.message)) {
+        return `tombstones: ${error.message}`
+      }
+    }
+
+    {
+      // Cast: inbox_sent_log post-dates the generated Database types.
+      const l = supabase as unknown as {
+        from: (x: string) => {
+          update: (v: unknown) => { in: (c: string, v2: string[]) => Promise<{ error: { message: string } | null }> }
+        }
+      }
+      const { error } = await l.from('inbox_sent_log').update({ outreach_id: primary.id }).in('outreach_id', dropIds)
+      if (error) return `send ledger: ${error.message}`
+    }
+
+    {
+      const { data: liveItems, error: qErr } = await supabase
+        .from('inbox_batch_items')
+        .select('id, data')
+        .in('status', ['pending', 'approved', 'sending'])
+        .in('data->>outreach_id', dropIds)
+      if (qErr) return `batch items: ${qErr.message}`
+      for (const it of (liveItems ?? []) as { id: string; data: Record<string, unknown> | null }[]) {
+        const { error } = await supabase
+          .from('inbox_batch_items')
+          .update({ data: { ...(it.data ?? {}), outreach_id: primary.id } })
+          .eq('id', it.id)
+        if (error) return `batch items: ${error.message}`
+      }
+    }
+
+    const memErr = await moveListMemberships(dropIds, primary.id)
+    if (memErr) return `list memberships: ${memErr}`
+
+    const { error: upErr } = await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
+    if (upErr) return upErr.message
+    if (dropIds.length) {
+      const { error: delErr } = await supabase.from('inbox_outreach').delete().in('id', dropIds)
+      if (delErr) return delErr.message
+    }
+    return null
   }
 
   async function mergeSelected() {
     if (selectedRows.length < 2) return
     setBusy(true)
-    const { primary, merged, dropIds } = mergeRows(selectedRows, keeperId ?? undefined)
-    await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
-    await moveListMemberships(dropIds, primary.id)
-    if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+    const err = await applyMerge(selectedRows, keeperId ?? undefined)
     setBusy(false)
+    if (err) {
+      setStatus(`Merge failed: ${err}`)
+      setTimeout(() => setStatus(null), 8000)
+      return
+    }
     setSel(new Set())
     setKeeperId(null)
     setStatus('Merged.')
@@ -676,41 +787,42 @@ export function usePlayers(initialFilter?: string) {
 
   /**
    * Auto-merge exact phone-number duplicates (the same person saved in both
-   * Google accounts, receipts, TD sheets, …). Only merges when the names are
-   * COMPATIBLE — identical, one empty, or one a subset of the other — so a
-   * father/son sharing a landline are left for manual review, never silently
-   * fused. Uses the same safe merge as the manual path (flags OR'd, list
-   * memberships moved, most-complete record kept).
+   * Google accounts, receipts, TD sheets, …). Only merges when every pair of
+   * names in the group is COMPATIBLE — identical after noise-stripping, or
+   * differing only by a nickname/diminutive (Pat/Patrick), a truncation
+   * (Knez/Knezevic), an initial (Andi L/Andi), or a one-letter typo
+   * (Mcdermit/Mcdermott). A genuinely different name on the same number (a
+   * father/son sharing a phone, a venue's line) is left for manual review,
+   * never silently fused. Uses the same safe merge sequence as the manual path.
    */
   async function mergePhoneDuplicates(): Promise<{ merged: number; skipped: number }> {
     const nameOk = (g: PlayerRow[]): boolean => {
       const names = g.map((r) => normCore(r.player_name ?? '')).filter(Boolean)
       if (names.length <= 1) return true // ≤1 named record: safe
-      const toks = names.map((n) => new Set(n.split(' ')))
-      // every named pair must be identical or one a subset of the other
-      for (let i = 0; i < toks.length; i++) {
-        for (let j = i + 1; j < toks.length; j++) {
-          const a = toks[i], b = toks[j]
-          const subset = [...a].every((x) => b.has(x)) || [...b].every((x) => a.has(x))
-          if (!subset) return false
+      for (let i = 0; i < names.length; i++) {
+        for (let j = i + 1; j < names.length; j++) {
+          if (!namesCompatible(names[i], names[j])) return false
         }
       }
       return true
     }
     setBusy(true)
     let merged = 0, skipped = 0
+    let firstError: string | null = null
     for (const g of dupGroups) {
       if (!nameOk(g)) { skipped++; continue }
-      const { primary, merged: m, dropIds } = mergeRows(g)
-      await supabase.from('inbox_outreach').update(m).eq('id', primary.id)
-      await moveListMemberships(dropIds, primary.id)
-      if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+      const err = await applyMerge(g)
+      if (err) { firstError = err; break } // stop rather than plough into more failures
       merged++
     }
     setBusy(false)
-    setStatus(`Merged ${merged} phone-duplicate group(s)${skipped ? `, skipped ${skipped} with clashing names (review manually)` : ''}.`)
+    setStatus(
+      firstError
+        ? `Merged ${merged}, then stopped on an error: ${firstError}`
+        : `Merged ${merged} phone-duplicate group(s)${skipped ? `, skipped ${skipped} with clashing names (review manually)` : ''}.`,
+    )
     await load()
-    setTimeout(() => setStatus(null), 6000)
+    setTimeout(() => setStatus(null), 8000)
     return { merged, skipped }
   }
 
@@ -786,11 +898,13 @@ export function usePlayers(initialFilter?: string) {
   async function mergeOneGroup(group: PlayerRow[]) {
     const key = phoneCore(group[0].phone)
     setBusy(true)
-    const { primary, merged, dropIds } = mergeRows(group, groupKeeper[key])
-    await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
-    await moveListMemberships(dropIds, primary.id)
-    if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+    const err = await applyMerge(group, groupKeeper[key])
     setBusy(false)
+    if (err) {
+      setStatus(`Merge failed: ${err}`)
+      setTimeout(() => setStatus(null), 8000)
+      return
+    }
     load()
   }
 
@@ -798,27 +912,14 @@ export function usePlayers(initialFilter?: string) {
   async function mergeNameGroup(group: PlayerRow[]) {
     const key = normCore(group[0].player_name ?? '')
     setBusy(true)
-    const { primary, merged, dropIds } = mergeRows(group, groupKeeper[key])
-    await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
-    await moveListMemberships(dropIds, primary.id)
-    if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+    const err = await applyMerge(group, groupKeeper[key])
     setBusy(false)
-    load()
-  }
-
-  async function mergeAllDuplicates() {
-    setBusy(true)
-    setStatus('Merging duplicates…')
-    for (const g of dupGroups) {
-      const { primary, merged, dropIds } = mergeRows(g)
-      await supabase.from('inbox_outreach').update(merged).eq('id', primary.id)
-      await moveListMemberships(dropIds, primary.id)
-      if (dropIds.length) await supabase.from('inbox_outreach').delete().in('id', dropIds)
+    if (err) {
+      setStatus(`Merge failed: ${err}`)
+      setTimeout(() => setStatus(null), 8000)
+      return
     }
-    setBusy(false)
-    setStatus(`Merged ${dupGroups.length} duplicate group(s).`)
     load()
-    setTimeout(() => setStatus(null), 4000)
   }
 
   const setE = (id: string, patch: Partial<Edit>) =>
@@ -855,7 +956,7 @@ export function usePlayers(initialFilter?: string) {
     chatNetworks, chatTitles,
     load, regionCounts, regions, dupGroups, nameDupGroups, filtered,
     mergeSelected, toggleHidePlayer, savePlayer, renameRegion,
-    mergeOneGroup, mergeNameGroup, mergeAllDuplicates,
+    mergeOneGroup, mergeNameGroup,
     icePlayer, mergePhoneDuplicates,
   }
 }

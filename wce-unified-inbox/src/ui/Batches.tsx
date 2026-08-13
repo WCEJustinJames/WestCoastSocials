@@ -243,18 +243,21 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
   // Most common home venue among the currently-picked recipients — used to
   // auto-tag the batch when you leave the venue blank, so "last messaged for
   // {venue}" always populates. CRM picks only (inbox picks have no home venue).
+  // id -> row for O(1) lookups; the picker renders 1500+ rows, and linear
+  // .find() inside per-row filters is what made every click block for ~1s.
+  const outreachById = useMemo(() => new Map(outreach.map((o) => [o.id, o])), [outreach])
   const suggestedVenue = useMemo(() => {
     if (source !== 'crm') return ''
     const counts = new Map<string, number>()
     for (const key of picked.keys()) {
-      const o = outreach.find((x) => x.id === key)
+      const o = outreachById.get(key)
       for (const v of o?.venues ?? []) counts.set(v, (counts.get(v) ?? 0) + 1)
     }
     let best = ''
     let n = 0
     for (const [v, c] of counts) if (c > n) { best = v; n = c }
     return best
-  }, [picked, outreach, source])
+  }, [picked, outreachById, source])
   // Venue / weekly-game labels you can tag a batch with: every venue seen on a
   // player plus any venue already used on a previous batch (so recurring weekly
   // games stay pickable even if no current recipient lists them).
@@ -438,7 +441,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
         }
       })
       .filter((r) => {
-        const o = outreach.find((x) => x.id === r.key)!
+        const o = outreachById.get(r.key)!
         if (region !== 'all') {
           const rg = (o.region ?? '').toLowerCase()
           // "All Areas" players always match any region search.
@@ -468,7 +471,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
       ? []
       : buildThreads(true).map((r) => ({ ...r, sub: `${r.sub} · not in CRM` }))
     return [...buildCrm(), ...extras]
-  }, [source, conversations, outreach, network, region, stake, venue, activity, sourceFilter, recipientQuery, channel, cDay, cWindow, failedSms, signals])
+  }, [source, conversations, outreach, outreachById, network, region, stake, venue, activity, sourceFilter, recipientQuery, channel, cDay, cWindow, failedSms, signals])
 
   // When a reused list loads, pick its recipients once they appear for the now-
   // active source — so the picks survive the source switch (multi-source lists).
