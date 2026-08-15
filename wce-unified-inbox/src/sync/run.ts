@@ -33,6 +33,7 @@ import { processOptOuts } from './optout'
 import { publishSocialPosts } from './social'
 import { processKlaviyoPushes } from './klaviyo'
 import { generateSocialPromos } from './socialauto'
+import { extractReceipts } from './receipts'
 
 // Bumped on meaningful deploys so we can see (via the heartbeat) which code the
 // desktop is actually running, and confirm a restart picked up the latest.
@@ -42,7 +43,7 @@ import { generateSocialPromos } from './socialauto'
 // way to tell from the database whether WESTCOAST1 had pulled it — the answer
 // had to come off a terminal someone scrolled back through, twice. A version
 // string that doesn't move is a version string that lies.
-const SYNC_VERSION = 'g50-nightly-sweep'
+const SYNC_VERSION = 'g51-receipts-sweep'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -148,6 +149,11 @@ if (env.googleRefreshTokenWork) {
   console.log('[deep] nightly 7-day TD re-read on (~4am Perth) — picks up money columns filled in after the game')
   console.log(`[email] Gmail inbox pull on (every 10m, ${which})`)
 }
+console.log(
+  env.anthropicKey
+    ? `[receipts] nightly banking-slip sweep on (~4-6am Perth, up to ${process.env.RECEIPTS_SWEEP_LIMIT ?? 60}/run)`
+    : '[receipts] OFF — no ANTHROPIC_API_KEY, banking-slip photos will not reach the CRM',
+)
 console.log(`[autolink] name-match auto-linker on (every ${env.autoLinkMinutes}m)`)
 console.log(
   env.postizKey
@@ -723,6 +729,153 @@ async function deepSweep(): Promise<void> {
   }
 }
 
+// ─── Nightly receipt sweep ───────────────────────────────────────────────────
+//
+// Reads the payout-slip photos out of the "Poker Banking And Cash Chips" Beeper
+// group and files them into inbox_receipts for review.
+//
+// This existed and worked for two months before anything called it. `npm run
+// receipts` was only ever a command someone typed: no task, no cron, not in
+// this loop. Somebody typed it on 7 Jun 2026 and then nobody typed it again,
+// so it sat dead until 13 Aug — 67 days in which every slip photographed in
+// that group stayed in the chat and never reached the CRM. Nothing was broken
+// and nothing raised a hand, because "a human remembers to run this" is not an
+// automation and has no failure signal. That is what this block fixes.
+//
+// The group is also invisible to every other rail: the Beeper bridge mirrors
+// one-to-one chats only, never groups. This sweep is the sole path by which
+// that room's contents reach the database.
+//
+// Same shape as the deep sweep above, for the same reasons: it runs on its own
+// timer OUTSIDE runOnce(), because a batch of vision calls takes minutes and
+// inside the pass it would trip PASS_TIMEOUT_MS and take the 15s message loop
+// down with it.
+const RECEIPTS_SWEEP_ID = 7
+const RECEIPTS_CHECK_MS = 15 * 60_000
+// Perth local hours: cash nights run late, so 4-6am is after the last slip is
+// photographed and well clear of the 3-5am TD deep sweep.
+const RECEIPTS_HOURS = [4, 5, 6]
+const RECEIPTS_DUE_H = 20 // earliest a quiet-hour sweep may repeat
+const RECEIPTS_FORCE_H = 26 // machine was off overnight — sweep on sight
+
+// Per-run ceiling on vision calls. Steady state is ~11 slips a day, so 60 keeps
+// up several times over while still draining a backlog: extractReceipts pages
+// backwards through the WHOLE chat collecting messages it has not already
+// stored, newest first, so successive nights walk further back on their own.
+// The 5 Jun - 30 Jul gap left by the outage above closes over roughly a
+// fortnight of nightly runs without anyone backfilling it by hand.
+// Validated rather than trusted: an empty or malformed RECEIPTS_SWEEP_LIMIT
+// would make this NaN, `todo.length < NaN` is false on the first test, and the
+// sweep would collect nothing, process nothing, and stamp itself green forever.
+const RECEIPTS_LIMIT = (() => {
+  const raw = process.env.RECEIPTS_SWEEP_LIMIT
+  const n = raw === undefined || raw.trim() === '' ? NaN : Number(raw)
+  if (Number.isFinite(n) && n > 0) return Math.floor(n)
+  if (raw !== undefined && raw.trim() !== '') {
+    console.error(`[receipts] ignoring invalid RECEIPTS_SWEEP_LIMIT=${JSON.stringify(raw)} — using 60`)
+  }
+  return 60
+})()
+
+let receiptsSweepRunning = false
+
+/** Same database-not-memory reasoning as deepSweepDue. */
+async function receiptsSweepDue(): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from('inbox_sync_heartbeat')
+    .select('last_run')
+    .eq('id', RECEIPTS_SWEEP_ID)
+    .maybeSingle()
+  if (error) {
+    console.error('[receipts] heartbeat read failed:', error.message)
+    return false
+  }
+  const last = data?.last_run ? new Date(data.last_run).getTime() : 0
+  const hours = (Date.now() - last) / 3_600_000
+  // Never run (last=0) lands here, so the first sweep after this ships goes
+  // immediately rather than waiting for 4am — which is also what stops the
+  // watchdog's "never run" alert from firing on the night of the deploy.
+  if (hours >= RECEIPTS_FORCE_H) return true
+  const perthHour = Number(
+    new Intl.DateTimeFormat('en-AU', {
+      timeZone: 'Australia/Perth',
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).format(new Date()),
+  )
+  return hours >= RECEIPTS_DUE_H && RECEIPTS_HOURS.includes(perthHour)
+}
+
+async function receiptsSweep(): Promise<void> {
+  // No key, no vision calls — and no heartbeat either, so this reads as "never
+  // ran" rather than as a healthy sweep that happened to find nothing.
+  if (receiptsSweepRunning || !anthropic) return
+  if (!(await receiptsSweepDue())) return
+  receiptsSweepRunning = true
+  const started = Date.now()
+  console.log(`[receipts] nightly sweep — up to ${RECEIPTS_LIMIT} unprocessed slip photo(s)`)
+  try {
+    const r = await extractReceipts(
+      supabaseAdmin,
+      beeperClient,
+      anthropic,
+      env.receiptsModel,
+      RECEIPTS_LIMIT,
+    )
+    const secs = Math.round((Date.now() - started) / 1000)
+    console.log(`[receipts] processed=${r.processed} skipped=${r.skipped} errors=${r.errors} in ${secs}s`)
+
+    // What counts as "this sweep worked" is the whole point of the heartbeat,
+    // so it is decided explicitly rather than inferred from "didn't throw".
+    //
+    // Two ways a sweep can do nothing while looking perfectly fine:
+    //
+    //  - The banking group isn't in the 20 most recent group chats (a quiet
+    //    week, or a rename), so extractReceipts never finds it. It used to
+    //    report that as {processed:0, skipped:0}, indistinguishable from a
+    //    genuinely quiet night.
+    //  - Every candidate image failed — Beeper media unreachable, the vision
+    //    API down, the key rotated. A not-a-receipt or a duplicate is inserted
+    //    and counted in `processed`, so `skipped` was already close to an error
+    //    count, but it also absorbs images with no usable srcURL and says so
+    //    only by implication. extractReceipts now returns `errors` outright
+    //    rather than leaving this decision resting on an inference.
+    //
+    // Both leave the clock alone, so id=7 goes stale and the watchdog raises
+    // it. Stamping green here would rebuild the exact silent failure this
+    // sweep was written to end, one level further in.
+    if (!r.chatFound) {
+      console.error(
+        "[receipts] banking group not found — NOT stamping the heartbeat, so the watchdog will raise this. " +
+        'Check the group still exists in Beeper and has recent activity.',
+      )
+      return
+    }
+    if (r.candidates > 0 && r.processed === 0 && r.errors > 0) {
+      console.error(
+        `[receipts] all ${r.candidates} candidate image(s) failed — NOT stamping the heartbeat. ` +
+        'Check Beeper media access and ANTHROPIC_API_KEY.',
+      )
+      return
+    }
+
+    // Stamped even when processed=0 with no errors — that is a real "I ran and
+    // the chat was quiet", and it is the difference the watchdog needs between
+    // a quiet week and a dead scanner.
+    const { error } = await supabaseAdmin.from('inbox_sync_heartbeat').upsert({
+      id: RECEIPTS_SWEEP_ID,
+      last_run: new Date().toISOString(),
+      host: os.hostname(),
+      note: `receipts · ${r.processed} processed / ${r.skipped} skipped / ${r.errors} error(s) in ${secs}s`,
+    })
+    if (error) console.error('[receipts] heartbeat write failed:', error.message)
+  } catch (e) {
+    console.error('[receipts] sweep failed — clock left alone, will retry:', e instanceof Error ? e.message : e)
+  } finally {
+    receiptsSweepRunning = false
+  }
+}
+
 // Hard ceiling on a single pass. A wedged Beeper/Supabase call (e.g. a dropped
 // HTTP/2 session, or a huge first-run mirror backlog) must never stall the loop:
 // if a pass exceeds this, we log and schedule the next one anyway. Approved
@@ -768,6 +921,18 @@ async function main(): Promise<void> {
   // sync and a mirror backlog in its first pass; adding a week of sheets on top
   // of that is how the startup pass ends up fighting itself for Google quota.
   setTimeout(sweepTick, 10 * 60_000)
+
+  // Third loop, independent again. The receipt sweep shares no resource with
+  // the TD sweep — Beeper media and the vision API, not Google quota — so the
+  // two are allowed to overlap rather than queue behind one another.
+  const receiptsTick = (): void => {
+    receiptsSweep()
+      .catch((e) => console.error('[receipts] error:', e instanceof Error ? e.message : e))
+      .finally(() => setTimeout(receiptsTick, RECEIPTS_CHECK_MS))
+  }
+  // Offset from the TD sweep's first check so a cold start doesn't kick both
+  // long jobs off in the same minute.
+  setTimeout(receiptsTick, 13 * 60_000)
 }
 
 main().catch((err) => {

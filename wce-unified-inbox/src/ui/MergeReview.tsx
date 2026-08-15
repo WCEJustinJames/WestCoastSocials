@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { usePlayers, mergeRows, phoneCore, normCore, sourceLabel, type PlayerRow as Row } from './usePlayers'
+import { usePlayers, mergeRows, phoneCore, normCore, sourceLabel, phoneStatus, phoneStatusLabel, type PlayerRow as Row } from './usePlayers'
 import { PlayerCard } from './PlayerRow'
 
 const accent700 = { color: 'var(--color-accent-700)' }
@@ -24,6 +24,16 @@ export function MergeReview() {
   const phoneGroups = p.dupGroups.slice(0, 50).filter((g) => !dismissed.has('ph:' + phoneCore(g[0].phone)))
   const nameGroups = p.nameDupGroups.slice(0, 40).filter((g) => !dismissed.has('nm:' + normCore(g[0].player_name ?? '')))
 
+  /** Why a candidate's number should not be the one kept: malformed, or its
+   * last SMS failed. Only meaningful where the records differ by number —
+   * a phone group shares one number, so the warning is name-group only. */
+  const numberWarning = (r: Row): string => {
+    if (!r.phone) return ''
+    const st = phoneStatus(r.phone)
+    if (st !== 'ok' && st !== 'empty') return phoneStatusLabel[st]
+    return p.failedSends.has(r.id) ? 'last SMS failed' : ''
+  }
+
   /** One suggested-duplicate row: the candidate names (radio picks the keeper),
    * the match basis as a tag, the reason line, then merge / not-the-same. */
   const groupRow = (
@@ -34,12 +44,15 @@ export function MergeReview() {
     radioName: string,
     onMerge: () => void,
     dismissKey: string,
+    warnNumbers = false,
   ) => {
     const chosen = p.groupKeeper[key] ?? mergeRows(g).primary.id
     return (
       <li key={dismissKey} className="row py-4">
         <div className="flex flex-wrap items-baseline gap-2.5">
-          {g.map((r, i) => (
+          {g.map((r, i) => {
+            const warn = warnNumbers ? numberWarning(r) : ''
+            return (
             <span key={r.id} className="flex items-baseline gap-2.5">
               {i > 0 && <span className="text-xs" style={accent700}>↔</span>}
               <label className="flex cursor-pointer items-center gap-1.5 text-sm font-semibold" title="Keep this record's name / values">
@@ -51,9 +64,15 @@ export function MergeReview() {
                   onChange={() => p.setGroupKeeper((prev) => ({ ...prev, [key]: r.id }))}
                 />
                 {r.player_name ?? '(no name)'}
+                {warn && (
+                  <span className="tag tag-accent" title={`${warn} — don't keep this number`}>
+                    {warn}
+                  </span>
+                )}
               </label>
             </span>
-          ))}
+            )
+          })}
           <span className="tag tag-accent tag-net">{basis}</span>
         </div>
         <p className="m-0 mt-1 text-xs muted tnum">{reason}</p>
@@ -95,8 +114,16 @@ export function MergeReview() {
         </div>
         {p.dupGroups.length > 0 && (
           <div className="mt-2.5">
-            <button onClick={() => void p.mergeAllDuplicates()} disabled={p.busy} className="btn btn-secondary !text-xs">
-              Merge all phone duplicates (auto-pick the most complete name)
+            <p className="m-0 mb-2 text-xs muted">
+              The picked record&apos;s name and number win; everything else — flags, venues, stakes, lists — is combined.
+            </p>
+            <button
+              onClick={() => void p.mergePhoneDuplicates()}
+              disabled={p.busy}
+              title="Merges only the groups whose names clearly agree (nicknames, initials and one-letter typos count as agreeing); clashing names stay here for manual review"
+              className="btn btn-secondary !text-xs"
+            >
+              Auto-merge the compatible groups
             </button>
           </div>
         )}
@@ -119,10 +146,11 @@ export function MergeReview() {
               g,
               key,
               'same name',
-              `Same cleaned name, different or missing phone — ${g.map((r) => r.phone ?? 'no phone').join(' / ')}. Check they're really the same person.`,
+              `Same cleaned name, different or missing phone — ${g.map((r) => r.phone ?? 'no phone').join(' / ')}. Check they're really the same person, and keep the record whose number is right.`,
               `name-${key}`,
               () => void p.mergeNameGroup(g),
               'nm:' + key,
+              true,
             )
           })}
           {phoneGroups.length === 0 && nameGroups.length === 0 && (

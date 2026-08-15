@@ -27,8 +27,16 @@ const anthropic = new Anthropic({ apiKey: env.anthropicKey })
 
 extractReceipts(supabaseAdmin, beeper, anthropic, env.receiptsModel, limit)
   .then((r) => {
-    console.log(`\n[receipts] done — processed=${r.processed} skipped=${r.skipped}`)
-    process.exit(0)
+    // "done — processed=0 skipped=0" is what a missing banking group used to
+    // look like from here, which reads as "nothing to do" and exits 0. Say what
+    // actually happened and fail the exit code, so a scripted or scheduled
+    // caller can tell the difference.
+    if (!r.chatFound) {
+      console.error('\n[receipts] FAILED — banking group not found in the 20 most recent group chats.')
+      process.exit(1)
+    }
+    console.log(`\n[receipts] done — processed=${r.processed} skipped=${r.skipped} errors=${r.errors}`)
+    process.exit(r.candidates > 0 && r.processed === 0 && r.errors > 0 ? 1 : 0)
   })
   .catch((err) => {
     console.error(err)

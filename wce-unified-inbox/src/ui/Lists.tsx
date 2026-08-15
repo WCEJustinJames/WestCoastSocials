@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useVenues } from './useVenues'
 import type { Database } from '../types/database'
@@ -142,8 +142,12 @@ export function Lists({ onStartBatch }: { onStartBatch: (listId: string | null) 
     await loadMembers(selId)
   }
 
+  // Monotonic ticket so a slow early query can never overwrite the results of a
+  // later keystroke (type-fast races showed stale hit lists).
+  const searchSeq = useRef(0)
   async function searchPlayers(text: string) {
     setQ(text)
+    const seq = ++searchSeq.current
     if (text.trim().length < 2) return setHits([])
     const have = new Set(members.map((m) => m.outreach_id))
     const { data } = await supabase
@@ -153,11 +157,18 @@ export function Lists({ onStartBatch }: { onStartBatch: (listId: string | null) 
       .eq('hidden', false)
       .order('player_name')
       .limit(20)
+    if (seq !== searchSeq.current) return // superseded by a newer keystroke
     setHits(((data as { id: string; player_name: string | null; phone: string | null }[]) ?? []).filter((h) => !have.has(h.id)))
   }
   async function addMember(id: string) {
     if (!selId) return
-    await supabase.from('inbox_list_members').insert({ list_id: selId, outreach_id: id, added_by: 'manual' })
+    // Upsert with ignore-duplicates: a double-click or a race with auto-seed
+    // must not error out (membership PK is list_id+outreach_id).
+    const { error } = await supabase.from('inbox_list_members').upsert(
+      { list_id: selId, outreach_id: id, added_by: 'manual' },
+      { onConflict: 'list_id,outreach_id', ignoreDuplicates: true },
+    )
+    if (error) return flash(`Error: ${error.message}`)
     setQ(''); setHits([])
     await loadMembers(selId)
     await load()
