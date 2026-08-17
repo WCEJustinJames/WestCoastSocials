@@ -90,19 +90,46 @@ export async function extractReceipts(
   limit: number,
   chatNeedle = 'banking',
 ): Promise<ReceiptResult> {
-  const groups = await beeper.searchMessages({ chatType: 'group', limit: 20 })
-  const chat = Object.values(groups.chats ?? {}).find((c) =>
-    (c.title ?? '').toLowerCase().includes(chatNeedle),
-  )
-  if (!chat) {
+  // Finding the group used to be a single searchMessages({chatType:'group',
+  // limit:20}) call, which the client clamps to 20 — so it saw only the chats
+  // behind the 20 most recent group messages across ALL groups. That made the
+  // sweep depend on the banking group being among the most recently active, and
+  // on 17 Aug 2026 it stopped being so: its last slip was 13 Aug, four days of
+  // other group traffic buried it, and every run from 15 Aug onwards logged
+  // "no group chat matching banking".
+  //
+  // Two lookups now, in order of authority:
+  //
+  //   1. resolveGroupChatId pages ten deep rather than one. It is the resolver
+  //      already used elsewhere for exactly this lookup, and it stays FIRST so
+  //      a renamed or re-created group is still found by title.
+  //   2. Failing that, the chat id already stored. Every row in inbox_receipts
+  //      carries chat_id, so once the group has been seen even once, finding it
+  //      again never depends on recent activity at all.
+  //
+  // Only when both come up empty is the group genuinely unreachable.
+  let chatId = await beeper.resolveGroupChatId(chatNeedle)
+  if (!chatId) {
+    const { data: known } = await db
+      .from('inbox_receipts')
+      .select('chat_id')
+      .not('chat_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+    chatId = known?.[0]?.chat_id ?? null
+    if (chatId) {
+      console.warn(
+        `[receipts] "${chatNeedle}" not in recent group activity — using the last known chat id instead`,
+      )
+    }
+  }
+  if (!chatId) {
     // Reported as chatFound:false rather than as an empty-but-successful run.
     // A caller that stamps a health signal off {processed:0, skipped:0} would
     // otherwise read this as "swept, nothing to do" and go green forever while
     // nothing reaches the CRM — the exact silent failure the nightly sweep and
-    // its watchdog check exist to end. This is a live failure mode, not a
-    // theoretical one: the lookup only scans the 20 most recent group chats,
-    // so a quiet week or a rename drops the banking group out of range.
-    console.error(`[receipts] no group chat matching "${chatNeedle}" in recent results`)
+    // its watchdog check exist to end.
+    console.error(`[receipts] no group chat matching "${chatNeedle}", and no stored chat id to fall back on`)
     return { processed: 0, skipped: 0, chatFound: false, candidates: 0, errors: 0 }
   }
 
@@ -114,7 +141,7 @@ export async function extractReceipts(
   let cursor: string | undefined
   for (let page = 0; page < 600 && todo.length < limit; page++) {
     const res = await beeper.searchMessages({
-      chatIDs: [chat.id],
+      chatIDs: [chatId],
       limit: 20,
       cursor,
       direction: 'before',
@@ -232,7 +259,7 @@ export async function extractReceipts(
       const { error } = await db.from('inbox_receipts').insert({
         review_status: reviewStatus,
         external_message_id: m.id,
-        chat_id: chat.id,
+        chat_id: chatId,
         captured_at: m.timestamp,
         image_file: src,
         receipt_date: x?.date ?? null,
