@@ -43,7 +43,7 @@ import { extractReceipts } from './receipts'
 // way to tell from the database whether WESTCOAST1 had pulled it — the answer
 // had to come off a terminal someone scrolled back through, twice. A version
 // string that doesn't move is a version string that lies.
-const SYNC_VERSION = 'g51-receipts-sweep'
+const SYNC_VERSION = 'g52-receipts-chat-lookup'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
