@@ -43,7 +43,7 @@ import { extractReceipts } from './receipts'
 // way to tell from the database whether WESTCOAST1 had pulled it — the answer
 // had to come off a terminal someone scrolled back through, twice. A version
 // string that doesn't move is a version string that lies.
-const SYNC_VERSION = 'g52-receipts-chat-lookup'
+const SYNC_VERSION = 'g53-token-watch'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -405,6 +405,15 @@ async function runOnce(): Promise<void> {
         1,
       )
       if (gc.created) console.log(`[contacts] ${gc.created} new contact(s) imported (${gc.autoHidden} auto-hidden as non-person, ${gc.scanned} changed)`)
+      // Stamped only on success, like every other beat. On 18 Aug 2026 this
+      // rail had been failing with invalid_grant (an expired refresh token,
+      // which only a re-auth fixes) for who knows how long, and the only
+      // record was a console line in a window nobody scrolls. The watchdog
+      // reads this beat, so a token that dies now raises an email instead.
+      const { error: hb8Err } = await supabaseAdmin
+        .from('inbox_sync_heartbeat')
+        .upsert({ id: 8, last_run: new Date().toISOString(), host: os.hostname(), note: `contacts · ${gc.created} imported / ${gc.scanned} changed` })
+      if (hb8Err) console.error('[contacts] heartbeat write failed:', hb8Err.message)
     } catch (e) {
       console.error('[contacts] sync error:', e instanceof Error ? e.message : e)
     }
