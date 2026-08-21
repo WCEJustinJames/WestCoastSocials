@@ -68,6 +68,69 @@ type OutreachRow = {
   staff: boolean
 }
 
+/* ---- permit gate -------------------------------------------------------
+   Compliance: automated outreach for a game may only go out if that game's
+   venue and month sit under an active DLGSC permit. WCE's protection is the
+   evidence, so the bar here is an APPROVED (not rejected/withdrawn), PAID
+   permit that covers the game type. No permit => no draft. Fail closed. */
+
+type PermitRow = {
+  venue_name: string | null
+  games: string[] | null
+  outcome: string | null
+  paid_at: string | null
+  permit_no: string | null
+}
+
+/** Normalise a venue to a comparable key: lowercase, letters+digits only. */
+function venueKey(s: string | null): string {
+  return (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+/** A schedule's short venue ("Woodvale") vs a permit's full name ("The Woodvale
+ *  Tavern") — one contains the other once both are reduced to a key. */
+function venueMatches(scheduleVenue: string | null, permitVenue: string | null): boolean {
+  const a = venueKey(scheduleVenue)
+  const b = venueKey(permitVenue)
+  if (a.length < 3 || b.length < 3) return false
+  return a.includes(b) || b.includes(a)
+}
+
+/** Map a schedule's free-text game type to the permit's game classes. */
+function gameClass(gt: string | null): 'cash' | 'tournament' | null {
+  const g = (gt ?? '').toLowerCase()
+  if (/\bcash\b|\$|\d\s*\/\s*\d/.test(g)) return 'cash'
+  if (/tourn|\bmtt\b|freeze\s*out|bounty|deep\s*stack/.test(g)) return 'tournament'
+  return null
+}
+
+/**
+ * Find an active, paid permit covering this venue + game date + game type.
+ * Returns the permit (for the audit log) or null when the game isn't permitted.
+ * wcp_permits isn't in the worker's generated types, so the query is cast.
+ */
+async function activePermitFor(
+  db: DB, venue: string | null, gameDate: string, gameType: string | null,
+): Promise<PermitRow | null> {
+  const month = `${gameDate.slice(0, 7)}-01` // first of the game's month, YYYY-MM-01
+  const q = db as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => Promise<{ data: PermitRow[] | null; error: unknown }>
+      }
+    }
+  }
+  const { data } = await q.from('wcp_permits').select('venue_name, games, outcome, paid_at, permit_no').eq('permit_month', month)
+  const rows = data ?? []
+  const cls = gameClass(gameType)
+  return rows.find((r) =>
+    r.outcome == null &&           // not rejected / withdrawn
+    r.paid_at != null &&           // fully evidenced (application + receipt filed)
+    venueMatches(venue, r.venue_name) &&
+    (cls == null || (r.games ?? []).includes(cls)),
+  ) ?? null
+}
+
 function displayNames(r: OutreachRow): { name: string; first: string; nickname: string } {
   const name = (r.player_name ?? '').trim() || (r.nickname ?? '').trim() || (r.first_name ?? '').trim() || 'there'
   const first = (r.first_name ?? '').trim() || (name.split(' ')[0] ?? name).trim()
@@ -78,7 +141,7 @@ function displayNames(r: OutreachRow): { name: string; first: string; nickname: 
 export async function generateScheduledBatches(db: DB, now: Date = new Date()): Promise<ScheduledBatchResult> {
   const { data: scheds, error } = await db
     .from('inbox_schedules')
-    .select('id, name, venue, template_body, day_of_week, list_id, lead_days, last_materialised_for, active')
+    .select('id, name, venue, game_type, template_body, day_of_week, list_id, lead_days, last_materialised_for, active')
     .eq('active', true)
   if (error) throw error
 
@@ -99,6 +162,15 @@ export async function generateScheduledBatches(db: DB, now: Date = new Date()): 
     const { data: dupe } = await db.from('inbox_batches').select('id').eq('name', batchName).limit(1)
     if (dupe && dupe.length > 0) {
       await db.from('inbox_schedules').update({ last_materialised_for: gameDate }).eq('id', s.id)
+      continue
+    }
+
+    // COMPLIANCE GATE: no automated outreach for a game that isn't permitted.
+    // Deliberately NOT stamped as materialised — if the permit is filed later,
+    // the next pass picks it up and drafts, still inside the lead window.
+    const permit = await activePermitFor(db, s.venue, gameDate, s.game_type)
+    if (!permit) {
+      console.log(`[schedules] no active paid permit for "${s.venue ?? '(no venue)'}" ${gameDate.slice(0, 7)} — not drafting "${s.name}"`)
       continue
     }
 
@@ -189,7 +261,7 @@ export async function generateScheduledBatches(db: DB, now: Date = new Date()): 
     await db.from('inbox_schedules').update({ last_materialised_for: gameDate }).eq('id', s.id)
     created++
     schedules++
-    console.log(`[schedules] drafted "${batchName}" — ${withBatch.length} recipient(s)`)
+    console.log(`[schedules] drafted "${batchName}" — ${withBatch.length} recipient(s), under permit ${permit.permit_no ?? '(no number)'}`)
   }
 
   return { created, schedules }
