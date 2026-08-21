@@ -18,6 +18,7 @@ import { processOutbox } from './outbox'
 import { processBatches } from './batches'
 import { generateDrafts } from './drafting'
 import { generateInviteVariants } from './variants'
+import { generateScheduledBatches } from './schedules'
 import { syncOutreach } from './outreach'
 import { syncGoogleContacts } from './contacts'
 import { syncGmail } from './email'
@@ -187,6 +188,9 @@ let lastAutoLink = 0
 let lastFbMatch = 0
 // Invite-variant generation runs on a slow (~hourly) cadence.
 let lastVariants = 0
+// Weekly schedule auto-drafting runs every ~10 minutes (cheap, and only builds
+// when a schedule is inside its lead window and not yet materialised).
+let lastSchedules = 0
 // Gmail action-queue pull runs every ~10 minutes.
 let lastEmailSync = 0
 // Social publishing + Klaviyo blast prep check every ~2 minutes (both are a
@@ -576,6 +580,20 @@ async function runOnce(): Promise<void> {
       if (v.generated) console.log(`[variants] generated ${v.generated} invite(s) across ${v.venues} venue(s)`)
     } catch (e) {
       console.error('[variants] error:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Weekly schedule auto-drafting: turn each due schedule rule into a DRAFT batch
+  // built from its standing list. Runs regardless of quiet hours / kill-switch —
+  // it only writes drafts (status 'draft', items 'pending'), which the send rail
+  // never touches; a human still approves before anything sends.
+  if (Date.now() - lastSchedules > 10 * 60_000) {
+    lastSchedules = Date.now()
+    try {
+      const sc = await generateScheduledBatches(supabaseAdmin)
+      if (sc.created) console.log(`[schedules] drafted ${sc.created} batch(es) from ${sc.schedules} schedule(s)`)
+    } catch (e) {
+      console.error('[schedules] error:', e instanceof Error ? e.message : e)
     }
   }
 
