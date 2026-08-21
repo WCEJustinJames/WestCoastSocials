@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import type { ChannelAdapter } from '../adapters/types'
+import { guardSend } from './guards'
 
 type DB = SupabaseClient<Database>
 
@@ -40,6 +41,22 @@ export async function processOutbox(db: DB, adapter: ChannelAdapter): Promise<Ou
     if (!conv || conv.adapter !== adapter.id || !adapter.sendMessage) {
       await db.from('inbox_drafts').update({ status: 'pending' }).eq('id', d.id)
       failed++
+      continue
+    }
+
+    // Send-time guard on the reply rail (defense in depth): a reply resolves its
+    // recipient via the conversation and is blocked if they are banned / opted
+    // out (do_not_message) or the body is empty / half-rendered. Blocked replies
+    // are rejected (terminal), never retried. isOutreach=false, so the staff /
+    // no-reply / on-ice outreach checks don't gate a genuine reply.
+    const verdict = await guardSend(db, {
+      renderedText: d.content,
+      isOutreach: false,
+      conversationId: d.conversation_id,
+    })
+    if (!verdict.ok) {
+      await db.from('inbox_drafts').update({ status: 'rejected' }).eq('id', d.id)
+      console.log(`[outbox] blocked reply draft ${d.id}: ${verdict.reason}`)
       continue
     }
 
