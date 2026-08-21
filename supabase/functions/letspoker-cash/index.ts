@@ -6,12 +6,12 @@
 //
 // Modes (request body { "mode": ... }):
 //   - "prefill" -> prefill upcoming rosters from the same weekly game last week.
-//   - "open"    -> open the plan's tables_spec via AddTable. dryRun supported.
-//                  Creates the day's cash container (createTournament with an
-//                  empty name — the shape every existing cash day has) when it
-//                  doesn't exist yet, and derives an empty tables_spec from the
-//                  same weekly game's most recent run — the prefill only fills
-//                  rosters, so without these nothing ever auto-opened.
+//   - "open"    -> open the plan's tables_spec via AddTable into the day's
+//                  EXISTING cash container. dryRun supported. Never creates the
+//                  container itself (see the note by resolveCashDay) — staff
+//                  open the day, automation only fills it. Derives an empty
+//                  tables_spec from the same weekly game's most recent run,
+//                  since the prefill fills rosters only.
 //   - "seat"    -> Register -> Seat (-> AddCashBuyin) the plan's roster names
 //                  into free seats on the day's cash tables. dryRun DEFAULT true.
 //   - "push"    -> sendCashPushNotification per open table. dryRun DEFAULT true.
@@ -35,14 +35,6 @@ const ENDPOINT = "https://wcp.admin.lets.poker/api/graphql?ngsw-bypass=true";
 const CREATE_LOG = `mutation createTournamentLogItem($data: CreateTournamentLogInput!, $tournamentId: ID!, $clubId: ID!) {
   createTournamentLogItem(data: $data, tournamentId: $tournamentId, clubId: $clubId) {
     id parentLogId playerId eventType __typename
-  }
-}`;
-
-// Creating the day's cash container: it's a tournament with an EMPTY name at
-// Perth midnight — the exact shape every existing cash day has in getEventList.
-const CREATE_TOURNAMENT = `mutation createTournament($clubId: ID!, $name: String!, $scheduledDate: DateTime!) {
-  createTournament(clubId: $clubId, name: $name, scheduledDate: $scheduledDate) {
-    id
   }
 }`;
 
@@ -244,31 +236,46 @@ function json(body: unknown, status = 200): Response {
 /* --------------------------- cash event + log ------------------------ */
 
 // The day's cash container: the getEventList entry with an empty eventName whose
-// Perth date matches. Returns its id (used as tournamentId everywhere).
-async function resolveCashEventId(cookie: string, sgid: string, clubId: string, date: string): Promise<string | null> {
+// Perth date matches.
+//
+// Three outcomes, deliberately distinguished — collapsing them is what let the
+// 2026-08-19/20 duplicate days happen:
+//   { id }                  exactly one cash day  -> operate on it
+//   { id: null }            none yet              -> staff haven't opened the day
+//   { id: null, failed }    lookup errored        -> unknown, never assume "none"
+//   { id: null, ambiguous } more than one         -> refuse to guess which is live
+// A `find()` over several matches picks an arbitrary one, so auto-seating could
+// land in a container nobody is playing in while the push targeted the other.
+type CashDay = { id: string | null; failed: boolean; ambiguous: string[] | null };
+
+async function resolveCashDay(cookie: string, sgid: string, clubId: string, date: string): Promise<CashDay> {
   const start = new Date(new Date(date + "T00:00:00+08:00").getTime() - 36 * 3600 * 1000).toISOString();
   const end = new Date(new Date(date + "T00:00:00+08:00").getTime() + 36 * 3600 * 1000).toISOString();
   const r = await gql(cookie, sgid, "getList", LIST_QUERY, { clubId, startDate: start, endDate: end, includeCash: true });
-  if (!r.ok) return null;
+  if (!r.ok) return { id: null, failed: true, ambiguous: null };
   const events = (firstData(r.text)?.events ?? []) as any[];
-  const match = events.find((e) =>
+  const matches = events.filter((e) =>
     e?.id && e?.scheduledDate &&
     String(e?.config?.general?.eventName ?? "").trim() === "" &&
     perthDateOf(e.scheduledDate) === date);
-  return match?.id ?? null;
+  if (matches.length > 1) return { id: null, failed: false, ambiguous: matches.map((e) => String(e.id)) };
+  return { id: matches[0]?.id ? String(matches[0].id) : null, failed: false, ambiguous: null };
 }
 
-// Create the day's cash container: a tournament with an EMPTY name scheduled at
-// Perth midnight of the date — identical to how existing cash days look.
-async function createCashDay(cookie: string, sgid: string, clubId: string, date: string):
-  Promise<{ eventId: string | null; error: string | null }> {
-  const scheduledDate = new Date(date + "T00:00:00+08:00").toISOString();
-  const r = await gql(cookie, sgid, "createTournament", CREATE_TOURNAMENT, { clubId, name: "", scheduledDate });
-  const id = firstData(r.text)?.createTournament?.id ?? null;
-  await logCash({ source: "open", op: "create-day", ref: date, http_status: r.status, ok: r.ok && !!id, detail: `createTournament(name:\"\", ${scheduledDate}) -> ${id ?? (r.error ?? r.text.slice(0, 120))}` });
-  if (r.ok && id) return { eventId: String(id), error: null };
-  return { eventId: null, error: r.error ?? `status ${r.status}` };
+/** Back-compat shim for the read-only paths that only need "the" id. */
+async function resolveCashEventId(cookie: string, sgid: string, clubId: string, date: string): Promise<string | null> {
+  return (await resolveCashDay(cookie, sgid, clubId, date)).id;
 }
+
+// NOTE: this function deliberately does NOT create cash days.
+//
+// It used to: when no empty-name container existed for the date, `open` called
+// createTournament(name:"") and made one. That produced duplicate cash days —
+// on 2026-08-19 and 2026-08-20 the automation created its own container at
+// 10:00, opened tables and seated players into it, while the day staff actually
+// ran was a different container. The seatings were real registrations against a
+// game nobody was playing. Opening the day is a staff decision (it is tied to
+// the venue's permit); automation only fills a day that already exists.
 
 async function getCashLog(cookie: string, sgid: string, clubId: string, eventId: string): Promise<any[]> {
   const r = await gql(cookie, sgid, "getTournamentLog", LOG_QUERY, { tournamentId: eventId, clubId, dateAfter: 0 });
@@ -388,9 +395,9 @@ async function releaseDayUser(playDate: string, playerKey: string) {
 }
 
 /* -------------------------------- open ------------------------------- */
-// Open the day's cash tables via AddTable. Creates the day's cash container
-// (createTournament, empty name) when it doesn't exist, and derives an empty
-// tables_spec from the same weekly game's last run (persisted for audit).
+// Open the day's cash tables via AddTable into the day's existing cash
+// container — never creates one — and derives an empty tables_spec from the
+// same weekly game's last run (persisted for audit).
 // Idempotent: skips whenever the day already has live tables, so the 20-minute
 // tick can never double-open. Auto-starts the day if no one has.
 async function runOpen(cookie: string, sgid: string, clubId: string, opts: { planId?: string; date?: string; dryRun: boolean; start?: boolean }): Promise<Response> {
@@ -398,24 +405,32 @@ async function runOpen(cookie: string, sgid: string, clubId: string, opts: { pla
   if (!plans.length) return json({ ok: true, skipped: true, reason: "no matching cash_plan rows" });
   const results: unknown[] = [];
   for (const p of plans) {
-    let eventId = await resolveCashEventId(cookie, sgid, clubId, p.event_date);
+    const day = await resolveCashDay(cookie, sgid, clubId, p.event_date);
 
+    // More than one cash day on the date: acting would be a coin flip between
+    // them, so do nothing and let a human say which is live.
+    if (day.ambiguous) {
+      await logCash({ source: "open", op: "open", ref: p.id, http_status: null, ok: false, detail: `ambiguous: ${day.ambiguous.length} cash days for ${p.event_date} (${day.ambiguous.join(", ")})` });
+      await alertJustin("LetsPoker cash: duplicate cash days", `${p.event_date} has ${day.ambiguous.length} cash containers (${day.ambiguous.join(", ")}). Automation skipped the day — remove the spare in LetsPoker.`);
+      results.push({ planId: p.id, skipped: true, reason: "ambiguous — multiple cash days for date", candidates: day.ambiguous });
+      continue;
+    }
+    // Lookup failed (network/auth). "Unknown" is not "none" — never act on it.
+    if (day.failed) {
+      results.push({ planId: p.id, skipped: true, reason: "cash day lookup failed — retrying next tick" });
+      continue;
+    }
+
+    const eventId = day.id;
     if (!eventId && opts.dryRun) {
-      const d0 = await deriveTablesSpec(cookie, sgid, clubId, p.event_date);
-      const specs0 = Array.isArray(p.tables_spec) && p.tables_spec.length ? p.tables_spec : (d0?.specs ?? []);
-      results.push({ planId: p.id, dryRun: true, wouldCreateDay: true, wouldStart: true, derivedFrom: d0?.sourceDate ?? null, wouldAddTables: specs0 });
+      results.push({ planId: p.id, dryRun: true, skipped: true, reason: "no cash day open yet for date" });
       continue;
     }
     if (!eventId) {
-      // No cash container for the date — create it (empty-name tournament at
-      // Perth midnight, the shape every existing cash day has).
-      const made = await createCashDay(cookie, sgid, clubId, p.event_date);
-      eventId = made.eventId ?? await resolveCashEventId(cookie, sgid, clubId, p.event_date);
-      if (!eventId) {
-        await alertJustin("LetsPoker cash open failed", `No cash day for ${p.event_date} and createTournament failed: ${made.error}`);
-        results.push({ planId: p.id, skipped: true, reason: `no cash event for date (create failed: ${made.error})` });
-        continue;
-      }
+      // Staff haven't opened the day yet. Not an error — the tick retries every
+      // 20 min, and opening is tied to the venue's permit, so it is their call.
+      results.push({ planId: p.id, skipped: true, reason: "no cash day open yet — waiting for staff to open it" });
+      continue;
     }
 
     // Never double-open: if the day already has live tables (auto OR staff-made),
