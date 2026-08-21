@@ -166,6 +166,10 @@ export async function processBatches(
         renderedText: item.rendered_text,
         isOutreach: batch.is_outreach === true,
         outreachId: data?.outreach_id,
+        // No outreach_id (thread/Inbox-sourced item)? Let the guard resolve the
+        // person via their chat so the ban / opt-out check still runs.
+        beeperChatId: data?.beeper_chat_id,
+        conversationId: data?.conversation_id,
       })
       if (!verdict.ok) {
         await db

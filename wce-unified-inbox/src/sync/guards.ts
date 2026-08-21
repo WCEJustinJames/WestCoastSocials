@@ -24,6 +24,7 @@ export function checkRendered(text: string | null | undefined): GuardVerdict {
 }
 
 type OutreachGuardRow = {
+  id: string
   do_not_message: boolean | null
   hidden: boolean | null
   staff: boolean | null
@@ -45,12 +46,20 @@ type OutreachGuardRow = {
  */
 export async function guardSend(
   db: DB,
-  args: { renderedText: string | null | undefined; isOutreach: boolean; outreachId?: string | null },
+  args: {
+    renderedText: string | null | undefined
+    isOutreach: boolean
+    outreachId?: string | null
+    // For items with no CRM id (thread- or Inbox-sourced sends): the recipient's
+    // chat, so the per-player flags are still resolved and re-checked. Without
+    // this, a ban / STOP / on-ice set on that person's CRM row is bypassed on the
+    // no-outreach_id path — the send-guard hole this closes.
+    beeperChatId?: string | null
+    conversationId?: string | null
+  },
 ): Promise<GuardVerdict> {
   const text = checkRendered(args.renderedText)
   if (!text.ok) return text
-
-  if (!args.outreachId) return { ok: true } // no CRM row to check (ad-hoc send)
 
   // Cast: some flags (staff/weekly) post-date the generated Database types.
   const q = db as unknown as {
@@ -62,15 +71,40 @@ export async function guardSend(
       }
     }
   }
-  const { data: row } = await q
-    .from('inbox_outreach')
-    .select('do_not_message, hidden, staff, last_contacted, contact_frequency_days, beeper_chat_id, snooze_until')
-    .eq('id', args.outreachId)
-    .maybeSingle()
-  // The item names a CRM row that no longer exists (deleted by a merge after the
-  // batch was approved). Sending blind would bypass EVERY per-player guard — the
-  // ban/hidden/staff flags live on the row we can't find — so skip, never send.
-  if (!row) return { ok: false, reason: 'crm_row_missing' }
+  const SEL = 'id, do_not_message, hidden, staff, last_contacted, contact_frequency_days, beeper_chat_id, snooze_until'
+
+  // Resolve the recipient's CRM row so every per-player flag is re-checked at
+  // send time regardless of how the item was queued. A CRM/list send carries an
+  // outreach_id; a thread- or Inbox-sourced send does not, so fall back to the
+  // linked chat — otherwise that path skips the ban / opt-out check entirely.
+  let row: OutreachGuardRow | null = null
+  let byId = false
+  if (args.outreachId) {
+    byId = true
+    row = (await q.from('inbox_outreach').select(SEL).eq('id', args.outreachId).maybeSingle()).data
+  } else {
+    let chat = args.beeperChatId ?? null
+    if (!chat && args.conversationId) {
+      const { data: conv } = await db
+        .from('inbox_conversations')
+        .select('external_chat_id')
+        .eq('id', args.conversationId)
+        .maybeSingle()
+      chat = conv?.external_chat_id ?? null
+    }
+    if (chat) {
+      row = (await q.from('inbox_outreach').select(SEL).eq('beeper_chat_id', chat).maybeSingle()).data
+    }
+  }
+
+  // An item that named a CRM id whose row is gone (merged/deleted after the batch
+  // was approved) must never send — the ban/hidden/staff flags live on the row we
+  // can't find, so sending blind would bypass every per-player guard.
+  if (byId && !row) return { ok: false, reason: 'crm_row_missing' }
+  // Genuinely no CRM record for this recipient (an ad-hoc manual number with no
+  // linked thread): there is nothing to check against, so allow the send.
+  if (!row) return { ok: true }
+  const resolvedId = row.id
 
   if (row.do_not_message) return { ok: false, reason: 'do_not_message' }
   if (row.hidden) return { ok: false, reason: 'hidden' }
@@ -129,7 +163,7 @@ export async function guardSend(
     const { count } = await ledger
       .from('inbox_sent_log')
       .select('id', { count: 'exact', head: true })
-      .eq('outreach_id', args.outreachId)
+      .eq('outreach_id', resolvedId)
       .gt('sent_at', lastReply)
     if ((count ?? 0) >= NO_REPLY_LIMIT) {
       return { ok: false, reason: `no_reply_${NO_REPLY_LIMIT}` }
