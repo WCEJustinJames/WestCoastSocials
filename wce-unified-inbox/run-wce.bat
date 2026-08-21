@@ -1,7 +1,11 @@
 @echo off
 REM WCE Unified Inbox - keep the sync running, auto-update, auto-restart.
 REM Double-click this file (or add a shortcut to it in your Startup folder).
-title WCE Unified Inbox - sync
+REM PURPLE window = the SYNC backend (this one). It is what sends the messages.
+REM DO NOT CLOSE it unless you actually want sending to stop. The blue "UI"
+REM window (run-ui.bat) is the dashboard and is always safe to close.
+color 5F
+title  *** WCE SYNC - DO NOT CLOSE (player messaging backend) ***
 cd /d "%~dp0"
 
 :loop
