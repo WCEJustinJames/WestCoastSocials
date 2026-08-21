@@ -1,0 +1,374 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '../types/database'
+import type { ChannelAdapter } from '../adapters/types'
+import { env } from '../lib/env'
+import { guardSend } from './guards'
+import { setSmsBridge } from './settings'
+import { textHash, alreadySent, recordSent } from './ledger'
+
+type DB = SupabaseClient<Database>
+
+export interface BatchResult {
+  sent: number
+  failed: number
+}
+
+// Beeper warns that sending volume can get accounts suspended, so batches are
+// paced: a delay between every send and a hard cap per sync pass. A large batch
+// drains across multiple passes rather than firing all at once.
+const SEND_DELAY_MS = 1500
+const MAX_PER_PASS = 20
+// A thread with activity this recent is a LIVE conversation — a blast must not
+// land in the middle of it (the invite-mid-chat incident).
+const ACTIVE_CONVO_MS = 60 * 60_000
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** Normalise an Australian mobile to +E.164 (Beeper/gmessages wants +61…). */
+export function normalizeAuMobile(raw: string): string | null {
+  const d = raw.replace(/[^\d+]/g, '')
+  if (/^\+61\d{9}$/.test(d)) return d
+  if (/^61\d{9}$/.test(d)) return '+' + d
+  if (/^0\d{9}$/.test(d)) return '+61' + d.slice(1)
+  if (/^4\d{8}$/.test(d)) return '+61' + d
+  return null
+}
+
+/**
+ * Batch send rail (Roadmap item 2). Mirrors the Phase A outbox, but for
+ * approved batch items. A batch the human approved in the UI has status
+ * `approved`; its `approved` items each carry a pre-rendered message. We send
+ * each one, mark it `sent`/`failed`, and flip the batch to `sent` once no
+ * approved items remain. Nothing sends unless the human approved the batch —
+ * same gate as everything else.
+ */
+// Trip the Google Messages circuit-breaker after this many SMS failures in a row.
+const SMS_TRIP_AFTER = 3
+
+export async function processBatches(
+  db: DB,
+  adapter: ChannelAdapter,
+  smsBridgeDownAtStart = false,
+): Promise<BatchResult> {
+  const { data: allBatches, error } = await db
+    .from('inbox_batches')
+    .select('id, attachment_data, attachment_name, attachment_mime, scheduled_for, is_outreach, approved_at')
+    .in('status', ['approved', 'sending'])
+    .limit(20)
+  if (error) throw error
+  // Daily outreach window: proactive invite blasts (is_outreach) only send
+  // between OUTREACH_START and OUTREACH_CUTOFF (local time). Reply/confirmation
+  // batches (is_outreach=false) always go, so seats can be confirmed and players
+  // thanked outside the window.
+  const local = new Date()
+  const localMins = local.getHours() * 60 + local.getMinutes()
+  const outreachWindowOpen =
+    localMins >= env.outreachStartMins && localMins < env.outreachCutoffMins
+  // Grandfathering, per Justin: a batch APPROVED inside today's window keeps
+  // draining after the 16:30 cutoff (a big list teed up at 4:25 must not strand
+  // half-sent). The cutoff still blocks batches approved late; quiet hours
+  // (21:00, gated upstream) remain the hard stop for everything.
+  const approvedInWindowToday = (iso: string | null): boolean => {
+    if (!iso) return false
+    const d = new Date(iso)
+    if (d.toDateString() !== local.toDateString()) return false
+    const mins = d.getHours() * 60 + d.getMinutes()
+    return mins >= env.outreachStartMins && mins < env.outreachCutoffMins
+  }
+  // Hold scheduled batches until their time; send unscheduled ones immediately.
+  // (Filtered here, not in the query — a millisecond dot in an ISO timestamp
+  // breaks PostgREST's dot-delimited .or() filter.)
+  const now = Date.now()
+  const batches = (allBatches ?? [])
+    .filter((b) => !b.scheduled_for || new Date(b.scheduled_for).getTime() <= now)
+    .filter((b) => b.is_outreach === false || outreachWindowOpen || approvedInWindowToday(b.approved_at))
+    .slice(0, 5)
+  if (batches.length === 0) return { sent: 0, failed: 0 }
+
+  // Reclaim items orphaned by a crashed worker. A healthy pass caps at
+  // MAX_PER_PASS sends (~30s), so anything stuck in `sending` for minutes was
+  // abandoned mid-send. The cutoff is well past a normal pass, so two healthy
+  // windows running at once never reset each other's in-flight claims.
+  const staleCutoff = new Date(now - 5 * 60_000).toISOString()
+  await db
+    .from('inbox_batch_items')
+    .update({ status: 'approved', claimed_at: null })
+    .eq('status', 'sending')
+    .lt('claimed_at', staleCutoff)
+  await db
+    .from('inbox_batch_items')
+    .update({ status: 'approved', claimed_at: null })
+    .eq('status', 'sending')
+    .is('claimed_at', null)
+
+  let sent = 0
+  let failed = 0
+  // Recipients reached this pass — collapse duplicate items so one person never
+  // gets the same blast twice (the Andy double-send), keyed by chat-id or phone.
+  const sentKeys = new Set<string>()
+  // Google Messages circuit-breaker: while tripped, SMS items are HELD (left
+  // approved for later) instead of burning to 'failed' one after another — the
+  // 19-failure Leederville burn-through. One canary SMS per pass probes for
+  // recovery; three consecutive failures trip it.
+  let bridgeDown = smsBridgeDownAtStart
+  let canaryTried = false
+  let consecSmsFailures = 0
+  let heldSms = 0
+
+  for (const batch of batches) {
+    if (sent + failed >= MAX_PER_PASS) break
+    await db.from('inbox_batches').update({ status: 'sending' }).eq('id', batch.id)
+
+    // One image for the whole batch; re-uploaded per send (upload IDs are temporary).
+    const attachment = batch.attachment_data
+      ? {
+          dataBase64: batch.attachment_data,
+          fileName: batch.attachment_name ?? undefined,
+          mimeType: batch.attachment_mime ?? undefined,
+        }
+      : undefined
+
+    const remaining = MAX_PER_PASS - (sent + failed)
+    const { data: items } = await db
+      .from('inbox_batch_items')
+      .select('id, rendered_text, data')
+      .eq('batch_id', batch.id)
+      .eq('status', 'approved')
+      .limit(remaining)
+
+    for (const item of items ?? []) {
+      // Atomically claim the item: flip approved -> sending only if it's still
+      // approved. This is a single conditional UPDATE, so if a second sync
+      // window is running, exactly one wins the claim and the other skips —
+      // no double-send. (The fix for the duplicate run-wce.bat window.)
+      const { data: claimed } = await db
+        .from('inbox_batch_items')
+        .update({ status: 'sending', claimed_at: new Date().toISOString() })
+        .eq('id', item.id)
+        .eq('status', 'approved')
+        .select('id')
+      if (!claimed || claimed.length === 0) continue // another worker took it
+
+      const data = item.data as {
+        conversation_id?: string
+        beeper_chat_id?: string
+        phone?: string
+        account_id?: string
+        channel?: 'sms' | 'thread'
+        outreach_id?: string
+      } | null
+
+      // Send-time guardrails (defense in depth): block half-rendered text always,
+      // do_not_message / hidden always, and staff + the per-contact frequency cap
+      // for proactive outreach. The batch was approved earlier; flags and
+      // last_contacted may have changed since.
+      const verdict = await guardSend(db, {
+        renderedText: item.rendered_text,
+        isOutreach: batch.is_outreach === true,
+        outreachId: data?.outreach_id,
+        // No outreach_id (thread/Inbox-sourced item)? Let the guard resolve the
+        // person via their chat so the ban / opt-out check still runs.
+        beeperChatId: data?.beeper_chat_id,
+        conversationId: data?.conversation_id,
+      })
+      if (!verdict.ok) {
+        await db
+          .from('inbox_batch_items')
+          .update({ status: 'skipped', guard_flag: true, guard_reason: verdict.reason })
+          .eq('id', item.id)
+        console.log(`[batch] skipped item ${item.id}: ${verdict.reason}`)
+        continue
+      }
+
+      // Channel choice: 'sms' forces the phone path; 'thread' (or unset/auto)
+      // prefers an existing chat, falling back to the phone.
+      let chatId: string | null = null
+      if (data?.channel !== 'sms') {
+        if (data?.beeper_chat_id) {
+          chatId = data.beeper_chat_id
+        } else if (data?.conversation_id) {
+          const { data: conv } = await db
+            .from('inbox_conversations')
+            .select('external_chat_id, adapter')
+            .eq('id', data.conversation_id)
+            .single()
+          if (conv && conv.adapter === adapter.id) chatId = conv.external_chat_id
+        }
+      }
+
+      const phone = !chatId && data?.phone ? normalizeAuMobile(data.phone) : null
+      const canSend = chatId
+        ? !!adapter.sendMessage
+        : phone
+          ? !!adapter.startChatAndSend
+          : false
+      if (!canSend) {
+        await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
+        failed++
+        continue
+      }
+
+      // Never drop a proactive blast into a LIVE conversation — any activity in
+      // the thread within the last hour (Justin typing by hand, or the player
+      // mid-chat) skips this recipient. Approved one-off replies (is_outreach
+      // false) still go: those are deliberate messages INTO a conversation.
+      if (chatId && batch.is_outreach === true) {
+        const { data: convRows } = await db
+          .from('inbox_conversations')
+          .select('last_activity')
+          .eq('adapter', adapter.id)
+          .eq('external_chat_id', chatId)
+          .limit(1)
+        const la = convRows?.[0]?.last_activity
+        if (la && Date.now() - new Date(la).getTime() < ACTIVE_CONVO_MS) {
+          await db
+            .from('inbox_batch_items')
+            .update({ status: 'skipped', guard_flag: true, guard_reason: 'Live conversation, not blasted' })
+            .eq('id', item.id)
+          console.log(`[batch] skipped item ${item.id}: live conversation`)
+          continue
+        }
+      }
+
+      // In-pass dedupe: never reach the same recipient twice in one pass.
+      const dedupeKey = chatId ?? phone
+      if (dedupeKey && sentKeys.has(dedupeKey)) {
+        await db
+          .from('inbox_batch_items')
+          .update({ status: 'skipped', guard_flag: true, guard_reason: 'dup_in_pass' })
+          .eq('id', item.id)
+        console.log(`[batch] skipped duplicate recipient (item ${item.id})`)
+        continue
+      }
+
+      // Cross-pass idempotency for proactive invites: never fire the identical
+      // message to the same recipient twice (catches double-sends that survive a
+      // restart, where the in-pass dedupe set was reset).
+      const hash = textHash(item.rendered_text)
+      if (dedupeKey && batch.is_outreach === true && (await alreadySent(db, dedupeKey, hash))) {
+        await db
+          .from('inbox_batch_items')
+          .update({ status: 'skipped', guard_flag: true, guard_reason: 'already_sent' })
+          .eq('id', item.id)
+        console.log(`[batch] skipped already-sent (item ${item.id})`)
+        continue
+      }
+
+      // SMS path + tripped breaker: hold the item (back to approved, no burn),
+      // except one canary per pass that probes whether the bridge is back.
+      const isSmsPath = !chatId && !!phone
+      if (isSmsPath && bridgeDown) {
+        if (canaryTried) {
+          await db
+            .from('inbox_batch_items')
+            .update({ status: 'approved', claimed_at: null })
+            .eq('id', item.id)
+          heldSms++
+          continue
+        }
+        canaryTried = true // this one attempts below; its outcome decides the flag
+      }
+
+      try {
+        const r = chatId
+          ? await adapter.sendMessage!(chatId, item.rendered_text, { attachment })
+          : await adapter.startChatAndSend!(
+              data?.account_id ?? 'gmessages',
+              phone!,
+              item.rendered_text,
+              { attachment },
+            )
+        if (r.ok && isSmsPath) {
+          consecSmsFailures = 0
+          if (bridgeDown) {
+            bridgeDown = false
+            await setSmsBridge(db, false)
+            console.log('[bridge] Google Messages bridge RECOVERED — SMS sends resume')
+          }
+        }
+        if (r.ok) {
+          await db.from('inbox_batch_items').update({ status: 'sent' }).eq('id', item.id)
+          // Stamp last_contacted so the per-player frequency cap is enforced.
+          if (data?.outreach_id) {
+            await db
+              .from('inbox_outreach')
+              .update({ last_contacted: new Date().toISOString().slice(0, 10) })
+              .eq('id', data.outreach_id)
+          }
+          if (dedupeKey) sentKeys.add(dedupeKey)
+          // Linkage: remember which chat an SMS contact lives in (the create-chat
+          // step just resolved it) so future inbound from them can be matched to
+          // this CRM row — the basis for opt-out flagging and the non-replier guard.
+          if (data?.outreach_id && r.chatId) {
+            await db
+              .from('inbox_outreach')
+              .update({ beeper_chat_id: r.chatId })
+              .eq('id', data.outreach_id)
+              .is('beeper_chat_id', null)
+          }
+          // Audit ledger: record every send for the "what did we send whom" trail
+          // (and the idempotency check above).
+          if (dedupeKey) {
+            await recordSent(db, {
+              outreachId: data?.outreach_id,
+              recipient: dedupeKey,
+              hash,
+              batchItemId: item.id,
+              text: item.rendered_text,
+            })
+          }
+          sent++
+        } else {
+          if (isSmsPath && bridgeDown) {
+            // The canary failed — bridge still down: hold, don't burn.
+            await db.from('inbox_batch_items').update({ status: 'approved', claimed_at: null }).eq('id', item.id)
+            heldSms++
+          } else {
+            await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
+            failed++
+          }
+          console.error(`[batch] send rejected for item ${item.id}: ${r.error ?? 'unknown'}`)
+          if (isSmsPath && !bridgeDown && ++consecSmsFailures >= SMS_TRIP_AFTER) {
+            bridgeDown = true
+            await setSmsBridge(db, true)
+            console.warn(`[bridge] ${SMS_TRIP_AFTER} SMS failures in a row — Google Messages bridge marked DOWN, holding further SMS`)
+          }
+        }
+      } catch (e) {
+        if (isSmsPath && bridgeDown) {
+          await db.from('inbox_batch_items').update({ status: 'approved', claimed_at: null }).eq('id', item.id)
+          heldSms++
+        } else {
+          await db.from('inbox_batch_items').update({ status: 'failed' }).eq('id', item.id)
+          failed++
+        }
+        console.error(`[batch] error sending item ${item.id}:`, e instanceof Error ? e.message : e)
+        if (isSmsPath && !bridgeDown && ++consecSmsFailures >= SMS_TRIP_AFTER) {
+          bridgeDown = true
+          await setSmsBridge(db, true)
+          console.warn(`[bridge] ${SMS_TRIP_AFTER} SMS failures in a row — Google Messages bridge marked DOWN, holding further SMS`)
+        }
+      }
+
+      await sleep(SEND_DELAY_MS)
+    }
+
+    if (heldSms) {
+      console.log(`[bridge] held ${heldSms} SMS item(s) this pass — bridge down, they stay queued`)
+      heldSms = 0
+    }
+    // Flip the batch to `sent` only once nothing is left to drain — no
+    // `approved` items waiting and none still mid-send (`sending`).
+    const { data: stillPending } = await db
+      .from('inbox_batch_items')
+      .select('id')
+      .eq('batch_id', batch.id)
+      .in('status', ['approved', 'sending'])
+      .limit(1)
+    if (!stillPending || stillPending.length === 0) {
+      await db.from('inbox_batches').update({ status: 'sent' }).eq('id', batch.id)
+    }
+  }
+
+  return { sent, failed }
+}
