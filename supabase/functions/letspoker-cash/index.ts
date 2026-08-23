@@ -359,6 +359,8 @@ type Plan = {
   tables_spec: any[]; anticipated_players: number | null;
   /** Permit gate: never auto-open/seat before this instant. Null = first tick. */
   open_from: string | null;
+  /** Permit window end: never auto-open/seat after this instant. Null = no end. */
+  open_until: string | null;
 };
 async function loadPlans(opts: { planId?: string; date?: string }): Promise<Plan[]> {
   let q = "";
@@ -609,6 +611,13 @@ async function runTick(cookie: string, sgid: string, clubId: string, dryRun: boo
       out.push({ planId: p.id, held: true, reason: `permit gate: opens at ${p.open_from}` });
       continue;
     }
+    // Past the permit window's end. Seating a player outside the venue's
+    // permitted hours is exactly what the permit forbids, so the tick stops
+    // rather than carrying on into the night.
+    if (p.open_until && Date.now() > new Date(p.open_until).getTime()) {
+      out.push({ planId: p.id, held: true, reason: `permit gate: window closed at ${p.open_until}` });
+      continue;
+    }
     const o = await runOpen(cookie, sgid, clubId, { planId: p.id, dryRun });
     out.push({ planId: p.id, open: await o.json() });
     const s = await runSeat(cookie, sgid, clubId, { planId: p.id, dryRun });
@@ -620,9 +629,11 @@ async function runTick(cookie: string, sgid: string, clubId: string, dryRun: boo
 /* ------------------------------- finish ------------------------------ */
 // Mark a cash day Finished (Command{finish}). Default date = yesterday Perth
 // (the day that just ended). Idempotent: skips if not started / already finished.
-async function runFinish(cookie: string, sgid: string, clubId: string, opts: { date?: string; dryRun: boolean }): Promise<Response> {
+async function runFinish(cookie: string, sgid: string, clubId: string, opts: { date?: string; eventId?: string; dryRun: boolean }): Promise<Response> {
   const date = opts.date ?? perthDate(-1);
-  const eventId = await resolveCashEventId(cookie, sgid, clubId, date);
+  // An explicit id is the way to act on a date the resolver calls ambiguous
+  // (more than one cash container), where it deliberately refuses to guess.
+  const eventId = opts.eventId ?? await resolveCashEventId(cookie, sgid, clubId, date);
   if (!eventId) return json({ ok: true, date, skipped: true, reason: "no cash event for date" });
   const cmds = (await getCashLog(cookie, sgid, clubId, eventId)).filter((e) => e.eventType === "Command");
   const started = cmds.some((c) => c.eventData?.command?.start === true);
@@ -637,13 +648,24 @@ async function runFinish(cookie: string, sgid: string, clubId: string, opts: { d
 }
 
 /* -------------------------------- log -------------------------------- */
-async function runLog(cookie: string, sgid: string, clubId: string, opts: { date?: string }): Promise<Response> {
+async function runLog(cookie: string, sgid: string, clubId: string, opts: { date?: string; eventId?: string }): Promise<Response> {
   const date = opts.date ?? perthDate(0);
-  const eventId = await resolveCashEventId(cookie, sgid, clubId, date);
+  // With no explicit id, report what the resolver sees — including the
+  // ambiguous case, so "which containers exist for this date" is answerable.
+  if (!opts.eventId) {
+    const day = await resolveCashDay(cookie, sgid, clubId, date);
+    if (day.ambiguous) return json({ ok: true, date, ambiguous: day.ambiguous, reason: "multiple cash days for date — pass eventId" });
+    if (day.failed) return json({ ok: false, date, reason: "cash day lookup failed" }, 502);
+  }
+  const eventId = opts.eventId ?? await resolveCashEventId(cookie, sgid, clubId, date);
   if (!eventId) return json({ ok: true, date, eventId: null, reason: "no cash event for date" });
   const log = await getCashLog(cookie, sgid, clubId, eventId);
   const st = tableState(log);
-  return json({ ok: true, date, eventId, tables: st.tables, seatedCount: st.seatedPlayers.size, freeSeats: freeSlots(st).length });
+  const cmds = log.filter((e) => e.eventType === "Command");
+  return json({ ok: true, date, eventId,
+    started: cmds.some((c) => c.eventData?.command?.start === true),
+    finished: cmds.some((c) => c.eventData?.command?.finish === true),
+    tables: st.tables, seatedCount: st.seatedPlayers.size, freeSeats: freeSlots(st).length });
 }
 
 /* -------------------------------- serve ------------------------------ */
@@ -673,12 +695,12 @@ Deno.serve(async (req) => {
   }
 
   switch (mode) {
-    case "log": return await runLog(cookie, sgid, clubId, { date: body.date });
+    case "log": return await runLog(cookie, sgid, clubId, { date: body.date, eventId: body.eventId });
     case "open": return await runOpen(cookie, sgid, clubId, { planId: body.planId, date: body.date, dryRun, start: body.start === true });
     case "seat": return await runSeat(cookie, sgid, clubId, { planId: body.planId, date: body.date, dryRun, buyin: body.buyin === true, buyinPct: body.buyinPct, notes: body.notes });
     case "push": return await runPush(cookie, sgid, clubId, { planId: body.planId, date: body.date, templateParts: body.templateParts, slot: body.slot, dryRun });
     case "tick": return await runTick(cookie, sgid, clubId, dryRun);
-    case "finish": return await runFinish(cookie, sgid, clubId, { date: body.date, dryRun: body.dryRun === true });
+    case "finish": return await runFinish(cookie, sgid, clubId, { date: body.date, eventId: body.eventId, dryRun: body.dryRun === true });
     default: return json({ ok: false, error: `unknown mode: ${mode}` }, 400);
   }
 });
