@@ -17,7 +17,8 @@
 //   - "push"    -> sendCashPushNotification per open table. dryRun DEFAULT true.
 //   - "tick"    -> orchestrate open + seat for today's plans (cron).
 //   - "finish"  -> mark a cash day Finished (Command{finish}). Default yesterday.
-//   - "log"     -> read the cash event's tournament log (debug).
+//                  Accepts an explicit eventId for ambiguous dates.
+//   - "log"     -> read the cash event's tournament log (debug). Accepts eventId.
 //
 // Outward-facing / money-touching ops (seat, push) default to dryRun.
 //
