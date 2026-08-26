@@ -3,11 +3,11 @@ import { supabase } from '../lib/supabase'
 import { normFull, normCore } from './usePlayers'
 import { useVenues } from './useVenues'
 import { ActionQueue } from './ActionQueue'
-import { BridgeAlarm } from './BridgeAlarm'
 import { SendQueue } from './SendQueue'
 import { Financials } from './Financials'
 import { SheetCoverage } from './SheetCoverage'
 import { SeatMonitor } from './SeatMonitor'
+import { SyncStrip } from './SyncStrip'
 
 /** A trimmed CRM row — only what the post-game matcher / router needs. */
 interface CrmRow {
@@ -31,14 +31,15 @@ export function Home({
   onOpenConversation: (conversationId: string) => void
   onFillSeats: (listId: string | null, venue: string | null) => void
 }) {
+  // Redesign order: health strip, then everything that needs you, then the
+  // money, then the working panels. The shell owns page width and padding.
   return (
-    <div className="mx-auto h-full w-full max-w-6xl overflow-y-auto p-6">
-      <h2 className="mb-4 text-lg font-semibold">Home</h2>
-      <BridgeAlarm />
+    <div>
+      <SyncStrip />
       <SendQueue />
       <ActionQueue onOpen={onOpenConversation} />
-      <SeatMonitor onFill={onFillSeats} onOpen={onOpenConversation} />
       <Financials />
+      <SeatMonitor onFill={onFillSeats} onOpen={onOpenConversation} />
       <SheetCoverage />
       <DashboardCards onNavigate={onNavigate} />
       <FifoDue onOpen={onOpenConversation} />
@@ -93,41 +94,43 @@ function FifoDue({ onOpen }: { onOpen: (conversationId: string) => void }) {
   if (loading || due.length === 0) return null
 
   return (
-    <div className="mb-6">
-      <h3 className="mb-1 text-sm font-semibold text-slate-700">✈ FIFO players due back</h3>
-      <p className="mb-2 text-xs text-slate-400">
+    <section className="mb-7">
+      <div className="section-head">
+        <span className="kicker tnum">FIFO players due back · {due.length}</span>
+      </div>
+      <p className="m-0 mt-2 text-xs muted">
         {due.length} fly-in/out {due.length === 1 ? 'player is' : 'players are'} due back around now — good time to re-invite.
       </p>
-      <ul className="space-y-1">
+      <ul className="m-0 list-none p-0">
         {due.map((r) => {
           const overdue = dayNum(r.due_around) < todayN
           return (
-            <li key={r.outreach_id}>
+            <li
+              key={r.outreach_id}
+              className="row row-hover grid grid-cols-[minmax(0,1fr)_max-content] items-start gap-x-5 gap-y-1 py-3"
+            >
               <button
                 onClick={() => r.conversation_id && onOpen(r.conversation_id)}
                 disabled={!r.conversation_id}
                 title={r.conversation_id ? 'Open their thread to re-invite' : 'No thread linked yet'}
-                className="flex w-full items-center gap-2 rounded-md border border-sky-200 bg-sky-50/50 px-3 py-2 text-left text-sm transition enabled:hover:border-sky-400 enabled:hover:shadow-sm disabled:cursor-default"
+                className="min-w-0 cursor-pointer bg-transparent p-0 text-left disabled:cursor-default"
               >
-                <span
-                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
-                    overdue ? 'bg-amber-500 text-white' : 'bg-sky-600 text-white'
-                  }`}
-                >
-                  {overdue ? `overdue ${todayN - dayNum(r.due_around)}d` : 'due ▸'}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="font-medium">{r.player_name}</span>
-                  <span className="ml-1 text-xs text-slate-500">
-                    due ~{fmt(r.due_around)} · away {r.away_days}d · {r.games} games, ~{r.avg_away ?? '?'}d spells
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold">{r.player_name}</span>
+                  <span className="tag tag-accent tag-net tnum">
+                    {overdue ? `overdue ${todayN - dayNum(r.due_around)}d` : 'due'}
                   </span>
                 </span>
+                <span className="mt-0.5 block text-xs muted tnum">
+                  away {r.away_days}d · {r.games} games, ~{r.avg_away ?? '?'}d spells
+                </span>
               </button>
+              <span className="text-xs muted-50 tnum">due ~{fmt(r.due_around)}</span>
             </li>
           )
         })}
       </ul>
-    </div>
+    </section>
   )
 }
 
@@ -190,13 +193,15 @@ function WinBack({ onOpen }: { onOpen: (conversationId: string) => void }) {
   if (loading || visible.length === 0) return null
 
   return (
-    <div className="mb-6">
-      <h3 className="mb-1 text-sm font-semibold text-slate-700">🎣 Win back — lapsed regulars</h3>
-      <p className="mb-2 text-xs text-slate-400">
+    <section className="mb-7">
+      <div className="section-head">
+        <span className="kicker tnum">Win back — lapsed regulars · {visible.length}</span>
+      </div>
+      <p className="m-0 mt-2 text-xs muted">
         {visible.length} former {visible.length === 1 ? 'regular has' : 'regulars have'} gone quiet — a
         personal note now is the best save.
       </p>
-      <ul className="space-y-1">
+      <ul className="m-0 list-none p-0">
         {visible.map((r) => {
           const where = [
             r.prominent_night,
@@ -206,7 +211,10 @@ function WinBack({ onOpen }: { onOpen: (conversationId: string) => void }) {
             .join(' · ')
           const won = money(r.total_winnings)
           return (
-            <li key={r.outreach_id} className="flex items-stretch gap-1">
+            <li
+              key={r.outreach_id}
+              className="row row-hover grid grid-cols-[minmax(0,1fr)_max-content] items-start gap-x-5 gap-y-1 py-3"
+            >
               <button
                 onClick={() => r.conversation_id && onOpen(r.conversation_id)}
                 disabled={!r.conversation_id}
@@ -217,37 +225,33 @@ function WinBack({ onOpen }: { onOpen: (conversationId: string) => void }) {
                       ? `No thread yet — text ${r.phone} (or reach them from Batches)`
                       : 'No thread linked yet'
                 }
-                className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2 text-left text-sm transition enabled:hover:border-amber-400 enabled:hover:shadow-sm disabled:cursor-default"
+                className="min-w-0 cursor-pointer bg-transparent p-0 text-left disabled:cursor-default"
               >
-                <span className="shrink-0 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] text-white">
-                  {r.recent_games === 0 ? 'gone' : 'fading'} {fmtGone(r.days_since_last)}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="font-medium">{r.player_name}</span>
-                  <span className="ml-1 text-xs text-slate-500">
-                    was ~{r.baseline_games} games/6mo, now {r.recent_games || 'none'}
-                    {where ? ` · ${where}` : ''}
-                    {won ? ` · ${won} won` : ''}
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold">{r.player_name}</span>
+                  <span className="tag tag-neutral tag-net tnum">
+                    {r.recent_games === 0 ? 'gone' : 'fading'} {fmtGone(r.days_since_last)}
                   </span>
+                  {!r.conversation_id && r.phone && <span className="tag tag-neutral tag-net">SMS</span>}
                 </span>
-                {!r.conversation_id && r.phone && (
-                  <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">
-                    SMS
-                  </span>
-                )}
+                <span className="mt-0.5 block text-xs muted tnum">
+                  was ~{r.baseline_games} games/6mo, now {r.recent_games || 'none'}
+                  {where ? ` · ${where}` : ''}
+                  {won ? ` · ${won} won` : ''}
+                </span>
               </button>
               <button
                 onClick={() => setDone((s) => new Set(s).add(r.outreach_id))}
                 title="Dismiss for now (back next reload)"
-                className="shrink-0 rounded-md px-1.5 text-slate-300 hover:text-slate-600"
+                className="btn-quiet"
               >
-                ×
+                dismiss
               </button>
             </li>
           )
         })}
       </ul>
-    </div>
+    </section>
   )
 }
 
@@ -391,7 +395,7 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
     }))
   }
   // Park a player from outreach until a date (the send guard skips them till then).
-  // Applies in place + shades the row; "✓ resolved" is what removes the entry.
+  // Applies in place + tags the row "on ice"; "resolved" is what removes the entry.
   async function onIce(r: ContextRow, until: string) {
     if (!r.outreach_id) return
     await supabase.from('inbox_outreach').update({ snooze_until: until }).eq('id', r.outreach_id)
@@ -435,80 +439,59 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
   const readyCount = visible.filter(isReady).length
 
   return (
-    <div className="mb-6">
-      <h3 className="mb-1 text-sm font-semibold text-slate-700">Who&apos;s out — reasons &amp; when they&apos;re back</h3>
-      <p className="mb-2 text-xs text-slate-400">
+    <section className="mb-7">
+      <div className="section-head">
+        <span className="kicker tnum">Who&apos;s out — reasons &amp; when they&apos;re back · {visible.length}</span>
+      </div>
+      <p className="m-0 mt-2 text-xs muted">
         {visible.length} recently said they can&apos;t make it
         {readyCount > 0 ? ` · ${readyCount} ready to re-invite` : ''}. Tap a name to open their thread. Add to a
-        list, set a return date, edit the label — it all applies in place; only ✓ resolved clears the entry.
+        list, set a return date, edit the label — it all applies in place; only “resolved” clears the entry.
       </p>
-      <ul className="space-y-1">
+      <ul className="m-0 list-none p-0">
         {visible.map((r) => {
           const ready = isReady(r)
           const iced = !!r.snooze_until && r.snooze_until > today
           return (
-            <li
-              key={r.conversation_id}
-              className={`rounded-md border px-3 py-2 ${
-                iced
-                  ? 'border-rose-200 bg-rose-50/70 opacity-80'
-                  : ready
-                    ? 'border-emerald-300 bg-emerald-50/60'
-                    : 'border-slate-200 bg-white'
-              }`}
-            >
-              <div className="flex items-start gap-2">
+            <li key={r.conversation_id} className="row row-hover py-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_max-content] items-start gap-x-5 gap-y-1">
                 <button
                   onClick={() => onOpen(r.conversation_id)}
                   title="Open this player's thread to message them"
-                  className="flex min-w-0 flex-1 items-start gap-2 text-left text-sm"
+                  className="min-w-0 cursor-pointer bg-transparent p-0 text-left"
                 >
-                  <span
-                    className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
-                      ready
-                        ? 'bg-emerald-600 text-white'
-                        : r.reply_intent === 'no'
-                          ? 'bg-rose-100 text-rose-700'
-                          : 'bg-amber-100 text-amber-700'
-                    }`}
-                  >
-                    {ready ? 're-invite ▸' : r.reply_intent === 'no' ? "can't make it" : 'maybe'}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="font-medium">{r.player_name}</span>
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className={`text-sm ${ready ? 'font-extrabold' : 'font-semibold'}`}>{r.player_name}</span>
+                    <span
+                      className={`tag tag-net ${
+                        ready ? 'tag-accent' : r.reply_intent === 'no' ? 'tag-outline' : 'tag-neutral'
+                      }`}
+                    >
+                      {ready ? 're-invite' : r.reply_intent === 'no' ? "can't make it" : 'maybe'}
+                    </span>
                     {r.fifo && (
-                      <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-medium text-sky-700" title="Fly-in/fly-out worker">
-                        ✈ FIFO
+                      <span className="tag tag-neutral tag-net" title="Fly-in/fly-out worker">
+                        FIFO
                       </span>
                     )}
-                    {r.reply_note ? (
-                      <span className="ml-1 text-emerald-700">— {r.reply_note}</span>
-                    ) : (
-                      <span className="ml-1 italic text-slate-500">— “{r.reply_text.trim()}”</span>
+                    {iced && (
+                      <span className="tag tag-outline tag-net tnum" title="Off proactive invites until this date">
+                        on ice until {fmtBack(r.snooze_until!)}
+                      </span>
                     )}
-                    {r.back_on && (
-                      <span className="ml-1 whitespace-nowrap text-xs text-slate-400">(back {fmtBack(r.back_on)})</span>
+                    {added[r.conversation_id] && (
+                      <span className="tag tag-accent tag-net">added to {added[r.conversation_id]}</span>
                     )}
                   </span>
+                  <span className="mt-0.5 block text-xs muted">
+                    {r.reply_note ? r.reply_note : <span className="italic">“{r.reply_text.trim()}”</span>}
+                    {r.back_on && <span className="whitespace-nowrap tnum"> · back {fmtBack(r.back_on)}</span>}
+                  </span>
                 </button>
-                <span className="shrink-0 text-xs text-slate-400">{ago(r.replied_at)}</span>
+                <span className="text-xs muted-50 tnum">{ago(r.replied_at)}</span>
               </div>
-              {(iced || added[r.conversation_id]) && (
-                <div className="mt-1 flex flex-wrap items-center gap-2 pl-1 text-[11px]">
-                  {iced && (
-                    <span className="rounded-full bg-rose-100 px-2 py-0.5 font-medium text-rose-700">
-                      ❄ on ice until {fmtBack(r.snooze_until!)} — off invites till then
-                    </span>
-                  )}
-                  {added[r.conversation_id] && (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">
-                      ✓ added to {added[r.conversation_id]}
-                    </span>
-                  )}
-                </div>
-              )}
               {r.outreach_id && (
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1 text-[11px]">
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <select
                     value=""
                     onChange={(ev) => {
@@ -518,9 +501,9 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                       void addToList(r, venue, type)
                     }}
                     title="Add this player to a venue's cash or tournament outreach"
-                    className="rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600"
+                    className="input !min-h-0 !w-auto px-2 py-1 text-xs"
                   >
-                    <option value="">＋ add to game list…</option>
+                    <option value="">add to game list…</option>
                     {VENUES.map((vn) => (
                       <optgroup key={vn} label={vn}>
                         <option value={`${vn}|cash`}>{vn} · cash</option>
@@ -536,9 +519,9 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                       void onIce(r, v === 'back' && r.back_on ? r.back_on : plusDays(Number(v)))
                     }}
                     title="Put on ice — skip proactive outreach until this date"
-                    className="rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600"
+                    className="input !min-h-0 !w-auto px-2 py-1 text-xs"
                   >
-                    <option value="">❄ on ice…</option>
+                    <option value="">on ice…</option>
                     <option value="7">1 week</option>
                     <option value="14">2 weeks</option>
                     <option value="30">1 month</option>
@@ -546,19 +529,19 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                     {r.back_on && <option value="back">until {fmtBack(r.back_on)} (their date)</option>}
                   </select>
                   <label
-                    className="inline-flex items-center gap-1 text-[11px] text-slate-500"
+                    className="inline-flex items-center gap-1.5 text-[11px] muted"
                     title="On ice until an exact date — held off invites until then"
                   >
-                    ❄ until
+                    on ice until
                     <input
                       type="date"
                       value={r.snooze_until ?? ''}
                       onChange={(ev) => ev.target.value && void onIce(r, ev.target.value)}
-                      className="rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600"
+                      className="input !min-h-0 !w-auto px-2 py-1 text-xs tnum"
                     />
                   </label>
                   {labelDraft?.id === r.conversation_id ? (
-                    <span className="inline-flex items-center gap-1">
+                    <span className="inline-flex items-center gap-2">
                       <input
                         autoFocus
                         value={labelDraft.text}
@@ -568,69 +551,69 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
                           if (ev.key === 'Escape') setLabelDraft(null)
                         }}
                         placeholder="contact label / note"
-                        className="w-40 rounded border border-slate-300 px-1 py-0.5 text-[11px]"
+                        className="input !min-h-0 !w-40 px-2 py-1 text-xs"
                       />
-                      <button onClick={() => void saveLabel(r, labelDraft.text)} className="text-emerald-700 hover:underline">save</button>
-                      <button onClick={() => setLabelDraft(null)} className="text-slate-400 hover:underline">×</button>
+                      <button onClick={() => void saveLabel(r, labelDraft.text)} className="btn-quiet">save</button>
+                      <button onClick={() => setLabelDraft(null)} className="btn-quiet">cancel</button>
                     </span>
                   ) : (
                     <button
                       onClick={() => setLabelDraft({ id: r.conversation_id, text: r.note ?? '' })}
                       title="Edit this player's contact label / note"
-                      className="rounded border border-slate-200 px-1 py-0.5 text-slate-600 hover:border-slate-300"
+                      className="btn-quiet"
                     >
-                      ✎ {r.note ? <span className="text-slate-500">{r.note}</span> : 'label'}
+                      {r.note ? `label: ${r.note}` : 'add label'}
                     </button>
                   )}
                   <button
                     onClick={() => void toggleFifo(r)}
                     title="Mark as fly-in/fly-out (FIFO) worker"
-                    className={`rounded border px-1 py-0.5 ${
-                      r.fifo ? 'border-sky-400 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'
-                    }`}
+                    className="btn-quiet"
                   >
-                    ✈ FIFO{r.fifo ? ' ✓' : ''}
+                    {r.fifo ? 'unset FIFO' : 'mark FIFO'}
                   </button>
                   <button
                     onClick={() => (pattern?.id === r.conversation_id ? setPattern(null) : void loadPattern(r))}
                     title="Explore their TD-sheet + LetsPoker attendance for a fly-in/out pattern"
-                    className="rounded border border-slate-200 px-1 py-0.5 text-slate-600 hover:border-slate-300"
+                    className="btn-quiet"
                   >
-                    📊 pattern
+                    {pattern?.id === r.conversation_id ? 'hide pattern' : 'pattern'}
                   </button>
                   <button
                     onClick={() => void resolve(r)}
                     title="Resolved — dismiss from this panel for good"
-                    className="ml-auto rounded border border-slate-200 px-1 py-0.5 text-slate-500 hover:border-emerald-300 hover:text-emerald-700"
+                    className="btn-quiet ml-auto"
                   >
-                    ✓ resolved
+                    resolved
                   </button>
                 </div>
               )}
               {pattern?.id === r.conversation_id && (
-                <div className="mt-1.5 rounded bg-slate-50 px-2 py-1.5 text-[11px] text-slate-600">
+                <div
+                  className="mt-2 pt-2 text-[11px] muted-70"
+                  style={{ borderTop: '1px solid var(--color-divider)' }}
+                >
                   {pattern.loading ? (
                     'Reading TD + LP attendance…'
                   ) : !pattern.info ? (
                     'No TD/LP attendance on record for this name.'
                   ) : (
                     <div className="space-y-0.5">
-                      <div>
-                        <span className="font-medium">{pattern.info.games}</span> games · {pattern.info.first} → {pattern.info.last} ·
+                      <div className="tnum">
+                        <span className="font-semibold">{pattern.info.games}</span> games · {pattern.info.first} → {pattern.info.last} ·
                         last seen {pattern.info.sinceLast}d ago
                       </div>
                       {pattern.info.games >= 2 && (
-                        <div>
+                        <div className="tnum">
                           {pattern.info.visits} visits · away spells avg ~{pattern.info.avgAway || '—'}d (longest{' '}
                           {pattern.info.maxGap}d)
                         </div>
                       )}
-                      <div>
+                      <div className="tnum">
                         status:{' '}
                         <span
-                          className={
-                            pattern.info.status === 'away' ? 'font-medium text-amber-700' : 'font-medium text-emerald-700'
-                          }
+                          className="font-semibold"
+                          style={pattern.info.status === 'away' ? { color: 'var(--color-accent-700)' } : undefined}
                         >
                           {pattern.info.status}
                           {pattern.info.status === 'away' ? ` ${pattern.info.sinceLast}d` : ''}
@@ -650,7 +633,7 @@ function PlayerContext({ onOpen }: { onOpen: (conversationId: string) => void })
           )
         })}
       </ul>
-    </div>
+    </section>
   )
 }
 
@@ -742,26 +725,33 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
   }
 
   return (
-    <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="mb-7 grid grid-cols-2 gap-[18px_24px] py-3.5 dt:grid-cols-5">
       <Stat label="Players" value={stats?.players} onClick={() => onNavigate(null)} />
-      <Stat label="No contact" value={stats?.noContact} tone="amber" onClick={() => onNavigate('noContact')} />
-      <Stat label="FB · DM to open" value={stats?.fbDm} tone="indigo" onClick={() => onNavigate('fbDm')} />
-      <Stat label="First name only" value={stats?.firstName} tone="rose" onClick={() => onNavigate('firstName')} />
+      <Stat label="No contact" value={stats?.noContact} onClick={() => onNavigate('noContact')} />
+      <Stat label="FB · DM to open" value={stats?.fbDm} onClick={() => onNavigate('fbDm')} />
+      <Stat label="First name only" value={stats?.firstName} onClick={() => onNavigate('firstName')} />
       {(() => {
         // The engine writes this heartbeat first thing every pass (15s, pass
         // capped at 120s), so anything past a few minutes means it has stopped.
         const staleS = beat?.last ? (Date.now() - new Date(beat.last).getTime()) / 1000 : null
         // Only call it dead once we have an answer. Unknown stays neutral.
         const dead = beatKnown && (staleS === null || staleS > 300)
+        // No traffic light: a dead engine reads as accent + weight + plain copy.
+        const alarm = dead ? { color: 'var(--color-accent-700)' } : undefined
         return (
-          <div className={`rounded-lg border p-3 ${dead ? 'border-rose-300 bg-rose-50' : 'border-slate-200 bg-white'}`}>
-            <div className={`text-[11px] uppercase tracking-wide ${dead ? 'text-rose-500' : 'text-slate-400'}`}>Sync engine</div>
-            <div className={`mt-1 truncate text-sm font-semibold ${dead ? 'text-rose-800' : 'text-slate-700'}`}>
+          <div className="min-w-0 pb-2" style={{ borderBottom: '3px solid transparent' }}>
+            <span
+              className={`block truncate text-[11px] font-semibold uppercase ${dead ? '' : 'muted-70'}`}
+              style={{ letterSpacing: '0.08em', ...alarm }}
+            >
+              Sync engine
+            </span>
+            <span className="mt-1 block truncate text-[22px] font-extrabold leading-none" style={alarm}>
               {!beatKnown ? 'checking…' : dead ? 'not running' : beat?.note ?? '—'}
-            </div>
-            <div className={`text-[11px] ${dead ? 'text-rose-700' : 'text-slate-400'}`}>
+            </span>
+            <span className="mt-1 block text-[11px] muted-50 tnum">
               {beatKnown ? `ran ${ago(beat?.last ?? null)}` : ' '}
-            </div>
+            </span>
           </div>
         )
       })()}
@@ -769,26 +759,29 @@ function DashboardCards({ onNavigate }: { onNavigate: (filter: string | null) =>
   )
 }
 
+/**
+ * One stat tile: micro-label, big tabular figure, quiet hint. Clickable tiles
+ * are bare buttons whose only chrome is a 3px bottom rule that lights accent on
+ * hover — no card, no tone colours (attention is the accent, not a palette).
+ */
 function Stat({
   label,
   value,
-  tone = 'slate',
   onClick,
 }: {
   label: string
   value?: number
-  tone?: 'slate' | 'amber' | 'indigo' | 'rose'
   onClick?: () => void
 }) {
-  const color =
-    tone === 'amber' ? 'text-amber-700'
-    : tone === 'indigo' ? 'text-indigo-700'
-    : tone === 'rose' ? 'text-rose-700'
-    : 'text-slate-800'
   const body = (
     <>
-      <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
-      <div className={`mt-1 text-2xl font-bold ${color}`}>{value ?? '—'}</div>
+      <span
+        className="block truncate text-[11px] font-semibold uppercase muted-70 group-hover:text-accent-700"
+        style={{ letterSpacing: '0.08em' }}
+      >
+        {label}
+      </span>
+      <span className="mt-1 block text-[22px] font-extrabold leading-none tnum">{value ?? '—'}</span>
     </>
   )
   if (onClick) {
@@ -796,14 +789,19 @@ function Stat({
       <button
         onClick={onClick}
         title={`Open ${label} in Players →`}
-        className="rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-emerald-400 hover:shadow-sm"
+        className="group min-w-0 cursor-pointer bg-transparent p-0 pb-2 text-left hover:!border-b-accent"
+        style={{ borderBottom: '3px solid transparent' }}
       >
         {body}
-        <div className="mt-0.5 text-[10px] text-emerald-600">work through →</div>
+        <span className="mt-1 block text-[11px] muted-50">work through →</span>
       </button>
     )
   }
-  return <div className="rounded-lg border border-slate-200 bg-white p-3">{body}</div>
+  return (
+    <div className="min-w-0 pb-2" style={{ borderBottom: '3px solid transparent' }}>
+      {body}
+    </div>
+  )
 }
 
 // ------------------------------ live sync panel -----------------------------
@@ -1089,26 +1087,32 @@ function PostGame() {
   }
 
   return (
-    <section className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-4">
-      <h3 className="text-base font-semibold text-emerald-900">Post-game thank-you</h3>
-      <p className="mt-1 text-xs text-slate-500">
+    <section className="mb-7">
+      <div className="section-head">
+        <span className="kicker">Post-game thank-you</span>
+      </div>
+      <p className="m-0 mt-2 text-xs muted">
         Paste tonight's players (one per line). Unknown names are added to the CRM automatically. Each
         gets a uniquely-worded thanks (mark winners for a congrats), then it all goes to your normal
         approve-then-send queue. Auto-pull from LP / TD sheets drops in here once those are connected.
       </p>
 
       {tdGames.length > 0 && (
-        <div className="mt-3 rounded-md border border-emerald-200 bg-white p-2">
-          <p className="mb-1 text-xs font-medium text-slate-600">From TD sheets — tap to load that night's players:</p>
+        <div className="mt-3">
+          <p className="m-0 mb-1.5 text-[11px] uppercase muted-50" style={{ letterSpacing: '0.08em' }}>
+            From TD sheets — tap to load that night&apos;s players
+          </p>
           <div className="flex flex-wrap gap-2">
             {tdGames.map((g) => (
               <button
                 key={g.sheet_id}
                 disabled={busy}
                 onClick={() => loadTd(g)}
-                className="rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-100 disabled:opacity-40"
+                className="btn btn-secondary !text-xs"
               >
-                {g.title} · {g.entries.length} players{g.entries.some((e) => e.winner) ? ' · 🏆' : ''}
+                <span className="tnum">
+                  {g.title} · {g.entries.length} players{g.entries.some((e) => e.winner) ? ' · winner' : ''}
+                </span>
               </button>
             ))}
           </div>
@@ -1120,67 +1124,60 @@ function PostGame() {
           value={venue}
           onChange={(e) => setVenue(e.target.value)}
           placeholder="Venue (e.g. Leederville)"
-          className="w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+          className="input !w-48"
         />
       </div>
       <textarea
         value={raw}
         onChange={(e) => setRaw(e.target.value)}
         placeholder={'Chris O\'Brien\nJane Smith\nMick Taylor\n…'}
-        className="mt-2 h-28 w-full rounded-md border border-slate-300 p-2 font-mono text-xs outline-none focus:border-emerald-500"
+        className="input mt-2 h-28 font-mono !text-xs"
       />
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <button
-          disabled={busy || !raw.trim()}
-          onClick={() => void build()}
-          className="rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
-        >
+        <button disabled={busy || !raw.trim()} onClick={() => void build()} className="btn btn-primary">
           Match &amp; add new
         </button>
-        {status && <span className="text-xs text-slate-600">{status}</span>}
+        {status && <span className="text-xs muted">{status}</span>}
       </div>
 
       {rows.length > 0 && (
         <>
-          <ul className="mt-3 space-y-2">
+          <ul className="m-0 mt-3 list-none p-0">
             {rows.map((r, i) => (
-              <li key={i} className="rounded-md border border-slate-200 bg-white p-2">
-                <div className="flex flex-wrap items-center gap-2">
+              <li key={i} className="row py-2.5">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <input
                     type="checkbox"
+                    className="checkbox"
                     checked={r.include}
                     disabled={!r.channel}
                     onChange={(e) => patch(i, { include: e.target.checked })}
                     title={r.channel ? 'Include in send' : 'No channel yet — can’t send'}
                   />
-                  <span className="min-w-[8rem] text-sm font-medium">{r.name}</span>
+                  <span className="min-w-[8rem] text-sm font-semibold">{r.name}</span>
                   <ChannelChip status={r.status} channel={r.channel} />
-                  <label className="ml-auto flex items-center gap-1 text-xs text-amber-700">
-                    <input type="checkbox" checked={r.winner} onChange={() => toggleWinner(i)} />
-                    winner 🏆
+                  <label className="ml-auto flex items-center gap-1.5 text-xs muted">
+                    <input type="checkbox" className="checkbox" checked={r.winner} onChange={() => toggleWinner(i)} />
+                    winner
                   </label>
-                  <button onClick={() => reroll(i)} title="Reword" className="text-xs text-slate-400 hover:text-emerald-700">
-                    ↻ reword
+                  <button onClick={() => reroll(i)} title="Reword" className="btn-quiet">
+                    reword
                   </button>
                 </div>
                 <textarea
                   value={r.message}
                   onChange={(e) => patch(i, { message: e.target.value })}
                   disabled={!r.channel}
-                  className="mt-1 h-12 w-full rounded border border-slate-200 p-1.5 text-xs outline-none focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-400"
+                  className="input mt-1.5 h-12 !text-xs disabled:opacity-45"
                 />
               </li>
             ))}
           </ul>
-          <div className="mt-3 flex items-center gap-3">
-            <button
-              disabled={busy || sendable.length === 0}
-              onClick={() => void queue()}
-              className="rounded-md bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
-            >
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button disabled={busy || sendable.length === 0} onClick={() => void queue()} className="btn btn-primary tnum">
               Approve &amp; queue {sendable.length}
             </button>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs muted tnum">
               {rows.filter((r) => !r.channel).length > 0 &&
                 `${rows.filter((r) => !r.channel).length} have no channel yet (added to CRM, message them once they're reachable).`}
             </span>
@@ -1191,14 +1188,11 @@ function PostGame() {
   )
 }
 
+/** Where a matched name will be reached — text tags only, no colour coding. */
 function ChannelChip({ status, channel }: { status: RowStatus; channel: 'thread' | 'sms' | null }) {
-  if (channel === 'thread')
-    return <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700">Messenger</span>
-  if (channel === 'sms')
-    return <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">SMS</span>
-  if (status === 'new')
-    return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">new · added to CRM</span>
-  if (status === 'ambiguous')
-    return <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] text-rose-700">ambiguous · skipped</span>
-  return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">no contact</span>
+  if (channel === 'thread') return <span className="tag tag-neutral tag-net">Messenger</span>
+  if (channel === 'sms') return <span className="tag tag-neutral tag-net">SMS</span>
+  if (status === 'new') return <span className="tag tag-accent tag-net">new · added to CRM</span>
+  if (status === 'ambiguous') return <span className="tag tag-outline tag-net">ambiguous · skipped</span>
+  return <span className="tag tag-outline tag-net">no contact</span>
 }
