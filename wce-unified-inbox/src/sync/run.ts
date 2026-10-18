@@ -433,6 +433,12 @@ async function runOnce(): Promise<void> {
           2,
         )
         if (gw.created) console.log(`[contacts] WORK account: ${gw.created} new contact(s) imported (${gw.autoHidden} auto-hidden, ${gw.scanned} changed)`)
+        // Its own beat (id=9), so the watchdog can tell the work book apart
+        // from the personal one (id=8). Stamped only on success.
+        const { error: hb9Err } = await supabaseAdmin
+          .from('inbox_sync_heartbeat')
+          .upsert({ id: 9, last_run: new Date().toISOString(), host: os.hostname(), note: `contacts (work) · ${gw.created} imported / ${gw.scanned} changed` })
+        if (hb9Err) console.error('[contacts] work heartbeat write failed:', hb9Err.message)
       } catch (e) {
         console.error('[contacts] work-account sync error:', e instanceof Error ? e.message : e)
       }

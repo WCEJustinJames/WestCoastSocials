@@ -73,6 +73,33 @@ const pickEmail = (e?: Person['emailAddresses']): string | null => {
   return primary.value ?? null
 }
 
+/** The 9-digit key the admin hub dedupes on: digits only, last nine, so
+ *  +61 4xx, 04xx and 4xx all agree. Shorter numbers return as-is. */
+export function phoneKey(phone: string | null | undefined): string {
+  return (phone ?? '').replace(/\D/g, '').slice(-9)
+}
+
+/** Every phone key already on a CRM row, merged-away rows included. */
+async function knownPhoneKeys(db: DB): Promise<Set<string>> {
+  const out = new Set<string>()
+  const page = 1000
+  for (let from = 0; ; from += page) {
+    const { data, error } = await db
+      .from('inbox_outreach')
+      .select('phone')
+      .not('phone', 'is', null)
+      .order('id')
+      .range(from, from + page - 1)
+    if (error) throw error
+    for (const r of data ?? []) {
+      const k = phoneKey(r.phone)
+      if (k.length === 9) out.add(k)
+    }
+    if (!data || data.length < page) break
+  }
+  return out
+}
+
 // Auto-hide obvious non-people on import (banks, telcos, govt, bowls clubs,
 // businesses, phone-system codes) so only real new contacts surface for review.
 // Mirrors the one-off cleanup filter. Anything with poker context is always kept.
@@ -194,19 +221,40 @@ export async function syncGoogleContacts(
       }
       const keep = rows.filter((r) => !tombstoned.has(r.airtable_id))
 
-      const { data: existing } = await db
-        .from('inbox_outreach')
-        .select('airtable_id')
-        .in('airtable_id', ids)
-      const have = new Set((existing ?? []).map((e) => e.airtable_id))
-      const newRows = keep.filter((r) => !have.has(r.airtable_id))
+      const have = new Set<string>()
+      for (let i = 0; i < ids.length; i += 500) {
+        const { data: existing, error: exErr } = await db
+          .from('inbox_outreach')
+          .select('airtable_id')
+          .in('airtable_id', ids.slice(i, i + 500))
+        if (exErr) throw exErr
+        for (const e of existing ?? []) if (e.airtable_id) have.add(e.airtable_id)
+      }
+
+      // One person, one row. A contact is NEW only if its number is not
+      // already in the CRM under any source (the other address book, the
+      // app, a TD sheet, a merged-away row). Without this, the work and
+      // personal books each imported the same people under their own
+      // resource names: 936 copies on 18 Oct 2026. Fails closed: if the
+      // phone index cannot be read, nothing new is inserted this pass.
+      const known = await knownPhoneKeys(db)
+      const seen = new Set<string>()
+      const newRows = keep.filter((r) => {
+        if (have.has(r.airtable_id)) return false
+        const k = phoneKey(r.phone)
+        if (k.length === 9) {
+          if (known.has(k) || seen.has(k)) return false
+          seen.add(k)
+        }
+        return true
+      })
       created = newRows.length
       autoHidden = newRows.filter((r) => r.hidden).length
 
-      if (keep.length) {
+      if (newRows.length) {
         const { error } = await db
           .from('inbox_outreach')
-          .upsert(keep, { onConflict: 'airtable_id', ignoreDuplicates: true })
+          .upsert(newRows, { onConflict: 'airtable_id', ignoreDuplicates: true })
         if (error) throw error
       }
     }
