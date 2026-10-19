@@ -47,6 +47,8 @@ export const MAX_BATCHES_PER_PASS = 5
 export const STALE_CLAIM_MS = 5 * 60_000
 export const FAIL_STREAK_PAUSE = 5
 export const UNREACHABLE_PASSES_PAUSE = 2
+/** ...and down at least this long before an outage pauses sends. */
+export const UNREACHABLE_MIN_MS = 2 * 60_000
 export const ENUM_PAGE_LIMIT = 200
 export const ENUM_MAX_PAGES = 40
 export const COUNT_PAGE = 500
@@ -241,12 +243,14 @@ export interface Hooks {
 /** Carried across passes by the caller. */
 export interface EngineState {
   unreachablePasses: number
+  /** When the current outage was first seen (null while reachable). */
+  unreachableSince: number | null
   /** op_id -> chat id still to fill onto inbox_new_chat_log (ENG-19). */
   fillDebts: Map<string, string>
 }
 
 export function newEngineState(): EngineState {
-  return { unreachablePasses: 0, fillDebts: new Map() }
+  return { unreachablePasses: 0, unreachableSince: null, fillDebts: new Map() }
 }
 
 export interface PassOptions {
@@ -1031,12 +1035,22 @@ export async function runPass(deps: Deps, cfg: EngineConfig, state: EngineState,
     deps.log(`park resolution failed: ${(e as Error).message}`)
   }
 
-  // ENG-38(b): Beeper or the SMS account unreachable on consecutive passes.
-  state.unreachablePasses = acct.ready ? 0 : state.unreachablePasses + 1
-  if (!paused && state.unreachablePasses >= UNREACHABLE_PASSES_PAUSE) {
+  // ENG-38(b): Beeper or the SMS account unreachable on consecutive passes
+  // AND for at least UNREACHABLE_MIN_MS (Justin, 2026-10-19): passes are 15 s
+  // apart, so two alone would pause sends over a Beeper update's restart.
+  if (acct.ready) {
+    state.unreachablePasses = 0
+    state.unreachableSince = null
+  } else {
+    state.unreachablePasses += 1
+    state.unreachableSince ??= deps.now()
+  }
+  const downMs = state.unreachableSince == null ? 0 : deps.now() - state.unreachableSince
+  if (!paused && state.unreachablePasses >= UNREACHABLE_PASSES_PAUSE && downMs >= UNREACHABLE_MIN_MS) {
+    const mins = Math.round(downMs / 60_000)
     await autoPause(p, acct.reachable
-      ? `The SMS account is not connected in Beeper on ${state.unreachablePasses} passes in a row`
-      : `Beeper Desktop was unreachable on ${state.unreachablePasses} passes in a row`)
+      ? `The SMS account has not been connected in Beeper for ${mins} min (${state.unreachablePasses} passes in a row)`
+      : `Beeper Desktop has been unreachable for ${mins} min (${state.unreachablePasses} passes in a row)`)
     return p.result
   }
   if (paused || opts.allowClaims === false || p.stop) return p.result

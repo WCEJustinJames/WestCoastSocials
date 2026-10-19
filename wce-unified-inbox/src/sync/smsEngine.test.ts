@@ -825,14 +825,51 @@ test('ENG-38a five failures in a row: one auto-pause, the rest stay approved', a
   assert.ok(fifth < rpc)
 })
 
-test('ENG-38b Beeper unreachable on two passes in a row: one auto-pause, on the second', async () => {
+test('ENG-38b Beeper down: auto-pause only after two passes AND two minutes', async () => {
   const w = makeWorld()
   w.bp.intercept = () => 'throw'
   const state = newEngineState()
   await pass(w, state)
+  w.clock.now += 15_000
+  await pass(w, state) // two passes, 15 s: a Beeper restart, not an outage
   assert.equal(autoPauseCalls(w).length, 0)
+  w.clock.now += 90_000
+  await pass(w, state) // 1 min 45 s
+  assert.equal(autoPauseCalls(w).length, 0)
+  w.clock.now += 20_000
+  await pass(w, state) // past 2 min
+  assert.equal(autoPauseCalls(w).length, 1)
+  assert.match(pgReqs(w, /rpc\/inbox_auto_pause/)[0].body.p_reason, /unreachable for 2 min/)
+})
+
+test('ENG-38b a recovery inside two minutes resets the outage clock', async () => {
+  const w = makeWorld()
+  const state = newEngineState()
+  w.bp.intercept = () => 'throw'
+  await pass(w, state)
+  w.clock.now += 100_000
+  await pass(w, state)
+  w.bp.intercept = null
+  w.clock.now += 15_000
+  await pass(w, state) // back up
+  assert.equal(state.unreachableSince, null)
+  w.bp.intercept = () => 'throw'
+  w.clock.now += 15_000
+  await pass(w, state)
+  w.clock.now += 15_000
+  await pass(w, state) // down again, but only 15 s this time
+  assert.equal(autoPauseCalls(w).length, 0)
+})
+
+test('ENG-38b a disconnected SMS account for two minutes also pauses', async () => {
+  const w = makeWorld()
+  w.bp.accounts[0].status = 'disconnected'
+  const state = newEngineState()
+  await pass(w, state)
+  w.clock.now += 125_000
   await pass(w, state)
   assert.equal(autoPauseCalls(w).length, 1)
+  assert.match(pgReqs(w, /rpc\/inbox_auto_pause/)[0].body.p_reason, /not been connected/)
 })
 
 test('ENG-38c holds, parks and suppression skips neither count nor reset the streak', async () => {
