@@ -18,7 +18,9 @@ import { BeeperClient, type BeeperAttachmentInput } from './client'
 export class BeeperAdapter implements ChannelAdapter {
   readonly id = 'beeper' as const
 
-  constructor(private readonly client: BeeperClient) {}
+  /** `smsAccountId`: the Google Messages account id. Callers that still pass
+   *  the retired literal 'gmessages' are routed to it. */
+  constructor(private readonly client: BeeperClient, private readonly smsAccountId?: string) {}
 
   async listAccounts(): Promise<NormalizedAccount[]> {
     const accounts = await this.client.listAccounts()
@@ -121,14 +123,15 @@ export class BeeperAdapter implements ChannelAdapter {
     text: string,
     opts: SendOptions = {},
   ): Promise<SendResult> {
-    // Resolve/create the chat first (no inline messageText — that create-call
-    // text isn't reliably delivered for SMS), then send via the proven
-    // sendMessage path that Phase A confirmed actually delivers.
-    const chat = (await this.client.createChat(accountId, [participant], {
-      type: 'single',
-    })) as { id?: string; chatID?: string }
-    const chatId = chat.id ?? chat.chatID
-    if (!chatId) return { ok: false, error: 'could not create chat' }
+    // Open or reuse the chat by number (POST /v1/chats/start), then send via
+    // the ordinary message path. The bare 'gmessages' account has not existed
+    // since 18 Oct; it maps to the configured SMS account.
+    // A blank recipient (NOTIFY_PHONE= turns the operator alerts off) is
+    // refused here, before Beeper is ever called.
+    if (!/\d/.test(participant ?? '')) return { ok: false, error: 'no recipient number (alerts are off: NOTIFY_PHONE is blank)' }
+    const account = !accountId || accountId === 'gmessages' ? this.smsAccountId : accountId
+    if (!account) return { ok: false, error: 'no SMS account configured (SMS_BEEPER_ACCOUNT_ID)' }
+    const chatId = await this.client.startChat(account, participant)
     return this.sendMessage(chatId, text, opts)
   }
 }

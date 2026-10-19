@@ -16,6 +16,8 @@ import { LetsPokerAdapter } from '../adapters/letspoker/adapter'
 import { mirrorInbound } from './mirror'
 import { processOutbox } from './outbox'
 import { processBatches } from './batches'
+import { tryReadEngineConfig, newEngineState } from './smsEngine'
+import { acquireInstanceLock, AlreadyRunningError } from '../lib/instanceLock'
 import { generateDrafts } from './drafting'
 import { generateInviteVariants } from './variants'
 import { generateScheduledBatches } from './schedules'
@@ -44,9 +46,17 @@ import { extractReceipts } from './receipts'
 // way to tell from the database whether WESTCOAST1 had pulled it — the answer
 // had to come off a terminal someone scrolled back through, twice. A version
 // string that doesn't move is a version string that lies.
-const SYNC_VERSION = 'g53-token-watch'
+const SYNC_VERSION = 'g54-sms-by-number'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
+
+// The batch sender's own settings. An unset or bare 'gmessages'
+// SMS_BEEPER_ACCOUNT_ID turns OFF only the send rail, loudly; the mirror,
+// STOP handling and every other job keep running.
+const { cfg: engineCfg, error: engineCfgError } = tryReadEngineConfig(process.env)
+const engineState = newEngineState()
+if (engineCfg) console.log(`[env] SMS account: …${engineCfg.smsAccountId.slice(-3)}`)
+else console.error(`[env] SEND RAIL OFF: ${engineCfgError}`)
 
 // Print which Supabase key actually got loaded (a Windows system env var can
 // silently shadow .env, since dotenv never overrides existing process env).
@@ -106,7 +116,7 @@ const beeperClient = new BeeperClient({
   token: env.beeperToken,
   apiVersion: env.beeperApiVersion,
 })
-const adapter = new BeeperAdapter(beeperClient)
+const adapter = new BeeperAdapter(beeperClient, engineCfg?.smsAccountId)
 
 // Resolved lazily (group chat id for posting confirmations), cached once found.
 let notifyGroupChatId: string | null = null
@@ -259,7 +269,7 @@ async function runOnce(): Promise<void> {
   // sends can be halted instantly from the UI / SQL / cloud without restarting the
   // PC. Gates ALL outbound below, including the quiet-hours-exempt auto-reply and
   // seat-list. Fails open (see getSettings) so a DB blip can't wedge sends.
-  const { sendsPaused, repliesPaused, rosterPaused, smsBridgeDown } = await getSettings(supabaseAdmin)
+  const { sendsPaused, repliesPaused, rosterPaused } = await getSettings(supabaseAdmin)
   if (sendsPaused !== wasPaused) {
     console.log(sendsPaused ? '[paused] sends_paused ON, holding ALL outbound' : '[paused] sends_paused OFF, outbound resumes')
     wasPaused = sendsPaused
@@ -316,11 +326,9 @@ async function runOnce(): Promise<void> {
     console.log(`[outbox] sent=${out.sent} failed=${out.failed}`)
   }
 
-  // Batched variations: send items from any batch the human approved (throttled).
-  const batch = (quiet || sendsPaused) ? { sent: 0, failed: 0 } : await processBatches(supabaseAdmin, adapter, smsBridgeDown)
-  if (batch.sent || batch.failed) {
-    console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
-  }
+  // Batched variations: the send rail runs on its OWN loop (batchTick in
+  // main), so an error or a slow drain there can never skip the steps below
+  // (STOP handling, the mirror) or stretch this pass past PASS_TIMEOUT_MS.
 
   // Auto opt-out: honour stop / unsubscribe / cold-contact replies (keyword-based,
   // no AI needed). Flags the CRM row do_not_message and escalates to Justin, and
@@ -925,9 +933,50 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([p, timeout]).finally(() => clearTimeout(t)) as Promise<T>
 }
 
+/**
+ * One pass of the batch send rail. It reads sends_paused itself (failing
+ * closed) and still resolves parked sends while paused or in quiet hours; it
+ * claims nothing new then. Never throws.
+ */
+let railOffLogged = 0
+async function batchRail(): Promise<void> {
+  if (!engineCfg) {
+    if (Date.now() - railOffLogged > 10 * 60_000) {
+      railOffLogged = Date.now()
+      console.error(`[batch] SEND RAIL OFF: ${engineCfgError}`)
+    }
+    return
+  }
+  try {
+    const batch = await processBatches(supabaseAdmin, engineCfg, engineState, { allowClaims: !inQuietHours() })
+    if (batch?.railDisabled && Date.now() - railOffLogged > 10 * 60_000) {
+      railOffLogged = Date.now()
+      console.error(`[batch] ${batch.railDisabled}`)
+    }
+    if (batch && (batch.sent || batch.failed || batch.parked || batch.resolved || batch.autoPaused)) {
+      console.log(`[batch] sent=${batch.sent} failed=${batch.failed} parked=${batch.parked} resolved=${batch.resolved} held=${batch.held}${batch.autoPaused ? ` AUTO-PAUSED: ${batch.autoPaused}` : ''}`)
+    }
+  } catch (e) {
+    console.error('[batch] error:', e instanceof Error ? e.message : e)
+  }
+}
+
 async function main(): Promise<void> {
+  // One engine at a time (ENG-51): the new-chat cap is counted over REST.
+  // The lock is a named pipe the OS frees when this process dies, however it
+  // dies, so a crash or a closed window can never block the next start.
+  try {
+    await acquireInstanceLock()
+  } catch (e) {
+    if (e instanceof AlreadyRunningError) {
+      console.error(`[lock] ${e.message}`)
+      process.exit(1)
+    }
+    throw e
+  }
   if (process.argv.includes('--once')) {
     await runOnce().catch((e) => console.error('[pass] error:', e instanceof Error ? e.message : e))
+    await batchRail()
     return
   }
   console.log(`[mirror] polling every ${env.syncIntervalMs}ms — Ctrl+C to stop`)
@@ -941,6 +990,13 @@ async function main(): Promise<void> {
       .finally(() => setTimeout(tick, env.syncIntervalMs))
   }
   tick()
+
+  // The send rail's own loop: bounded by its request timeouts, guarded
+  // against overlap by processBatches, and outside the pass timeout.
+  const batchTick = (): void => {
+    batchRail().finally(() => setTimeout(batchTick, env.syncIntervalMs))
+  }
+  batchTick()
 
   // Second, independent loop with no timeout of its own: the sweep is allowed to
   // take as long as it takes, and messages keep flowing the whole time. First

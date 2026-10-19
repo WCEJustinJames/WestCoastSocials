@@ -185,6 +185,21 @@ export class BeeperClient {
   }
 
   /**
+   * Open (or reuse) the direct chat with a phone number on an account —
+   * POST /v1/chats/start, Beeper v4.2.808+. This is the door for a NUMBER;
+   * POST /v1/chats below takes user ids.
+   */
+  async startChat(accountID: string, phoneNumber: string): Promise<string> {
+    const body = await this.request<{ id?: string; chatID?: string; chat?: { id?: string } }>('/v1/chats/start', {
+      method: 'POST',
+      body: JSON.stringify({ accountID, user: { phoneNumber } }),
+    })
+    const id = body?.id ?? body?.chatID ?? body?.chat?.id
+    if (!id) throw new Error('Beeper start chat answered without a chat id')
+    return id
+  }
+
+  /**
    * Create/resolve a direct chat. With no `messageText` this just resolves or
    * creates the chat and returns it (nothing is sent) — used to test whether a
    * raw phone number can be turned into a sendable chat.
