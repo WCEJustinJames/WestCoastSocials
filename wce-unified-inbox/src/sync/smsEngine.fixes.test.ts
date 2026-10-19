@@ -287,3 +287,23 @@ test('minor: a park that runs out of checks is settled from the inbox mirror', a
     }
   }
 })
+
+// ── Go-live: alert texts off with a blank NOTIFY_PHONE ──────────────────────
+test('go-live: a blank alert number never reaches Beeper', async () => {
+  const { BeeperAdapter } = await import('../adapters/beeper/adapter')
+  const calls: string[] = []
+  const fakeClient = {
+    startChat: async () => { calls.push('startChat'); return 'chat-x' },
+    sendMessage: async () => { calls.push('sendMessage'); return { pendingMessageID: 'pm' } },
+  }
+  const adapter = new BeeperAdapter(fakeClient as never, 'gmessages.test/1')
+  for (const blank of ['', '   ', '+']) {
+    const r = await adapter.startChatAndSend('gmessages', blank, 'WCP opt-out / cold replies')
+    assert.equal(r.ok, false)
+  }
+  assert.deepEqual(calls, [])
+  // A real number still goes through.
+  const ok = await adapter.startChatAndSend('gmessages', '+61491570156', 'hi')
+  assert.equal(ok.ok, true)
+  assert.deepEqual(calls, ['startChat', 'sendMessage'])
+})

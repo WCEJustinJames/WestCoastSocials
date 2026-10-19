@@ -126,6 +126,9 @@ export class BeeperAdapter implements ChannelAdapter {
     // Open or reuse the chat by number (POST /v1/chats/start), then send via
     // the ordinary message path. The bare 'gmessages' account has not existed
     // since 18 Oct; it maps to the configured SMS account.
+    // A blank recipient (NOTIFY_PHONE= turns the operator alerts off) is
+    // refused here, before Beeper is ever called.
+    if (!/\d/.test(participant ?? '')) return { ok: false, error: 'no recipient number (alerts are off: NOTIFY_PHONE is blank)' }
     const account = !accountId || accountId === 'gmessages' ? this.smsAccountId : accountId
     if (!account) return { ok: false, error: 'no SMS account configured (SMS_BEEPER_ACCOUNT_ID)' }
     const chatId = await this.client.startChat(account, participant)
