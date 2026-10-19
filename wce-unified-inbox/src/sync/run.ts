@@ -16,6 +16,8 @@ import { LetsPokerAdapter } from '../adapters/letspoker/adapter'
 import { mirrorInbound } from './mirror'
 import { processOutbox } from './outbox'
 import { processBatches } from './batches'
+import { readEngineConfig, newEngineState } from './smsEngine'
+import { acquireInstanceLock } from '../lib/instanceLock'
 import { generateDrafts } from './drafting'
 import { generateInviteVariants } from './variants'
 import { generateScheduledBatches } from './schedules'
@@ -44,9 +46,15 @@ import { extractReceipts } from './receipts'
 // way to tell from the database whether WESTCOAST1 had pulled it — the answer
 // had to come off a terminal someone scrolled back through, twice. A version
 // string that doesn't move is a version string that lies.
-const SYNC_VERSION = 'g53-token-watch'
+const SYNC_VERSION = 'g54-sms-by-number'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
+
+// The batch sender's own settings, checked up front: an unset or bare
+// 'gmessages' SMS_BEEPER_ACCOUNT_ID refuses to start and names the setting.
+const engineCfg = readEngineConfig(process.env)
+const engineState = newEngineState()
+console.log(`[env] SMS account: …${engineCfg.smsAccountId.slice(-3)}`)
 
 // Print which Supabase key actually got loaded (a Windows system env var can
 // silently shadow .env, since dotenv never overrides existing process env).
@@ -106,7 +114,7 @@ const beeperClient = new BeeperClient({
   token: env.beeperToken,
   apiVersion: env.beeperApiVersion,
 })
-const adapter = new BeeperAdapter(beeperClient)
+const adapter = new BeeperAdapter(beeperClient, engineCfg.smsAccountId)
 
 // Resolved lazily (group chat id for posting confirmations), cached once found.
 let notifyGroupChatId: string | null = null
@@ -259,7 +267,7 @@ async function runOnce(): Promise<void> {
   // sends can be halted instantly from the UI / SQL / cloud without restarting the
   // PC. Gates ALL outbound below, including the quiet-hours-exempt auto-reply and
   // seat-list. Fails open (see getSettings) so a DB blip can't wedge sends.
-  const { sendsPaused, repliesPaused, rosterPaused, smsBridgeDown } = await getSettings(supabaseAdmin)
+  const { sendsPaused, repliesPaused, rosterPaused } = await getSettings(supabaseAdmin)
   if (sendsPaused !== wasPaused) {
     console.log(sendsPaused ? '[paused] sends_paused ON, holding ALL outbound' : '[paused] sends_paused OFF, outbound resumes')
     wasPaused = sendsPaused
@@ -317,9 +325,12 @@ async function runOnce(): Promise<void> {
   }
 
   // Batched variations: send items from any batch the human approved (throttled).
-  const batch = (quiet || sendsPaused) ? { sent: 0, failed: 0 } : await processBatches(supabaseAdmin, adapter, smsBridgeDown)
-  if (batch.sent || batch.failed) {
-    console.log(`[batch] sent=${batch.sent} failed=${batch.failed}`)
+  // Runs every pass: it reads sends_paused itself (failing closed) and still
+  // resolves parked sends while paused or in quiet hours; it claims nothing
+  // new then.
+  const batch = await processBatches(supabaseAdmin, engineCfg, engineState, { allowClaims: !quiet })
+  if (batch && (batch.sent || batch.failed || batch.parked || batch.resolved || batch.autoPaused)) {
+    console.log(`[batch] sent=${batch.sent} failed=${batch.failed} parked=${batch.parked} resolved=${batch.resolved} held=${batch.held}${batch.autoPaused ? ` AUTO-PAUSED: ${batch.autoPaused}` : ''}`)
   }
 
   // Auto opt-out: honour stop / unsubscribe / cold-contact replies (keyword-based,
@@ -926,6 +937,10 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 }
 
 async function main(): Promise<void> {
+  // One engine at a time (ENG-51): the new-chat cap is counted over REST.
+  const release = acquireInstanceLock('.engine.lock')
+  process.on('exit', release)
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK'] as const) process.on(sig, () => { release(); process.exit(0) })
   if (process.argv.includes('--once')) {
     await runOnce().catch((e) => console.error('[pass] error:', e instanceof Error ? e.message : e))
     return
