@@ -38,8 +38,25 @@ function test1(row: Row, col: string, expr: string): boolean {
     default: throw new Error(`fake pg: unsupported op ${op}`)
   }
 }
+/** Split an or=(...) list on commas outside double quotes, and unquote
+ *  values the way PostgREST does ("..." with \" and \\ escapes). */
+function orParts(expr: string): string[] {
+  const inner = expr.replace(/^\(|\)$/g, '')
+  const parts: string[] = []
+  let cur = ''
+  let q = false
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i]
+    if (q && ch === '\\') { cur += inner[++i]; continue }
+    if (ch === '"') { q = !q; continue }
+    if (ch === ',' && !q) { parts.push(cur); cur = ''; continue }
+    cur += ch
+  }
+  parts.push(cur)
+  return parts
+}
 function orMatch(row: Row, expr: string): boolean {
-  return expr.replace(/^\(|\)$/g, '').split(',').some((part) => {
+  return orParts(expr).some((part) => {
     const dot = part.indexOf('.')
     return test1(row, part.slice(0, dot), part.slice(dot + 1))
   })
@@ -64,6 +81,7 @@ export class FakePg {
     inbox_new_chat_log: [],
     inbox_outreach: [],
     inbox_conversations: [],
+    inbox_messages: [],
   }
   rpc: Record<string, (body: any) => unknown> = {
     outreach_canonical_suppression_reason: () => null,
@@ -165,7 +183,7 @@ export class FakeBeeper {
 
   addSmsChat(key: string, opts: Partial<FakeChat> = {}): string {
     const id = opts.id ?? `!sms-${key}:beeper.local`
-    this.chats.push({ id, accountID: SMS, type: 'single', title: 'Contact Name', lastActivity: new Date(this.clock.now - 86_400_000).toISOString(), participants: { items: [{ isSelf: true, phoneNumber: '+61491579999' }, { phoneNumber: `+61${key}` }] }, ...opts })
+    this.chats.push({ id, accountID: SMS, type: 'single', title: 'Contact Name', lastActivity: new Date(this.clock.now - 86_400_000).toISOString(), participants: { items: [{ isSelf: true, phoneNumber: '+61491570006' }, { phoneNumber: `+61${key}` }] }, ...opts })
     return id
   }
   addChat(c: FakeChat): void { this.chats.push(c) }
@@ -264,7 +282,7 @@ export function seedBatch(w: World, status: string, items: Array<Partial<Row> & 
   const batch = { id: uid('batch'), status, expires_at: new Date(w.clock.now + 12 * 3_600_000).toISOString(), is_outreach: true, created_at: new Date(w.clock.now - 3_600_000 + w.pg.tables.inbox_batches.length).toISOString(), ...extra }
   w.pg.tables.inbox_batches.push(batch)
   const rowsOut = items.map((it, i) => {
-    const r = { id: uid('item'), batch_id: batch.id, status: 'approved', rendered_text: `Hi there, game on tonight ${i}`, data: {}, claimed_at: null, error: null, guard_reason: null, guard_flag: false, chat_id: null, pending_message_id: null, pending_chat_id: null, park_checks: 0, park_checked_at: null, created_at: new Date(w.clock.now - 1_800_000 + i * 1000).toISOString(), ...it }
+    const r = { id: uid('item'), batch_id: batch.id, status: 'approved', rendered_text: `Hi there, game on tonight ${i}`, data: {}, claimed_at: null, error: null, guard_reason: null, guard_flag: false, chat_id: null, pending_message_id: null, pending_chat_id: null, park_checks: 0, park_checked_at: null, post_attempted_at: null, created_at: new Date(w.clock.now - 1_800_000 + i * 1000).toISOString(), ...it }
     w.pg.tables.inbox_batch_items.push(r)
     return r
   })

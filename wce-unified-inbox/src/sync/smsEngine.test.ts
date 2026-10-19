@@ -299,7 +299,7 @@ for (const why of ['unlisted', 'disconnected'] as const) {
 test('ENG-13 an existing name-titled chat is found by scanning the SMS account only', async () => {
   const w = makeWorld()
   for (let i = 0; i < 8000; i++) w.bp.addChat({ id: `wa-${i}`, accountID: 'whatsapp.test', type: 'single', participants: { items: [{ phoneNumber: `+61${KEYS[0]}` }] } })
-  for (let i = 0; i < 201; i++) w.bp.addSmsChat(KEYS[14], { id: `filler-${i}`, participants: { items: [{ phoneNumber: '+61491579998' }] } })
+  for (let i = 0; i < 201; i++) w.bp.addSmsChat(KEYS[14], { id: `filler-${i}`, participants: { items: [{ phoneNumber: '+61491579212' }] } })
   const target = w.bp.addSmsChat(KEYS[0], { id: 'target', title: 'Jordan Example' })
   const B = seedBatch(w, 'approved', [smsItem(KEYS[0])])
   await pass(w)
@@ -922,7 +922,7 @@ test('ENG-39 after the auto-pause nothing more is claimed, this pass or the next
 // ── ENG-44 / 45 ─────────────────────────────────────────────────────────────
 test('ENG-44 chooseChat: single, exact account, non-self number, most recent', () => {
   const key = '491570156'
-  const p = (n: string, self = false) => ({ items: [{ isSelf: true, phoneNumber: '+61491579999' }, { isSelf: self, phoneNumber: n }] })
+  const p = (n: string, self = false) => ({ items: [{ isSelf: true, phoneNumber: '+61491570006' }, { isSelf: self, phoneNumber: n }] })
   const chats = [
     { id: 'group', accountID: SMS, type: 'group', participants: p('+61491570156') },
     { id: 'wa', accountID: 'whatsapp.test', type: 'single', participants: p('+61491570156') },
@@ -1007,18 +1007,12 @@ test('ENG-50 stamps carry the clock at the write, not the pass start', async () 
 })
 
 // ── ENG-51 ──────────────────────────────────────────────────────────────────
-test('ENG-51 a second engine process refuses to start', () => {
-  const lock = path.join(fs.mkdtempSync(path.join(process.env.TEMP ?? '/tmp', 'eng-lock-')), 'engine.lock')
-  const release = acquireInstanceLock(lock)
-  // Another live process (our parent) already holds it.
-  fs.writeFileSync(lock, String(process.ppid))
-  assert.throws(() => acquireInstanceLock(lock), AlreadyRunningError)
-  // A lock left by a dead PID is taken over.
-  fs.writeFileSync(lock, '999999')
-  const r2 = acquireInstanceLock(lock)
-  r2()
+test('ENG-51 a second engine process refuses to start', async () => {
+  // The killed-holder case is in smsEngine.fixes.test.ts (FIX-4).
+  const name = `wce-engine-eng51-${process.pid}`
+  const release = await acquireInstanceLock(name)
+  await assert.rejects(acquireInstanceLock(name), AlreadyRunningError)
   release()
-  assert.ok(!fs.existsSync(lock))
 })
 
 // ── ENG-53 / 54 ─────────────────────────────────────────────────────────────
@@ -1031,10 +1025,11 @@ test('ENG-53 reclaiming a stale claim: park → read back; found → sent; absen
   await pass(a)
   assert.equal(status(a, A.items[0].id), 'sent')
   assert.equal(a.bp.posts().length, 0)
-  // (b) no park, text already in the chat
+  // (b) no park, text already in the chat: the crash fell after the post
+  // (post_attempted_at is stamped before every post, so it is set).
   const b = makeWorld()
   b.bp.addChat({ id: 'c1', accountID: 'facebookgo.test' })
-  const Bb = seedBatch(b, 'sending', [{ ...threadItem('c1'), status: 'sending', claimed_at: old(b), rendered_text: 'already there' }])
+  const Bb = seedBatch(b, 'sending', [{ ...threadItem('c1'), status: 'sending', claimed_at: old(b), post_attempted_at: new Date(b.clock.now - 9 * 60_000 - 1000).toISOString(), rendered_text: 'already there' }])
   b.bp.messages.set('c1', [{ id: 'm0', isSender: true, text: 'already there', timestamp: new Date(b.clock.now - 9 * 60_000).toISOString() }])
   await pass(b)
   assert.equal(status(b, Bb.items[0].id), 'sent')

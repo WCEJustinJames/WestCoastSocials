@@ -43,7 +43,9 @@ export interface EngineConfig {
 export const REQUEST_TIMEOUT_MS = 20_000
 export const SEND_DELAY_MS = 1500
 export const MAX_PER_PASS = 20
-export const MAX_BATCHES_PER_PASS = 5
+/** Approved items read per page of a batch; held ones are paged past (FIX-3). */
+export const ITEM_PAGE = 60
+export const ITEM_MAX_PAGES = 50
 export const STALE_CLAIM_MS = 5 * 60_000
 export const FAIL_STREAK_PAUSE = 5
 export const UNREACHABLE_PASSES_PAUSE = 2
@@ -84,6 +86,16 @@ export function readEngineConfig(env: Record<string, string | undefined>): Engin
   }
   const beeperUrl = ((env.BEEPER_BASE_URL ?? env.BEEPER_API_URL ?? '').trim() || 'http://localhost:23373').replace(/\/+$/, '')
   return { supabaseUrl, serviceKey, beeperUrl, beeperToken, smsAccountId }
+}
+
+/** readEngineConfig without the throw: a bad SMS setting disables only the
+ *  send rail; the mirror and every other job keep running. */
+export function tryReadEngineConfig(env: Record<string, string | undefined>): { cfg: EngineConfig | null; error: string | null } {
+  try {
+    return { cfg: readEngineConfig(env), error: null }
+  } catch (e) {
+    return { cfg: null, error: (e as Error).message }
+  }
 }
 
 // ─── Pure helpers ───────────────────────────────────────────────────────────
@@ -224,6 +236,9 @@ export interface ItemRow {
   pending_chat_id?: string | null
   park_checks?: number | null
   park_checked_at?: string | null
+  /** Stamped, fenced on the claim, right before POST /messages; never moved.
+   *  Set means the message may already be in the chat (FIX-1). */
+  post_attempted_at?: string | null
 }
 
 export type GuardVerdict = { ok: true } | { ok: false; reason: string }
@@ -245,12 +260,14 @@ export interface EngineState {
   unreachablePasses: number
   /** When the current outage was first seen (null while reachable). */
   unreachableSince: number | null
+  /** The park and post columns exist (probed until they do, FIX-2). */
+  schemaOk: boolean
   /** op_id -> chat id still to fill onto inbox_new_chat_log (ENG-19). */
   fillDebts: Map<string, string>
 }
 
 export function newEngineState(): EngineState {
-  return { unreachablePasses: 0, unreachableSince: null, fillDebts: new Map() }
+  return { unreachablePasses: 0, unreachableSince: null, schemaOk: false, fillDebts: new Map() }
 }
 
 export interface PassOptions {
@@ -269,6 +286,8 @@ export interface PassResult {
   stuck: number
   paused: boolean
   autoPaused: string | null
+  /** Why the send rail did nothing this pass (e.g. the park migration is missing). */
+  railDisabled: string | null
 }
 
 interface Settings {
@@ -296,9 +315,11 @@ interface Pass {
   sentKeys: Set<string>
   budget: { leftMs: number }
   sends: number
+  /** A cap or spacing verdict already known this pass (FIX-3). */
+  gateHold: string | null
 }
 
-type Outcome = 'sent' | 'failed' | 'skipped' | 'held' | 'parked' | 'lost' | 'returned' | 'uncertain'
+type Outcome = 'sent' | 'failed' | 'skipped' | 'held' | 'parked' | 'lost' | 'returned' | 'uncertain' | 'stopped' | 'batchGone'
 
 // ─── Settings, accounts, auto-pause ─────────────────────────────────────────
 
@@ -358,12 +379,17 @@ async function countFailure(p: Pass, perDestination: boolean, what: string): Pro
 
 // ─── Item writes, every one fenced on the claim (ENG-48) ─────────────────────
 
+/** A PostgREST value inside or=(...), double-quoted and escaped. */
+function pgQuote(v: string): string {
+  return `"${v.slice(0, 200).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
 function fence(item: { id: string }, claimedAt: string | null, park?: { expect: 'none' | 'id' | 'either'; id?: string }): string {
   let q = `inbox_batch_items?id=eq.${enc(item.id)}&status=eq.sending`
   q += claimedAt ? `&claimed_at=eq.${enc(claimedAt)}` : '&claimed_at=is.null'
   if (park?.expect === 'none') q += '&pending_message_id=is.null'
   if (park?.expect === 'id') q += `&pending_message_id=eq.${enc(park.id ?? '')}`
-  if (park?.expect === 'either') q += `&or=(pending_message_id.is.null,pending_message_id.eq.${enc(park.id ?? '')})`
+  if (park?.expect === 'either') q += `&or=${enc(`(pending_message_id.is.null,pending_message_id.eq.${pgQuote(park.id ?? '')})`)}`
   return q
 }
 
@@ -421,6 +447,13 @@ function drainable(b: BatchRow | null, nowMs: number): boolean {
  *  while its batch still drains; to 'pending' if the batch was parked; left
  *  for a person if the batch was closed. Never after anything was posted. */
 async function returnItem(p: Pass, item: ItemRow, claimedAt: string | null, why: string): Promise<Outcome> {
+  // A post may already be in the chat (FIX-1): handed back, a fresh claim
+  // would post it again. It stays 'sending'; a later reclaim checks the chat
+  // before anything is sent.
+  if (item.post_attempted_at) {
+    p.deps.log(`item …${item.id.slice(-3)} could not go ahead (${why}); it may already have been posted, so it stays 'sending' for a later reclaim`)
+    return 'uncertain'
+  }
   try {
     const b = await readBatch(p, item.batch_id)
     if (drainable(b, p.deps.now())) {
@@ -514,10 +547,13 @@ async function openGate(p: Pass, item: ItemRow): Promise<string | null> {
       const before = await countToday(p, own.opened_at)
       return before < s.cap ? null : 'cap spent'
     }
+    // A verdict already reached this pass holds for the rest of it: held
+    // items then cost one read each, not a recount (FIX-3).
+    if (p.gateHold) return p.gateHold
     const count = await countToday(p)
-    if (count >= s.cap) return 'cap spent'
+    if (count >= s.cap) return (p.gateHold = 'cap spent')
     const latest = rows(await rest(p.deps, p.cfg, 'inbox_new_chat_log?kind=eq.marketing&select=opened_at&order=opened_at.desc&limit=1'))[0]
-    if (latest && p.deps.now() - new Date(latest.opened_at).getTime() < s.spacingSeconds * 1000) return 'spacing'
+    if (latest && p.deps.now() - new Date(latest.opened_at).getTime() < s.spacingSeconds * 1000) return (p.gateHold = 'spacing')
     return null
   } catch (e) {
     p.opensBlocked = true
@@ -640,7 +676,9 @@ async function alreadyInChat(p: Pass, chatId: string, text: string, sinceIso: st
   )
 }
 
-export type ConfirmResult = { verdict: 'sent' } | { verdict: 'failed'; error: string } | { verdict: 'pending' } | { verdict: 'deferred' }
+/** 'pending': read back, still in flight. 'unanswered': no read got any
+ *  answer at all, so no evidence either way (it spends no park check). */
+export type ConfirmResult = { verdict: 'sent' } | { verdict: 'failed'; error: string } | { verdict: 'pending' } | { verdict: 'unanswered' } | { verdict: 'deferred' }
 
 /** Read a send back by its pendingMessageID (ENG-25/26/47). Only the two
  *  FAIL states fail; PENDING or an unknown status keeps polling; a message
@@ -674,7 +712,7 @@ export async function confirmSend(deps: Deps, cfg: EngineConfig, chatId: string,
     reported = reported || Boolean(status)
   }
   if (seen && !reported) return { verdict: 'sent' }
-  return { verdict: 'pending' }
+  return seen ? { verdict: 'pending' } : { verdict: 'unanswered' }
 }
 
 // ─── One item ───────────────────────────────────────────────────────────────
@@ -714,6 +752,21 @@ interface ItemCtx {
   claimedAt?: string | null
 }
 
+/** Re-read the pause and the batch right before a claim (ENG-03, FIX-5). */
+async function claimGate(p: Pass, batchId: string): Promise<BatchRow | 'stopped' | 'batchGone'> {
+  const s = await readSettings(p)
+  if (!s || s.paused) {
+    p.result.paused = true
+    p.stop = true
+    return 'stopped'
+  }
+  p.settings = s
+  const b = await readBatch(p, batchId)
+  if (!drainable(b, p.deps.now())) return 'batchGone'
+  if (p.hooks.batchAllowed && !p.hooks.batchAllowed(b!)) return 'batchGone'
+  return b!
+}
+
 async function processItem(p: Pass, item: ItemRow, batch: BatchRow, ctx: ItemCtx = {}): Promise<Outcome> {
   const data = item.data ?? {}
   let route = routeOf(data)
@@ -732,8 +785,11 @@ async function processItem(p: Pass, item: ItemRow, batch: BatchRow, ctx: ItemCtx
   let needsOpen = false
   let preClaimError: string | null = null
   // A reclaimed item already holds a claim: a wait hands it back (ENG-23).
+  // A maybe-posted one is never handed back (returnItem refuses; FIX-1).
   const hold = (why: string): Promise<Outcome> | Outcome =>
-    ctx.reclaimedFrom !== undefined ? returnItem(p, item, ctx.claimedAt ?? null, why).then(() => 'held' as Outcome) : 'held'
+    ctx.reclaimedFrom !== undefined
+      ? returnItem(p, item, ctx.claimedAt ?? null, why).then((o) => (o === 'returned' ? 'held' : o))
+      : 'held'
   if (route.kind === 'sms') {
     key = phoneKey(data.phone)
     if (!key && data.outreach_id) {
@@ -762,6 +818,11 @@ async function processItem(p: Pass, item: ItemRow, batch: BatchRow, ctx: ItemCtx
   if (ctx.reclaimedFrom !== undefined) {
     claimedAt = ctx.claimedAt ?? null
   } else {
+    // Status, deadline and pause re-read IMMEDIATELY before the claim, after
+    // the scan and the cap reads above, which can take a while (FIX-5).
+    const gate = await claimGate(p, item.batch_id)
+    if (gate === 'stopped' || gate === 'batchGone') return gate
+    batch = gate
     claimedAt = await claim(p, item)
     if (!claimedAt) return 'lost'
   }
@@ -829,19 +890,34 @@ async function processItem(p: Pass, item: ItemRow, batch: BatchRow, ctx: ItemCtx
   }
 
   // ── Post (ENG-46: refresh the claim right before, never after) ──
-  claimedAt = await refreshClaim(p, item, claimedAt)
-  if (!claimedAt) return 'lost'
   const text = item.rendered_text ?? ''
-
-  if (ctx.reclaimedFrom !== undefined) {
+  let postAttemptedAt: string
+  if (item.post_attempted_at) {
+    // It may already be in the chat (a crash after the post, or a row that
+    // carries an earlier attempt): look before any resend (FIX-1, ENG-53).
+    claimedAt = await refreshClaim(p, item, claimedAt)
+    if (!claimedAt) return 'lost'
+    postAttemptedAt = item.post_attempted_at
     try {
-      if (await alreadyInChat(p, chatId!, text, ctx.reclaimedFrom ?? new Date(p.deps.now() - STALE_CLAIM_MS).toISOString())) {
+      if (await alreadyInChat(p, chatId!, text, postAttemptedAt)) {
         return writeSent(p, item, batch, claimedAt, chatId!, recipientKey, { expect: 'none' })
       }
     } catch (e) {
       p.deps.log(`item …${item.id.slice(-3)}: could not check the chat before a resend (${(e as Error).message}); left for a later pass`)
       return 'uncertain'
     }
+  } else {
+    // Stamp the attempt with the claim refresh, fenced on our claim, BEFORE
+    // the post, and never move it afterwards (FIX-1).
+    const stamp = rows(await rest(p.deps, p.cfg, `${fence(item, claimedAt, { expect: 'none' })}&post_attempted_at=is.null&select=claimed_at,post_attempted_at`, {
+      method: 'PATCH',
+      prefer: 'return=representation',
+      body: JSON.stringify({ claimed_at: nowIso(p), post_attempted_at: nowIso(p) }),
+    }))[0]
+    if (!stamp?.claimed_at) return 'lost'
+    claimedAt = stamp.claimed_at as string
+    postAttemptedAt = stamp.post_attempted_at as string
+    item.post_attempted_at = postAttemptedAt
   }
 
   let attachment: unknown
@@ -864,7 +940,7 @@ async function processItem(p: Pass, item: ItemRow, batch: BatchRow, ctx: ItemCtx
   if (post.kind === 'noAnswer') {
     // It may still deliver: never repost; look for it first (ENG-28).
     try {
-      if (await alreadyInChat(p, chatId!, text, claimedAt)) {
+      if (await alreadyInChat(p, chatId!, text, postAttemptedAt)) {
         return writeSent(p, item, batch, claimedAt, chatId!, recipientKey, { expect: 'none' })
       }
     } catch {
@@ -922,13 +998,48 @@ function parkDue(it: ItemRow, nowMs: number): boolean {
   return nowMs - new Date(it.park_checked_at).getTime() >= wait
 }
 
+/** The send-ledger key for an item: '+61<key>' for SMS however it was
+ *  resolved, the chat id otherwise (FIX-6). */
+async function recipientKeyOf(p: Pass, it: ItemRow, chat: string): Promise<string> {
+  const data = it.data ?? {}
+  if (routeOf(data).kind !== 'sms') return data.beeper_chat_id ?? chat
+  let key = phoneKey(data.phone)
+  if (!key && data.outreach_id) {
+    const c = rows(await rest(p.deps, p.cfg, `inbox_outreach?id=eq.${enc(data.outreach_id)}&select=phone`))[0]
+    key = phoneKey(c?.phone)
+  }
+  return isMobileKey(key) ? `+61${key}` : chat
+}
+
+async function parkSent(p: Pass, it: ItemRow, chat: string, pm: string): Promise<void> {
+  const n = await patchItem(p, fence(it, it.claimed_at ?? null, { expect: 'id', id: pm }), { status: 'sent', chat_id: chat })
+  if (!n) return
+  p.result.resolved += 1
+  const batch = await readBatch(p, it.batch_id)
+  if (batch) {
+    try {
+      await p.hooks.afterSent?.({ item: it, batch, chatId: chat, recipientKey: await recipientKeyOf(p, it, chat) })
+    } catch { /* the ledger is best-effort */ }
+  }
+}
+
+/** Is the outbound copy in the inbox mirror? (An exhausted park's last test.) */
+async function inMirror(p: Pass, chat: string, text: string, sinceIso: string): Promise<boolean> {
+  const convs = rows(await rest(p.deps, p.cfg, `inbox_conversations?external_chat_id=eq.${enc(chat)}&select=id`))
+  if (!convs.length) return false
+  const since = new Date(new Date(sinceIso).getTime() - 60_000).toISOString()
+  const msgs = rows(await rest(p.deps, p.cfg,
+    `inbox_messages?conversation_id=in.(${convs.map((c) => c.id).join(',')})&direction=eq.outbound&timestamp=gte.${enc(since)}&select=text&limit=50`))
+  return msgs.some((m) => (m.text ?? '') === text)
+}
+
 async function resolveParks(p: Pass): Promise<void> {
   const PAGE = 100
   for (let page = 0; page < 5 && !p.stop; page++) {
     const list = rows(await rest(p.deps, p.cfg,
       'inbox_batch_items?status=eq.sending&pending_message_id=not.is.null'
       + `&park_checks=lt.${PARK_MAX_CHECKS}`
-      + '&select=id,batch_id,claimed_at,rendered_text,data,pending_message_id,pending_chat_id,park_checks,park_checked_at'
+      + '&select=id,batch_id,claimed_at,rendered_text,data,pending_message_id,pending_chat_id,park_checks,park_checked_at,post_attempted_at'
       + `&order=park_checked_at.asc.nullsfirst&limit=${PAGE}&offset=${page * PAGE}`)) as ItemRow[]
     for (const it of list) {
       if (!parkDue(it, p.deps.now())) continue
@@ -939,21 +1050,28 @@ async function resolveParks(p: Pass): Promise<void> {
       const fenced = { expect: 'id' as const, id: pm }
       try {
         if (v.verdict === 'sent') {
-          const n = await patchItem(p, fence(it, it.claimed_at ?? null, fenced), { status: 'sent', chat_id: chat })
-          if (n) {
-            p.result.resolved += 1
-            const batch = await readBatch(p, it.batch_id)
-            if (batch) {
-              try { await p.hooks.afterSent?.({ item: it, batch, chatId: chat, recipientKey: chat }) } catch { /* ledger is best-effort */ }
-            }
-          }
+          await parkSent(p, it, chat, pm)
         } else if (v.verdict === 'failed') {
           const n = await patchItem(p, fence(it, it.claimed_at ?? null, fenced), { status: 'failed', error: v.error, pending_message_id: null })
           if (n) p.result.resolved += 1
         } else if (v.verdict === 'pending') {
-          await patchItem(p, fence(it, it.claimed_at ?? null, fenced), { park_checks: (Number(it.park_checks) || 0) + 1, park_checked_at: nowIso(p) })
+          const checks = (Number(it.park_checks) || 0) + 1
+          if (checks < PARK_MAX_CHECKS) {
+            await patchItem(p, fence(it, it.claimed_at ?? null, fenced), { park_checks: checks, park_checked_at: nowIso(p) })
+          } else if (await inMirror(p, chat, it.rendered_text ?? '', it.post_attempted_at ?? it.claimed_at ?? nowIso(p))) {
+            // Out of checks: the mirror is the last word. Its copy proves it went.
+            await parkSent(p, it, chat, pm)
+          } else {
+            const n = await patchItem(p, fence(it, it.claimed_at ?? null, fenced), {
+              status: 'failed',
+              park_checks: checks,
+              error: `Beeper never confirmed this send after ${checks} checks, and its copy is not in the inbox mirror, so it may not have arrived`,
+            })
+            if (n) p.result.resolved += 1
+          }
         }
-        // 'deferred': cut short by the budget; no verdict, no attempt spent.
+        // 'unanswered' (nobody answered the read) and 'deferred' (cut short by
+        // the budget): no verdict, and no check spent.
       } catch (e) {
         p.deps.log(`park …${it.id.slice(-3)}: write failed (${(e as Error).message}); retried next pass`)
       }
@@ -964,35 +1082,57 @@ async function resolveParks(p: Pass): Promise<void> {
 
 // ─── Stale claims (ENG-53) ──────────────────────────────────────────────────
 
+const RECLAIM_PAGE = 20
+const RECLAIM_MAX_PAGES = 10
+
 async function reclaimStale(p: Pass): Promise<void> {
   const cutoff = new Date(p.deps.now() - STALE_CLAIM_MS).toISOString()
-  const list = rows(await rest(p.deps, p.cfg,
-    'inbox_batch_items?status=eq.sending&pending_message_id=is.null'
-    + `&or=(claimed_at.lt.${enc(cutoff)},claimed_at.is.null)`
-    + '&select=id,batch_id,claimed_at,rendered_text,data,created_at&order=claimed_at.asc.nullsfirst&limit=20')) as ItemRow[]
-  for (const it of list) {
-    if (p.stop || p.sends >= MAX_PER_PASS) return
-    const batch = await readBatch(p, it.batch_id)
-    if (!drainable(batch, p.deps.now()) || (p.hooks.batchAllowed && !p.hooks.batchAllowed(batch!))) {
-      if (!drainable(batch, p.deps.now())) {
-        p.deps.log(`stale item …${it.id.slice(-3)}: its batch has left the queue; left 'sending' for a person`)
-        p.result.stuck += 1
+  const batches = new Map<string, BatchRow | null>()
+  // Rows left alone this pass (stuck in a closed batch, or waiting for the
+  // SMS account) stay in the stale set; page past them so they never starve
+  // a real orphan behind them.
+  let skipped = 0
+  for (let page = 0; page < RECLAIM_MAX_PAGES; page++) {
+    const list = rows(await rest(p.deps, p.cfg,
+      'inbox_batch_items?status=eq.sending&pending_message_id=is.null'
+      + `&or=(claimed_at.lt.${enc(cutoff)},claimed_at.is.null)`
+      + '&select=id,batch_id,claimed_at,rendered_text,data,created_at,post_attempted_at'
+      + `&order=claimed_at.asc.nullsfirst,id.asc&limit=${RECLAIM_PAGE}&offset=${skipped}`)) as ItemRow[]
+    for (const it of list) {
+      if (p.stop || p.sends >= MAX_PER_PASS) return
+      if (!batches.has(it.batch_id)) batches.set(it.batch_id, await readBatch(p, it.batch_id))
+      const listed = batches.get(it.batch_id) ?? null
+      if (!drainable(listed, p.deps.now()) || (p.hooks.batchAllowed && !p.hooks.batchAllowed(listed!))) {
+        if (!drainable(listed, p.deps.now())) {
+          p.deps.log(`stale item …${it.id.slice(-3)}: its batch has left the queue; left 'sending' for a person`)
+          p.result.stuck += 1
+        }
+        skipped++
+        continue
       }
-      continue
+      // An sms item whose chat cannot be looked up now might already have
+      // been posted; wait for the account rather than hand it back unchecked.
+      if (routeOf(it.data).kind === 'sms' && !p.smsReady) { skipped++; continue }
+      try {
+        // A reclaim is a claim: the pause and the batch, re-read right before (FIX-5).
+        const gate = await claimGate(p, it.batch_id)
+        if (gate === 'stopped') return
+        if (gate === 'batchGone') { batches.set(it.batch_id, null); skipped++; continue }
+        const old = it.claimed_at ?? null
+        const r = await rest(p.deps, p.cfg, `${fence(it, old, { expect: 'none' })}&select=claimed_at`, {
+          method: 'PATCH',
+          prefer: 'return=representation',
+          body: JSON.stringify({ claimed_at: nowIso(p) }),
+        })
+        const mine = rows(r)[0]?.claimed_at ?? null
+        if (!mine) continue
+        const outcome = await processItem(p, it, gate, { reclaimedFrom: old, claimedAt: mine })
+        tally(p, outcome)
+      } catch (e) {
+        p.deps.log(`stale item …${it.id.slice(-3)}: ${(e as Error).message}`)
+      }
     }
-    // An sms item whose chat cannot be looked up now might already have been
-    // posted; wait for the account rather than hand it back unchecked.
-    if (routeOf(it.data).kind === 'sms' && !p.smsReady) continue
-    const old = it.claimed_at ?? null
-    const r = await rest(p.deps, p.cfg, `${fence(it, old, { expect: 'none' })}&select=claimed_at`, {
-      method: 'PATCH',
-      prefer: 'return=representation',
-      body: JSON.stringify({ claimed_at: nowIso(p) }),
-    })
-    const mine = rows(r)[0]?.claimed_at ?? null
-    if (!mine) continue
-    const outcome = await processItem(p, it, batch!, { reclaimedFrom: old, claimedAt: mine })
-    tally(p, outcome)
+    if (list.length < RECLAIM_PAGE) return
   }
 }
 
@@ -1012,15 +1152,41 @@ async function payFillDebts(p: Pass): Promise<void> {
   for (const [opId, chatId] of [...p.state.fillDebts]) await fillChatId(p, opId, chatId)
 }
 
+/** The park and post columns this rail needs (proposed migration 20261019120000). */
+const SCHEMA_PROBE = 'inbox_batch_items?select=pending_message_id,pending_chat_id,park_checks,park_checked_at,post_attempted_at&limit=0'
+
 export async function runPass(deps: Deps, cfg: EngineConfig, state: EngineState, hooks: Hooks = {}, opts: PassOptions = {}): Promise<PassResult> {
   const p: Pass = {
     deps, cfg, state, hooks,
-    result: { sent: 0, failed: 0, skipped: 0, held: 0, parked: 0, resolved: 0, returned: 0, stuck: 0, paused: false, autoPaused: null },
+    result: { sent: 0, failed: 0, skipped: 0, held: 0, parked: 0, resolved: 0, returned: 0, stuck: 0, paused: false, autoPaused: null, railDisabled: null },
     settings: null, smsReady: false, opensBlocked: false, failStreak: 0, stop: false,
     opened: new Map(), scan: null, scanFailed: false, sentKeys: new Set(),
-    budget: { leftMs: CONFIRM_BUDGET_MS }, sends: 0,
+    budget: { leftMs: CONFIRM_BUDGET_MS }, sends: 0, gateHold: null,
   }
 
+  // No send rail without its columns: probed until they exist (FIX-2).
+  if (!state.schemaOk) {
+    try {
+      await rest(deps, cfg, SCHEMA_PROBE)
+      state.schemaOk = true
+    } catch (e) {
+      p.result.railDisabled = `send rail OFF: the park columns are missing (apply migration 20261019120000): ${(e as Error).message}`
+      deps.log(p.result.railDisabled)
+      return p.result
+    }
+  }
+
+  try {
+    await drain(p, opts)
+  } catch (e) {
+    // Nothing in the rail may take the rest of the engine down with it.
+    deps.log(`send rail error (pass abandoned, retried next pass): ${(e as Error).message}`)
+  }
+  return p.result
+}
+
+async function drain(p: Pass, opts: PassOptions): Promise<void> {
+  const { deps, cfg, state, hooks } = p
   // Read-only bookkeeping runs even while paused (ENG-06).
   await payFillDebts(p)
   p.settings = await readSettings(p)
@@ -1029,16 +1195,20 @@ export async function runPass(deps: Deps, cfg: EngineConfig, state: EngineState,
   const paused = !p.settings || p.settings.paused
   p.result.paused = paused
 
-  try {
-    await resolveParks(p)
-  } catch (e) {
-    deps.log(`park resolution failed: ${(e as Error).message}`)
+  // With Beeper unreachable a read-back can prove nothing; spend no checks.
+  if (acct.reachable) {
+    try {
+      await resolveParks(p)
+    } catch (e) {
+      deps.log(`park resolution failed: ${(e as Error).message}`)
+    }
   }
 
   // ENG-38(b): Beeper or the SMS account unreachable on consecutive passes
-  // AND for at least UNREACHABLE_MIN_MS (Justin, 2026-10-19): passes are 15 s
-  // apart, so two alone would pause sends over a Beeper update's restart.
-  if (acct.ready) {
+  // AND for at least UNREACHABLE_MIN_MS (Justin, 2026-10-19), counted only
+  // while claims are allowed: an overnight restart in quiet hours must not
+  // pause the next day's sends.
+  if (acct.ready || opts.allowClaims === false) {
     state.unreachablePasses = 0
     state.unreachableSince = null
   } else {
@@ -1051,56 +1221,74 @@ export async function runPass(deps: Deps, cfg: EngineConfig, state: EngineState,
     await autoPause(p, acct.reachable
       ? `The SMS account has not been connected in Beeper for ${mins} min (${state.unreachablePasses} passes in a row)`
       : `Beeper Desktop has been unreachable for ${mins} min (${state.unreachablePasses} passes in a row)`)
-    return p.result
+    return
   }
-  if (paused || opts.allowClaims === false || p.stop) return p.result
+  if (paused || opts.allowClaims === false || p.stop) return
 
-  await reclaimStale(p)
+  try {
+    await reclaimStale(p)
+  } catch (e) {
+    deps.log(`stale-claim reclaim failed: ${(e as Error).message}`)
+  }
 
   const batches = (rows(await rest(deps, cfg,
     `inbox_batches?status=in.(approved,sending)&expires_at=gt.${enc(nowIso(p))}`
     + '&select=id,status,expires_at,is_outreach,scheduled_for,approved_at,created_at,attachment_name,attachment_mime'
     + '&order=created_at.asc&limit=20')) as BatchRow[])
     .filter((b) => !hooks.batchAllowed || hooks.batchAllowed(b))
-    .slice(0, MAX_BATCHES_PER_PASS)
 
   for (const listed of batches) {
     if (p.stop || p.sends >= MAX_PER_PASS) break
-    await rest(deps, cfg, `inbox_batches?id=eq.${enc(listed.id)}&status=eq.approved`, {
-      method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ status: 'sending' }),
-    })
+    try {
+      await drainBatch(p, listed)
+    } catch (e) {
+      deps.log(`batch …${listed.id.slice(-3)}: ${(e as Error).message}`)
+    }
+  }
+}
+
+async function drainBatch(p: Pass, listed: BatchRow): Promise<void> {
+  const { deps, cfg } = p
+  await rest(deps, cfg, `inbox_batches?id=eq.${enc(listed.id)}&status=eq.approved`, {
+    method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ status: 'sending' }),
+  })
+  // Page through the batch's approved items. Items taken this pass leave the
+  // approved set; held or handed-back ones stay, so the next page starts
+  // past them and they never starve the items behind them (FIX-3).
+  let offset = 0
+  let gone = false
+  for (let page = 0; page < ITEM_MAX_PAGES && !gone; page++) {
+    if (p.stop || p.sends >= MAX_PER_PASS) break
     const items = rows(await rest(deps, cfg,
       `inbox_batch_items?batch_id=eq.${enc(listed.id)}&status=eq.approved`
-      + '&select=id,batch_id,status,rendered_text,data,created_at'
-      + `&order=created_at.asc,id.asc&limit=${MAX_PER_PASS * 3}`)) as ItemRow[]
-
+      + '&select=id,batch_id,status,rendered_text,data,created_at,post_attempted_at'
+      + `&order=created_at.asc,id.asc&limit=${ITEM_PAGE}&offset=${offset}`)) as ItemRow[]
+    let stayed = 0
     for (const item of items) {
       if (p.stop || p.sends >= MAX_PER_PASS) break
-      // Never trust the list: re-read the batch and the pause first (ENG-03).
-      const batch = await readBatch(p, listed.id)
-      if (!drainable(batch, deps.now())) break
-      const s = await readSettings(p)
-      if (!s || s.paused) { p.result.paused = true; p.stop = true; break }
-      p.settings = s
       const before = p.sends
       let outcome: Outcome
       try {
-        outcome = await processItem(p, item, batch!)
+        outcome = await processItem(p, item, listed)
       } catch (e) {
         deps.log(`item …${item.id.slice(-3)}: ${(e as Error).message}`)
         outcome = 'uncertain'
       }
+      if (outcome === 'stopped') return
+      if (outcome === 'batchGone') { gone = true; break }
+      if (outcome === 'held' || outcome === 'returned' || outcome === 'uncertain') stayed++
       tally(p, outcome)
       if (p.sends > before) await deps.sleep(SEND_DELAY_MS)
     }
-
-    // Close only when nothing is left to drain (ENG-54).
-    const left = rows(await rest(deps, cfg, `inbox_batch_items?batch_id=eq.${enc(listed.id)}&status=in.(approved,sending)&select=id&limit=1`))
-    if (!left.length) {
-      await rest(deps, cfg, `inbox_batches?id=eq.${enc(listed.id)}&status=in.(approved,sending)`, {
-        method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ status: 'sent' }),
-      })
-    }
+    offset += stayed
+    if (items.length < ITEM_PAGE) break
   }
-  return p.result
+
+  // Close only when nothing is left to drain (ENG-54).
+  const left = rows(await rest(deps, cfg, `inbox_batch_items?batch_id=eq.${enc(listed.id)}&status=in.(approved,sending)&select=id&limit=1`))
+  if (!left.length) {
+    await rest(deps, cfg, `inbox_batches?id=eq.${enc(listed.id)}&status=in.(approved,sending)`, {
+      method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ status: 'sent' }),
+    })
+  }
 }
