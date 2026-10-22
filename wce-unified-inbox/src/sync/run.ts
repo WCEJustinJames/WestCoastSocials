@@ -46,7 +46,7 @@ import { extractReceipts } from './receipts'
 // way to tell from the database whether WESTCOAST1 had pulled it — the answer
 // had to come off a terminal someone scrolled back through, twice. A version
 // string that doesn't move is a version string that lies.
-const SYNC_VERSION = 'g54-sms-by-number'
+const SYNC_VERSION = 'g55-batch-all-hours'
 
 requireEnv(['beeperToken', 'supabaseUrl', 'supabaseServiceKey'])
 
@@ -250,7 +250,7 @@ async function runOnce(): Promise<void> {
   // hours). Everything that sends runs before the mirror.
 
   // Hard quiet hours: between QUIET_START and QUIET_END (default 21:00-09:00)
-  // proactive OUTREACH is held — approved drafts and batches. EXEMPT, per Justin:
+  // the approved-draft outbox is held. Approved batches run at every hour. EXEMPT:
   // the auto-reply path and the live seat-list, so a player who replies is always
   // answered (even a "no", even at night) and the roster stays current through a
   // late game. The inbound mirror and AI drafting below also run, so anything held
@@ -259,8 +259,8 @@ async function runOnce(): Promise<void> {
   if (quiet !== wasQuiet) {
     console.log(
       quiet
-        ? '[quiet] quiet hours, holding ALL outbound sends until the window ends'
-        : '[quiet] quiet hours over, outbound sends resume',
+        ? '[quiet] quiet hours, holding draft-outbox sends; approved batches stay available'
+        : '[quiet] quiet hours over, draft-outbox sends resume',
     )
     wasQuiet = quiet
   }
@@ -935,8 +935,9 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 
 /**
  * One pass of the batch send rail. It reads sends_paused itself (failing
- * closed) and still resolves parked sends while paused or in quiet hours; it
- * claims nothing new then. Never throws.
+ * closed) and still resolves parked sends while paused. Approved batches may
+ * send at any hour; their schedule, expiry and all delivery guards still apply.
+ * Never throws.
  */
 let railOffLogged = 0
 async function batchRail(): Promise<void> {
@@ -948,7 +949,7 @@ async function batchRail(): Promise<void> {
     return
   }
   try {
-    const batch = await processBatches(supabaseAdmin, engineCfg, engineState, { allowClaims: !inQuietHours() })
+    const batch = await processBatches(supabaseAdmin, engineCfg, engineState)
     if (batch?.railDisabled && Date.now() - railOffLogged > 10 * 60_000) {
       railOffLogged = Date.now()
       console.error(`[batch] ${batch.railDisabled}`)

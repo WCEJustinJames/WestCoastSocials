@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
-import { env } from '../lib/env'
 import { guardSend } from './guards'
 import { textHash, alreadySent, recordSent } from './ledger'
 import { runPass, type BatchRow, type EngineConfig, type EngineState, type Hooks, type PassResult } from './smsEngine'
@@ -24,11 +23,12 @@ export function normalizeAuMobile(raw: string): string | null {
 /**
  * Batch send rail. The send itself is smsEngine.runPass (by-number SMS,
  * new-chat cap, read-back, parks, fenced write-backs, auto-pause); this file
- * supplies the engine's own guards and the outreach window as hooks.
+ * supplies the engine's own guards and scheduled-send check as hooks.
  *
  * Nothing sends unless the human approved the batch, and nothing new is
  * claimed while inbox_settings.sends_paused is on (read by runPass itself,
- * failing CLOSED). Parks are still resolved while paused or in quiet hours.
+ * failing CLOSED). Parks still resolve while paused. Approved batches have
+ * no daily sending window (Justin, 22 Oct 2026); expiry remains enforced.
  */
 let busy = false
 
@@ -36,7 +36,7 @@ export async function processBatches(
   db: DB,
   cfg: EngineConfig,
   state: EngineState,
-  opts: { allowClaims: boolean },
+  opts: { allowClaims: boolean } = { allowClaims: true },
 ): Promise<PassResult | null> {
   // A pass that outlives PASS_TIMEOUT_MS keeps running while the next one
   // starts; two drains in one process would race the cap count (ENG-51).
@@ -60,25 +60,15 @@ export async function processBatches(
   }
 }
 
+/** Explicit future schedules still hold; time of day does not block approval. */
+export function batchAllowedBySchedule(b: BatchRow, now = Date.now()): boolean {
+  return !(b.scheduled_for && new Date(b.scheduled_for).getTime() > now)
+}
+
 function hooks(db: DB): Hooks {
   const attachments = new Map<string, { dataBase64: string; fileName?: string; mimeType?: string } | undefined>()
   return {
-    batchAllowed: (b: BatchRow) => {
-      const now = Date.now()
-      if (b.scheduled_for && new Date(b.scheduled_for).getTime() > now) return false
-      if (b.is_outreach === false) return true
-      // Daily outreach window: proactive blasts send between OUTREACH_START
-      // and OUTREACH_CUTOFF, and a batch APPROVED inside today's window keeps
-      // draining after the cutoff (Justin: a list teed up at 4:25 must not
-      // strand half-sent).
-      const local = new Date()
-      const mins = (d: Date) => d.getHours() * 60 + d.getMinutes()
-      const inWindow = (d: Date) => mins(d) >= env.outreachStartMins && mins(d) < env.outreachCutoffMins
-      if (inWindow(local)) return true
-      if (!b.approved_at) return false
-      const a = new Date(b.approved_at)
-      return a.toDateString() === local.toDateString() && inWindow(a)
-    },
+    batchAllowed: batchAllowedBySchedule,
 
     guard: async ({ item, batch, threadChatId, recipientKey }) => {
       const data = item.data ?? {}

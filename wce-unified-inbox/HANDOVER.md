@@ -129,3 +129,10 @@ Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live*
 - Cash Games FB group chat id: `!COGOXsoBtEKMPhRekSd9:beeper.local` (`inbox_group_post`)
 - Justin digest phone: `+61459686980`
 - Git commit identity: `user.name=Claude`, `user.email=noreply@anthropic.com`
+
+
+## Approved batches can send at any hour - 22 October 2026
+
+Justin requested removal of the daily outreach sending window and the quiet-hour hold for approved batches. `batches.ts` now checks only the explicit future schedule; `run.ts` no longer disables batch claims during quiet hours. Version: `g55-batch-all-hours`. Do not restore the former 10:00 to 17:15 or 21:00 to 09:00 batch gates. Explicit schedules, expiry, human approval, the global send pause, opt-outs, recipient restrictions, duplicate prevention, daily new-chat caps and SMS connectivity protection still apply. Quiet-hour behavior outside the batch rail is unchanged.
+
+Validation: `npm run typecheck` and `npm test`; the batch-hours tests use fake services only and cover evening/overnight sends plus future schedules, expiry, drafts and pause holds.
