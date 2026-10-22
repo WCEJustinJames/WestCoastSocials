@@ -23,6 +23,25 @@ export function checkRendered(text: string | null | undefined): GuardVerdict {
   return { ok: true }
 }
 
+/** An owner-approved retry belongs to one item and recipient, until its deadline. */
+function ownerApprovedNoReplyRetry(args: {
+  batchId?: string
+  batchItemId?: string
+  outreachId?: string | null
+  noReplyOverride?: unknown
+}, resolvedId: string): boolean {
+  const raw = args.noReplyOverride
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+  const approval = raw as Record<string, unknown>
+  return approval.reason === 'owner_requested_retry'
+    && !!args.batchId && approval.batch_id === args.batchId
+    && !!args.batchItemId && approval.item_id === args.batchItemId
+    && !!args.outreachId && approval.outreach_id === args.outreachId
+    && approval.outreach_id === resolvedId
+    && typeof approval.expires_at === 'string'
+    && Date.parse(approval.expires_at) > Date.now()
+}
+
 type OutreachGuardRow = {
   id: string
   do_not_message: boolean | null
@@ -49,6 +68,10 @@ export async function guardSend(
   args: {
     renderedText: string | null | undefined
     isOutreach: boolean
+    // The owner may explicitly retry only the unanswered-invitation hold.
+    batchId?: string
+    batchItemId?: string
+    noReplyOverride?: unknown
     outreachId?: string | null
     // For items with no CRM id (thread- or Inbox-sourced sends): the recipient's
     // chat, so the per-player flags are still resolved and re-checked. Without
@@ -128,7 +151,7 @@ export async function guardSend(
   // their most recent reply (or ever, if they've never replied). First-time and
   // low-count contacts are exempt, and time-since-last-contact no longer gates
   // anything — a regular can be invited every night until they go quiet.
-  if (args.isOutreach) {
+  if (args.isOutreach && !ownerApprovedNoReplyRetry(args, resolvedId)) {
     // Their most recent reply, resolved via the linked thread (if any).
     let lastReply = '1970-01-01T00:00:00Z'
     if (row.beeper_chat_id) {

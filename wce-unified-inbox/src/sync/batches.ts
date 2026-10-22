@@ -76,6 +76,9 @@ function hooks(db: DB): Hooks {
       const verdict = await guardSend(db, {
         renderedText: item.rendered_text,
         isOutreach,
+        batchId: batch.id,
+        batchItemId: item.id,
+        noReplyOverride: data.no_reply_override,
         outreachId: data.outreach_id,
         beeperChatId: data.beeper_chat_id,
         conversationId: data.conversation_id,

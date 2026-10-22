@@ -136,3 +136,8 @@ Shipped the prioritised roadmap (migrations `0038`–`0044`, **all applied live*
 Justin requested removal of the daily outreach sending window and the quiet-hour hold for approved batches. `batches.ts` now checks only the explicit future schedule; `run.ts` no longer disables batch claims during quiet hours. Version: `g55-batch-all-hours`. Do not restore the former 10:00 to 17:15 or 21:00 to 09:00 batch gates. Explicit schedules, expiry, human approval, the global send pause, opt-outs, recipient restrictions, duplicate prevention, daily new-chat caps and SMS connectivity protection still apply. Quiet-hour behavior outside the batch rail is unchanged.
 
 Validation: `npm run typecheck` and `npm test`; the batch-hours tests use fake services only and cover evening/overnight sends plus future schedules, expiry, drafts and pause holds.
+
+
+## One-item retry of the unanswered-invitation hold - 22 October 2026
+
+Justin explicitly requested another contact for the other Woodvale recipients held by `no_reply_4`, excluding Phillip Perrot. The global four-unanswered-invitations rule remains. An owner-approved item may carry `data.no_reply_override` with `reason: owner_requested_retry`, its exact `batch_id`, `item_id`, `outreach_id`, and an ISO `expires_at`. The guard accepts the marker only for that exact item and CRM recipient before expiry, and bypasses only the no-reply check. Text validation, bans, opt-outs, hidden/staff/snoozed/first-time holds, canonical restrictions, duplicate prevention, schedules, expiry, caps and the global pause remain. Copying the marker to another item or batch does not authorize another send. Runtime version: `g56-no-reply-retry`.
