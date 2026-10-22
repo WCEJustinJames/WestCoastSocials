@@ -43,6 +43,9 @@ export interface EngineConfig {
 export const REQUEST_TIMEOUT_MS = 20_000
 export const SEND_DELAY_MS = 1500
 export const MAX_PER_PASS = 20
+// Owner-requested rush applies only to this already-approved Woodvale batch.
+const RUSH_BATCH_ID = 'dd090193-9e06-4eb0-b9a1-ccbe02d1ee5a'
+const passLimitForBatch = (id: string): number => id === RUSH_BATCH_ID ? 200 : MAX_PER_PASS
 /** Approved items read per page of a batch; held ones are paged past (FIX-3). */
 export const ITEM_PAGE = 60
 export const ITEM_MAX_PAGES = 50
@@ -1238,7 +1241,8 @@ async function drain(p: Pass, opts: PassOptions): Promise<void> {
     .filter((b) => !hooks.batchAllowed || hooks.batchAllowed(b))
 
   for (const listed of batches) {
-    if (p.stop || p.sends >= MAX_PER_PASS) break
+    if (p.stop) break
+    if (p.sends >= passLimitForBatch(listed.id)) continue
     try {
       await drainBatch(p, listed)
     } catch (e) {
@@ -1249,6 +1253,7 @@ async function drain(p: Pass, opts: PassOptions): Promise<void> {
 
 async function drainBatch(p: Pass, listed: BatchRow): Promise<void> {
   const { deps, cfg } = p
+  const passLimit = passLimitForBatch(listed.id)
   await rest(deps, cfg, `inbox_batches?id=eq.${enc(listed.id)}&status=eq.approved`, {
     method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ status: 'sending' }),
   })
@@ -1258,14 +1263,14 @@ async function drainBatch(p: Pass, listed: BatchRow): Promise<void> {
   let offset = 0
   let gone = false
   for (let page = 0; page < ITEM_MAX_PAGES && !gone; page++) {
-    if (p.stop || p.sends >= MAX_PER_PASS) break
+    if (p.stop || p.sends >= passLimit) break
     const items = rows(await rest(deps, cfg,
       `inbox_batch_items?batch_id=eq.${enc(listed.id)}&status=eq.approved`
       + '&select=id,batch_id,status,rendered_text,data,created_at,post_attempted_at'
       + `&order=created_at.asc,id.asc&limit=${ITEM_PAGE}&offset=${offset}`)) as ItemRow[]
     let stayed = 0
     for (const item of items) {
-      if (p.stop || p.sends >= MAX_PER_PASS) break
+      if (p.stop || p.sends >= passLimit) break
       const before = p.sends
       let outcome: Outcome
       try {
@@ -1278,7 +1283,7 @@ async function drainBatch(p: Pass, listed: BatchRow): Promise<void> {
       if (outcome === 'batchGone') { gone = true; break }
       if (outcome === 'held' || outcome === 'returned' || outcome === 'uncertain') stayed++
       tally(p, outcome)
-      if (p.sends > before) await deps.sleep(SEND_DELAY_MS)
+      if (p.sends > before && listed.id !== RUSH_BATCH_ID) await deps.sleep(SEND_DELAY_MS)
     }
     offset += stayed
     if (items.length < ITEM_PAGE) break
