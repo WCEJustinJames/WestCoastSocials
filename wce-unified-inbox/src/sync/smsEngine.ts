@@ -19,6 +19,8 @@
 // Nothing here uses supabase-js; the engine's own guard checks (which do)
 // come in through `hooks`.
 
+import { isFinalRecipient } from './finalRecipient'
+
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
 export interface Deps {
@@ -247,6 +249,8 @@ export interface ItemRow {
 export type GuardVerdict = { ok: true } | { ok: false; reason: string }
 
 export interface Hooks {
+  /** Prepare the owner's standing final recipient before any ordinary sends. */
+  prepareBatch?: (batch: BatchRow) => Promise<void>
   /** Engine-side guards run after the claim (rendered text, bans, staff,
    *  no_reply_<n>, live conversation, already-sent ledger). */
   guard?: (ctx: { item: ItemRow; batch: BatchRow; threadChatId: string | null; recipientKey: string }) => Promise<GuardVerdict>
@@ -783,6 +787,12 @@ async function processItem(p: Pass, item: ItemRow, batch: BatchRow, ctx: ItemCtx
   }
 
   // ── Read-only decisions BEFORE the claim ──
+  // Wait for ordinary recipients, including their parked delivery checks.
+  if (isFinalRecipient(item)) {
+    const remaining = rows(await rest(p.deps, p.cfg,
+      `inbox_batch_items?batch_id=eq.${enc(item.batch_id)}&id=neq.${enc(item.id)}&status=in.(approved,sending)&select=id&limit=1`))
+    if (remaining.length) return 'held'
+  }
   let key = ''
   let smsChat: string | null = null
   let needsOpen = false
@@ -1254,6 +1264,7 @@ async function drain(p: Pass, opts: PassOptions): Promise<void> {
 async function drainBatch(p: Pass, listed: BatchRow): Promise<void> {
   const { deps, cfg } = p
   const passLimit = passLimitForBatch(listed.id)
+  await p.hooks.prepareBatch?.(listed)
   await rest(deps, cfg, `inbox_batches?id=eq.${enc(listed.id)}&status=eq.approved`, {
     method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ status: 'sending' }),
   })

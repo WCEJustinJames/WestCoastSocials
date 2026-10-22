@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 import { guardSend } from './guards'
+import { prepareFinalRecipient, isFinalRecipient } from './finalRecipient'
 import { textHash, alreadySent, recordSent } from './ledger'
 import { runPass, type BatchRow, type EngineConfig, type EngineState, type Hooks, type PassResult } from './smsEngine'
 
@@ -69,10 +70,12 @@ function hooks(db: DB): Hooks {
   const attachments = new Map<string, { dataBase64: string; fileName?: string; mimeType?: string } | undefined>()
   return {
     batchAllowed: batchAllowedBySchedule,
+    prepareBatch: (batch) => prepareFinalRecipient(db, batch),
 
     guard: async ({ item, batch, threadChatId, recipientKey }) => {
       const data = item.data ?? {}
-      const isOutreach = batch.is_outreach === true
+      // Owner-requested staff copy keeps bans/snoozes, but needs no invitation reply.
+      const isOutreach = batch.is_outreach === true && !isFinalRecipient(item)
       const verdict = await guardSend(db, {
         renderedText: item.rendered_text,
         isOutreach,

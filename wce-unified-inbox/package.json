@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/sync/smsEngine.test.ts src/sync/smsEngine.fixes.test.ts src/sync/batches.hours.test.ts src/sync/guards.retry.test.ts",
+    "test": "node --import tsx --test src/sync/smsEngine.test.ts src/sync/smsEngine.fixes.test.ts src/sync/batches.hours.test.ts src/sync/guards.retry.test.ts src/sync/finalRecipient.test.ts",
     "sync": "tsx src/sync/run.ts",
     "sync:once": "tsx src/sync/run.ts --once",
     "beeper:probe": "tsx src/adapters/beeper/probe.ts",
