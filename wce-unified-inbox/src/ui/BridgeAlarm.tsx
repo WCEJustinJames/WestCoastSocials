@@ -69,16 +69,16 @@ export function BridgeAlarm() {
   const now = Date.now()
 
   return (
-    <div className="mb-4 space-y-3 rounded-lg border-2 border-rose-300 bg-rose-50 p-3">
+    <div className="mb-6 space-y-4 p-4" style={{ border: '2px solid var(--color-accent)' }}>
       {engineDead && (
         <div>
-          <div className="flex items-center gap-2 text-sm font-semibold text-rose-800">
-            <span className="animate-pulse">🔴</span>
+          <div className="flex items-center gap-2.5 text-sm font-extrabold" style={{ color: 'var(--color-accent-700)' }}>
+            <span className="sq animate-pulse" style={{ background: 'var(--color-accent)' }} />
             {engineAgo === null
               ? 'Sync engine has never checked in — nothing is running'
               : `Sync engine isn’t running — no heartbeat for ${rel(engineAgo)}`}
           </div>
-          <p className="mt-0.5 text-xs text-rose-700">
+          <p className="mt-1 text-xs muted-70">
             Nothing is being sent, received or auto-replied to. Any bridge status below is frozen from the
             last poll and is not live. Start the sync on the PC (run-wce.bat) — this is a dead engine, not a
             dropped bridge, so re-linking Beeper won’t fix it.
@@ -87,29 +87,29 @@ export function BridgeAlarm() {
       )}
       {down.length > 0 && (
         <div>
-      <div className="flex items-center gap-2 text-sm font-semibold text-rose-800">
-        <span className="animate-pulse">🔴</span>
-        {unreachable
-          ? 'Beeper Desktop isn’t responding — every message bridge is offline'
-          : `${down.length} message bridge${down.length > 1 ? 's are' : ' is'} down`}
-      </div>
-      <p className="mt-0.5 text-xs text-rose-700">
-        Messages on {unreachable ? 'any network' : 'these networks'} won’t send until reconnected — open Beeper on the PC and re-link.
-      </p>
-      {!unreachable && (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {down.map((b, i) => (
-            <li key={i} className="flex items-center gap-1.5 rounded-md bg-white px-2 py-1 text-xs ring-1 ring-rose-200">
-              <span className="rounded bg-rose-600 px-1.5 py-0.5 font-medium text-white">{b.network}</span>
-              {b.label && <span className="text-slate-600">{b.label}</span>}
-              <span className="text-rose-700">
-                {b.status}
-                {b.since ? ` · ${rel(Math.round((now - new Date(b.since).getTime()) / 1000))}` : ''}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+          <div className="flex items-center gap-2.5 text-sm font-extrabold" style={{ color: 'var(--color-accent-700)' }}>
+            <span className="sq animate-pulse" style={{ background: 'var(--color-accent)' }} />
+            {unreachable
+              ? 'Beeper Desktop isn’t responding — every message bridge is offline'
+              : `${down.length} message bridge${down.length > 1 ? 's are' : ' is'} down`}
+          </div>
+          <p className="mt-1 text-xs muted-70">
+            Messages on {unreachable ? 'any network' : 'these networks'} won’t send until reconnected — open Beeper on the PC and re-link.
+          </p>
+          {!unreachable && (
+            <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5">
+              {down.map((b, i) => (
+                <li key={i} className="flex items-center gap-1.5 text-xs">
+                  <span className="tag tag-accent tag-net uppercase">{b.network}</span>
+                  {b.label && <span className="muted-60">{b.label}</span>}
+                  <span className="font-semibold tnum" style={{ color: 'var(--color-accent-700)' }}>
+                    {b.status}
+                    {b.since ? ` · ${rel(Math.round((now - new Date(b.since).getTime()) / 1000))}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>

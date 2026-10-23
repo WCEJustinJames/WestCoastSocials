@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fileToBase64, type PickedImage } from '../lib/attachment'
 import { sourceLabel, phoneCore, normCore } from './usePlayers'
+import { useInboxSettings, type InboxSettings } from './useInboxSettings'
+import { IconX } from './icons'
 import type { Database, Json } from '../types/database'
 
 type ConvRow = Database['public']['Tables']['inbox_conversations']['Row'] & {
@@ -54,7 +56,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
   const [conversations, setConversations] = useState<ConvRow[]>([])
   const [outreach, setOutreach] = useState<OutreachRow[]>([])
   // Per-player send signals (last-messaged date + venue, and the unanswered-
-  // outreach count that drives the 👻 ghost), keyed by outreach id. Precomputed
+  // outreach count that drives the ghost mark), keyed by outreach id. Precomputed
   // server-side in the inbox_outreach_signals view.
   type SignalRow = {
     outreach_id: string
@@ -79,6 +81,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
   const [cDay, setCDay] = useState('all')
   const [cWindow, setCWindow] = useState('all')
   const [scheduleAt, setScheduleAt] = useState('')
+  const [showSchedule, setShowSchedule] = useState(false)
 
   const [picked, setPicked] = useState<Map<string, Recipient>>(new Map())
   // Recipients to auto-pick once a reused list's rows load for the active source.
@@ -91,6 +94,31 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
   const [attachImg, setAttachImg] = useState<PickedImage | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // Auto-reply rail panel: the shared kill-switch flags (inbox_settings id=1)
+  // plus a live bridges-up count. Pausing/stopping is the guarded direction —
+  // first tap arms, second within 3s commits (StopButton's two-tap confirm).
+  const { settings, loaded: settingsLoaded, update: updateSettings } = useInboxSettings()
+  const [armed, setArmed] = useState<'replies' | 'stop' | 'roster' | null>(null)
+  useEffect(() => {
+    if (!armed) return
+    const t = setTimeout(() => setArmed(null), 3000)
+    return () => clearTimeout(t)
+  }, [armed])
+  const [bridgeUp, setBridgeUp] = useState<{ up: number; total: number } | null>(null)
+  useEffect(() => {
+    const q = supabase as unknown as {
+      from: (t: string) => { select: (c: string) => Promise<{ data: { connected: boolean }[] | null }> }
+    }
+    const load = () =>
+      q.from('inbox_bridge_health').select('connected').then(({ data }) => {
+        if (data && data.length > 0)
+          setBridgeUp({ up: data.filter((b) => b.connected).length, total: data.length })
+      })
+    void load()
+    const t = setInterval(() => void load(), 60_000)
+    return () => clearInterval(t)
+  }, [])
 
   // preview phase
   const [batchId, setBatchId] = useState<string | null>(null)
@@ -206,8 +234,8 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
   // Cheap per-row "is this a CRM player?" check — Everyone mixes both kinds.
   const outreachIds = useMemo(() => new Set(outreach.map((o) => o.id)), [outreach])
 
-  // SMS sends that FAILED (dead/wrong number), keyed by CRM id — drives the red
-  // glow in the picker. A later successful send clears it (compared via signals).
+  // SMS sends that FAILED (dead/wrong number), keyed by CRM id — drives the
+  // warning in the picker. A later successful send clears it (compared via signals).
   const [failedSms, setFailedSms] = useState<Map<string, { phone: string; at: string }>>(new Map())
   useEffect(() => {
     supabase
@@ -369,7 +397,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
     const buildCrm = (): Recipient[] => outreach
       .map<Recipient>((o) => {
         const nm = o.player_name || [o.first_name, o.last_name].filter(Boolean).join(' ') || '—'
-        // Red-glow: the last SMS to this number failed and nothing has been
+        // Warn: the last SMS to this number failed and nothing has been
         // successfully sent since (a later success clears the warning).
         const fail = failedSms.get(o.id)
         const sigRow = signals.get(o.id)
@@ -401,8 +429,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
           // Show phone + venue so identical first names are tellable apart and
           // you can confirm the right person before sending.
           sub: [
-            o.whale ? '🐋' : null,
-            o.snooze_until && o.snooze_until >= new Date().toISOString().slice(0, 10) ? '❄ on ice' : null,
+            o.snooze_until && o.snooze_until >= new Date().toISOString().slice(0, 10) ? 'on ice' : null,
             o.phone, (o.venues ?? [])[0] ?? o.region,
           ].filter(Boolean).join(' · ') || '—',
           sendable,
@@ -565,7 +592,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
     // the Inbox tab (linked threads fold into their CRM row under Everyone).
     setSource(isCrm ? 'all' : 'inbox')
     setPendingKeys(keys)
-    setStatus(`Loaded ${keys.size} recipients from that list — edit the template and Build preview.`)
+    setStatus(`Loaded ${keys.size} recipients from that list — edit the template and build the preview.`)
     setTimeout(() => setStatus(null), 6000)
   }
   // Load the standing venue lists (Lists tab) for the recipient-source picker.
@@ -936,7 +963,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
       .update({
         status: 'approved',
         // Approval time drives the cutoff grandfather: approved inside the window
-        // means the batch keeps draining even after 16:30.
+        // means the batch keeps draining even after the outreach cutoff.
         approved_at: new Date().toISOString(),
         scheduled_for: scheduleAt ? new Date(scheduleAt).toISOString() : null,
       })
@@ -951,7 +978,7 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
       : 'send on the next sync'
     resetAll()
     setScheduleAt('')
-    setStatus(`Approved ✓ — ${includedCount} message(s) ${when}, paced ~1.5s apart.`)
+    setStatus(`Approved — ${includedCount} message(s) ${when}, paced ~1.5s apart.`)
     setTimeout(() => setStatus(null), 8000)
   }
 
@@ -1009,102 +1036,222 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
     })
   }
 
+  // ---- Auto-reply rail panel (shared by compose + preview phases) ----
+  // Pausing/stopping is guarded: first tap arms, second within 3s commits.
+  // Resuming is immediate.
+  function railToggle(
+    key: 'replies' | 'stop' | 'roster',
+    column: keyof InboxSettings,
+    next: boolean,
+  ) {
+    if (!settingsLoaded || settings[column] === next) return
+    if (next && armed !== key) {
+      setArmed(key)
+      return
+    }
+    setArmed(null)
+    void updateSettings({ [column]: next } as Partial<InboxSettings>)
+  }
+  const stopped = settings.sendsPaused
+  // sends_paused halts outreach + batch sends; the auto-reply rail is exempt by
+  // design (only replies_paused holds it) — the copy reflects that honestly.
+  const railStatus = !settingsLoaded
+    ? 'Checking rail status…'
+    : stopped
+      ? `STOPPED — no outreach or batch sends until you resume.${
+          settings.repliesPaused
+            ? ' Auto-replies are paused too.'
+            : ' Auto-replies still answer players who message in.'
+        }`
+      : settings.repliesPaused
+        ? 'Auto-reply paused — proactive outreach keeps running.'
+        : 'Running — every AI reply is drafted first and sent only on your approval.'
+  const railAlarm = settingsLoaded && (stopped || settings.repliesPaused)
+  const railPanel = (
+    <section
+      className="mb-7 grid grid-cols-1 items-center gap-x-8 gap-y-3 dt:grid-cols-[minmax(0,1fr)_max-content]"
+      style={{ border: '2px solid var(--color-divider)', padding: '14px 16px' }}
+    >
+      <div className="min-w-0">
+        <p
+          className="m-0 text-[11px] font-semibold uppercase"
+          style={{ letterSpacing: '0.1em', color: 'var(--color-accent-700)' }}
+        >
+          Auto-reply rail — Beeper
+        </p>
+        <p
+          className={`m-0 mt-1 text-[13px] ${railAlarm ? 'font-semibold' : 'muted-70'}`}
+          style={railAlarm ? { color: 'var(--color-accent-700)' } : undefined}
+        >
+          {railStatus}
+          {bridgeUp && (
+            <span className={`tnum ${railAlarm ? '' : 'muted-70'}`}>
+              {' '}Bridge {bridgeUp.up}/{bridgeUp.total} networks up.
+            </span>
+          )}
+          <span className={`tnum ${railAlarm ? '' : 'muted-70'}`}>
+            {' '}Outreach window 10:00–17:15 — batches approved in-window keep draining.
+          </span>
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="seg">
+          <button
+            className="seg-btn"
+            aria-pressed={settingsLoaded && !settings.repliesPaused}
+            disabled={!settingsLoaded}
+            title="AI auto-replies are drafted and sent on your approval"
+            onClick={() => railToggle('replies', 'repliesPaused', false)}
+          >
+            Replies on
+          </button>
+          <button
+            className="seg-btn"
+            aria-pressed={settingsLoaded && settings.repliesPaused}
+            disabled={!settingsLoaded}
+            title="Pause AI auto-replies? (outreach keeps running)"
+            onClick={() => railToggle('replies', 'repliesPaused', true)}
+          >
+            {armed === 'replies' && !settings.repliesPaused ? 'Tap again to pause' : 'Paused'}
+          </button>
+        </div>
+        <button
+          className="btn text-[13px] font-extrabold"
+          disabled={!settingsLoaded}
+          style={
+            stopped
+              ? { background: 'var(--color-accent)', color: 'var(--color-bg)' }
+              : { border: '1px solid var(--color-accent)', color: 'var(--color-accent-700)' }
+          }
+          title={
+            stopped
+              ? 'Sends are paused — press to resume'
+              : 'Outreach + batch sends are active — press to stop (auto-replies stay on)'
+          }
+          onClick={() => railToggle('stop', 'sendsPaused', !stopped)}
+        >
+          {stopped ? 'Resume all sends' : armed === 'stop' ? 'Tap again to stop' : 'STOP all sends'}
+        </button>
+        <button
+          className="btn-quiet"
+          disabled={!settingsLoaded}
+          title={
+            settings.rosterPaused
+              ? 'Group seat-list posting is paused — press to resume'
+              : 'Pause the cash-games group seat-list updates?'
+          }
+          onClick={() => railToggle('roster', 'rosterPaused', !settings.rosterPaused)}
+        >
+          {armed === 'roster' && !settings.rosterPaused
+            ? 'Tap again to pause'
+            : settings.rosterPaused
+              ? 'Group roster: paused'
+              : 'Group roster: on'}
+        </button>
+      </div>
+    </section>
+  )
+
+  const statusLine = status && (
+    <p
+      className={`m-0 text-[13px] ${status.startsWith('Error') ? 'font-semibold' : 'muted-70'}`}
+      style={status.startsWith('Error') ? { color: 'var(--color-accent-700)' } : undefined}
+    >
+      {status}
+    </p>
+  )
+
   // ---- Preview phase ----
   if (batchId) {
     return (
-      <div className="mx-auto h-full w-full max-w-3xl overflow-y-auto p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Preview — {name || 'batch'}</h2>
-            <p className="text-sm text-slate-500">
-              {includedCount} of {items.length} will send. Guarded / un-sendable contacts are
-              unticked by default.{attachImg ? ' · 🖼 image attached to every message.' : ''}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1 text-xs text-slate-500">
-              schedule
-              <input
-                type="datetime-local"
-                value={scheduleAt}
-                onChange={(e) => setScheduleAt(e.target.value)}
-                className="rounded-md border border-slate-300 px-2 py-1 text-xs"
-              />
-            </label>
-            {scheduleAt && (
-              <button onClick={() => setScheduleAt('')} className="text-xs text-slate-400 hover:underline">
-                clear
-              </button>
-            )}
-            <button
-              onClick={() => void discard()}
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100"
-            >
-              Discard
-            </button>
-            <button
-              onClick={() => void approveSend()}
-              disabled={busy || includedCount === 0}
-              className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
-            >
-              Approve &amp; send ({includedCount})
-            </button>
-          </div>
+      <>
+        {railPanel}
+        <div className="section-head">
+          <span className="kicker">Preview — {name || 'batch'}</span>
+          <span className="text-xs muted tnum">
+            {includedCount} of {items.length} will send · guarded / un-sendable contacts are unticked by default
+            {attachImg ? ' · image attached to every message' : ''}
+          </span>
         </div>
-        {status && <p className="mb-3 text-sm text-emerald-700">{status}</p>}
+
+        <div className="mt-3.5 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs muted-70">
+            Schedule
+            <input
+              type="datetime-local"
+              value={scheduleAt}
+              onChange={(e) => setScheduleAt(e.target.value)}
+              className="input !w-auto !text-xs tnum"
+            />
+          </label>
+          {scheduleAt && (
+            <button className="btn-quiet" onClick={() => setScheduleAt('')}>
+              Clear
+            </button>
+          )}
+          <div className="min-w-4 flex-1" />
+          <button className="btn btn-secondary" onClick={() => void discard()}>
+            Discard
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => void approveSend()}
+            disabled={busy || includedCount === 0}
+          >
+            Approve &amp; send <span className="tnum">{includedCount}</span>
+          </button>
+        </div>
+
+        {status && <div className="mt-3">{statusLine}</div>}
 
         {/* Find & replace across all messages — edit wording without rebuilding */}
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 text-sm">
-          <span className="text-xs font-medium text-slate-500">Find &amp; replace:</span>
+        <div className="mt-5 flex flex-wrap items-center gap-2.5">
+          <span className="text-xs muted-70">Find &amp; replace</span>
           <input
             value={findText}
             onChange={(e) => setFindText(e.target.value)}
             placeholder="find"
-            className="w-40 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+            className="input !w-40"
           />
           <input
             value={replaceText}
             onChange={(e) => setReplaceText(e.target.value)}
             placeholder="replace with"
-            className="w-40 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+            className="input !w-40"
           />
-          <button
-            onClick={applyReplace}
-            disabled={!findText}
-            className="rounded-md bg-slate-700 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-40"
-          >
+          <button className="btn btn-secondary !text-xs" onClick={applyReplace} disabled={!findText}>
             Replace in all
           </button>
-          <span className="text-xs text-slate-400">— edits apply to every message; your selection stays.</span>
+          <span className="text-[11px] muted">edits apply to every message; your selection stays</span>
         </div>
 
         {/* Add a player to this drafted list — CRM lookup or manual name + number */}
-        <div className="mb-3 rounded-lg border border-slate-200 bg-white p-2 text-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-slate-500">Add a player:</span>
+        <div className="mt-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="text-xs muted-70">Add a player</span>
             <input
               value={addQuery}
               onChange={(e) => setAddQuery(e.target.value)}
               placeholder="Search the CRM…"
-              className="w-48 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+              className="input !w-48"
             />
-            <span className="text-xs text-slate-400">or manual:</span>
+            <span className="text-[11px] muted">or manual:</span>
             <input
               value={manualName}
               onChange={(e) => setManualName(e.target.value)}
               placeholder="name"
-              className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+              className="input !w-32"
             />
             <input
               value={manualPhone}
               onChange={(e) => setManualPhone(e.target.value)}
               placeholder="mobile"
-              className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
+              className="input !w-32 tnum"
             />
             <button
+              className="btn btn-secondary !text-xs"
               onClick={() => void addItemToDraft({ name: manualName, phone: manualPhone })}
               disabled={busy || !manualName.trim() || !manualPhone.trim()}
-              className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
             >
               Add manual
             </button>
@@ -1118,80 +1265,70 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
               .filter((o) => !inBatch.has(o.id) && (o.player_name ?? '').toLowerCase().includes(q2))
               .slice(0, 8)
             return (
-              <ul className="mt-1 max-h-40 overflow-y-auto">
+              <ul className="m-0 mt-1.5 max-h-40 list-none overflow-y-auto border-t border-divider p-0">
                 {hits.map((o) => (
-                  <li key={o.id}>
+                  <li key={o.id} className="row row-hover">
                     <button
                       onClick={() => void addItemToDraft({ o })}
-                      className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-emerald-50"
+                      className="flex w-full cursor-pointer items-center justify-between gap-2 border-0 bg-transparent px-1 py-1.5 text-left text-sm"
+                      style={{ color: 'var(--color-text)' }}
                     >
-                      <span>{o.player_name}</span>
-                      <span className="text-[10px] text-slate-400">
+                      <span className="min-w-0 flex-1 truncate">{o.player_name}</span>
+                      <span className="flex-none text-[11px] muted tnum">
                         {o.phone ?? (o.beeper_chat_id ? 'thread' : 'no contact')}
                       </span>
                     </button>
                   </li>
                 ))}
                 {hits.length === 0 && (
-                  <li className="px-2 py-1 text-xs text-slate-400">No CRM match — use the manual fields.</li>
+                  <li className="px-1 py-1.5 text-xs muted">No CRM match — use the manual fields.</li>
                 )}
               </ul>
             )
           })()}
         </div>
 
-        <label className="mb-2 flex items-center gap-2 text-sm font-medium">
+        <label className="mt-5 flex cursor-pointer items-center gap-2 text-sm font-semibold">
           <input
             type="checkbox"
+            className="checkbox"
             checked={allSendableIncluded}
             onChange={(e) => toggleAllIncluded(e.target.checked)}
           />
-          Select all ({includedCount}/{items.filter((it) => sendableItem(it)).length} sendable)
+          Select all{' '}
+          <span className="text-xs font-normal muted tnum">
+            ({includedCount}/{items.filter((it) => sendableItem(it)).length} sendable)
+          </span>
         </label>
 
-        {/* Why each contact will / won't send — click a reason to show just those
+        {/* Why each contact will / won't send — pick a reason to show just those
             rows (e.g. everyone held back because it'd be a new cold SMS). */}
         {previewBuckets.length > 1 && (
-          <div className="mb-3 flex flex-wrap items-center gap-1.5">
-            {([['all', items.length], ...previewBuckets] as [string, number][]).map(([b, n]) => {
-              const active = previewFilter === b
-              const send = b === 'Will send'
-              return (
-                <button
-                  key={b}
-                  onClick={() => setPreviewFilter(active && b !== 'all' ? 'all' : b)}
-                  title={b === 'all' ? 'Show everyone' : `Show only: ${b}`}
-                  className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
-                    active
-                      ? send
-                        ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                        : 'border-amber-400 bg-amber-50 text-amber-800'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                  }`}
-                >
-                  {b === 'all' ? 'All' : b} ({n})
-                </button>
-              )
-            })}
+          <div className="seg mt-2.5">
+            {([['all', items.length], ...previewBuckets] as [string, number][]).map(([b, n]) => (
+              <button
+                key={b}
+                className="seg-btn seg-btn-sm"
+                aria-pressed={previewFilter === b}
+                onClick={() => setPreviewFilter(previewFilter === b && b !== 'all' ? 'all' : b)}
+                title={b === 'all' ? 'Show everyone' : `Show only: ${b}`}
+              >
+                {b === 'all' ? 'All' : b} ({n})
+              </button>
+            ))}
           </div>
         )}
 
-        <ul className="space-y-2">
+        <ul className="m-0 mt-3 list-none border-t-2 border-divider p-0">
           {shownItems.map((it) => {
             const data = it.data as { network?: string; region?: string } | null
             const canSend = sendableItem(it)
             return (
-              <li
-                key={it.id}
-                className={`rounded-lg border p-3 ${
-                  include[it.id] && canSend
-                    ? 'border-slate-200 bg-white'
-                    : 'border-slate-200 bg-slate-50 opacity-70'
-                }`}
-              >
-                <div className="mb-1 flex flex-wrap items-center gap-2">
+              <li key={it.id} className={`row py-3 ${include[it.id] && canSend ? '' : 'opacity-60'}`}>
+                <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <input
                     type="checkbox"
+                    className="checkbox"
                     checked={(include[it.id] ?? false) && canSend}
                     disabled={!canSend}
                     onChange={() => setInclude((p) => ({ ...p, [it.id]: !p[it.id] }))}
@@ -1200,569 +1337,758 @@ export function Batches({ initialListId }: { initialListId?: { id: string; nonce
                     value={nameEdits[it.id] ?? ''}
                     onChange={(e) => setNameEdits((p) => ({ ...p, [it.id]: e.target.value }))}
                     placeholder="name"
-                    className="w-40 rounded-md border border-slate-200 px-2 py-0.5 text-sm font-medium outline-none focus:border-emerald-500"
+                    className="input !min-h-0 !w-40 !py-1 font-semibold"
                   />
                   <input
                     value={phoneEdits[it.id] ?? ''}
                     onChange={(e) => setPhoneEdits((p) => ({ ...p, [it.id]: e.target.value }))}
                     placeholder="number"
-                    className="w-32 rounded-md border border-slate-200 px-2 py-0.5 text-xs outline-none focus:border-emerald-500"
+                    className="input !min-h-0 !w-32 !py-1 !text-xs tnum"
                   />
-                  <span className="text-xs text-slate-400">{data?.network ?? data?.region}</span>
+                  <span className="text-[11px] muted">{data?.network ?? data?.region}</span>
+                  {it.guard_flag && <span className="tag tag-accent">{it.guard_reason}</span>}
+                  <div className="min-w-2 flex-1" />
                   <button
+                    className="btn-quiet"
                     onClick={() => setInclude((p) => ({ ...p, [it.id]: false }))}
                     title="Remove from this batch"
-                    className="text-xs text-slate-300 hover:text-rose-600"
                   >
-                    remove
+                    Remove
                   </button>
-                  {it.guard_flag && (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
-                      ⚠ {it.guard_reason}
-                    </span>
-                  )}
                 </div>
                 <textarea
                   value={edits[it.id] ?? ''}
                   onChange={(e) => setEdits((p) => ({ ...p, [it.id]: e.target.value }))}
                   rows={2}
                   disabled={!include[it.id] || !canSend}
-                  className="w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 disabled:bg-slate-100"
+                  className="input w-full resize-none disabled:opacity-60"
                 />
               </li>
             )
           })}
         </ul>
-      </div>
+      </>
     )
   }
 
   // ---- Compose phase ----
+  const shownRecipients = recipients.filter((r) => showUnavailable || r.sendable)
+  const batchTag = (s: string) =>
+    s === 'sending' || s === 'approved'
+      ? 'tag tag-accent tag-net uppercase'
+      : s === 'sent'
+        ? 'tag tag-neutral tag-net uppercase'
+        : 'tag tag-outline tag-net uppercase'
+
   return (
-    <div className="mx-auto h-full w-full max-w-3xl overflow-y-auto p-6">
-      <h2 className="text-lg font-semibold">New batch</h2>
-      <p className="mb-4 text-sm text-slate-500">
-        Write one template, pick who gets it, preview each rendered message, then approve.
-        Use <code className="rounded bg-slate-100 px-1">{'{{name}}'}</code> or{' '}
-        <code className="rounded bg-slate-100 px-1">{'{{first_name}}'}</code> to personalise.
-      </p>
-
-      <label className="mb-1 block text-sm font-medium">Venue / weekly game</label>
-      <input
-        list="batch-venues"
-        value={batchVenue}
-        onChange={(e) => setBatchVenue(e.target.value)}
-        placeholder="e.g. Leederville Tuesday, Kingsley cash…"
-        className="mb-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
-      />
-      <datalist id="batch-venues">
-        {batchVenuesOpts.map((v) => (
-          <option key={v} value={v} />
-        ))}
-      </datalist>
-      {!batchVenue.trim() && suggestedVenue ? (
-        <p className="mb-3 text-xs text-emerald-700">
-          Will tag as{' '}
-          <button
-            type="button"
-            onClick={() => setBatchVenue(suggestedVenue)}
-            className="font-semibold underline hover:text-emerald-800"
-          >
-            {suggestedVenue}
-          </button>{' '}
-          (most common venue of your picks) unless you set one — so each recipient&apos;s
-          &ldquo;last messaged for {suggestedVenue}&rdquo; fills in.
-        </p>
-      ) : (
-        <p className="mb-3 text-xs text-slate-500">
-          Tags this batch so you can browse and rebuild this venue&apos;s weekly list below — and powers
-          each player&apos;s &ldquo;last messaged for {'{venue}'}&rdquo; signal.
-        </p>
-      )}
-
-      {tonight.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3">
-          <span className="text-xs font-medium text-emerald-800">Tonight:</span>
-          {tonight.map((t) => (
-            <button
-              key={t.venue + t.name}
-              onClick={() => t.listId && void loadVenueList(t.listId)}
-              disabled={!t.listId}
-              title={t.listId ? `Load the ${t.venue} list` : `No list for ${t.venue} yet — create one in the Lists tab`}
-              className={`rounded-full px-3 py-1 text-xs font-medium ${t.listId ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'cursor-not-allowed bg-slate-100 text-slate-400'}`}
-            >
-              {t.venue}{t.listId ? '' : ' (no list)'}
-            </button>
-          ))}
-          <span className="text-[11px] text-slate-500">one tap to load tonight&apos;s venue list</span>
-        </div>
-      )}
-
-      {scheduledDrafts.length > 0 && (
-        <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
-          <p className="mb-1 text-sm font-medium text-amber-800">
-            {scheduledDrafts.length} scheduled draft{scheduledDrafts.length > 1 ? 's' : ''} awaiting approval
-          </p>
-          <ul className="space-y-1">
-            {scheduledDrafts.map((d) => (
-              <li key={d.id} className="flex items-center gap-2 text-sm">
-                <span className="flex-1">
-                  {d.venue ? `${d.venue} · ` : ''}{d.name}
-                  <span className="ml-1 text-[11px] text-slate-500">{new Date(d.created_at).toLocaleDateString()}</span>
-                </span>
-                <button onClick={() => void openBatch(d.id)}
-                  className="rounded-md bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700">
-                  Open to approve
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {venueLists.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-xs font-medium text-slate-500">Load a venue list:</span>
-          <select
-            defaultValue=""
-            onChange={(e) => {
-              const id = e.target.value
-              if (id) void loadVenueList(id)
-              e.target.value = ''
-            }}
-            className="max-w-xs flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
-          >
-            <option value="">— pick a standing list —</option>
-            {venueLists.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.venue ? `${l.venue} · ` : ''}{l.game_type ?? 'list'} · {l.name}
-              </option>
-            ))}
-          </select>
-          <span className="text-[11px] text-slate-400">from the Lists tab · guards still apply at send</span>
-        </div>
-      )}
-
-      {pastBatches.length > 0 &&
-        (() => {
-          const v = batchVenue.trim().toLowerCase()
-          const list = v
-            ? pastBatches.filter((b) => (b.venue ?? '').trim().toLowerCase() === v)
-            : pastBatches
-          return (
-            <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-xs font-medium text-slate-500">
-                {v ? `Reuse a ${batchVenue.trim()} list:` : 'Reuse a past list:'}
-              </span>
-              <select
-                defaultValue=""
-                onChange={(e) => {
-                  const id = e.target.value
-                  if (id) {
-                    const b = pastBatches.find((x) => x.id === id)
-                    if (b?.venue && !batchVenue.trim()) setBatchVenue(b.venue)
-                    void loadList(id)
-                  }
-                  e.target.value = ''
-                }}
-                className="max-w-xs flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
-              >
-                <option value="">
-                  {list.length ? '— pick a previous batch —' : '— none for this venue —'}
-                </option>
-                {list.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.venue ? `${b.venue} · ` : ''}
-                    {new Date(b.created_at).toLocaleDateString()} · {b.name} · {b.status}
-                  </option>
-                ))}
-              </select>
-              <button onClick={loadPastBatches} className="text-xs text-emerald-700 hover:underline">
-                refresh
-              </button>
-            </div>
-          )
-        })()}
-
-      <label className="mb-1 block text-sm font-medium">Batch name (for your reference)</label>
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="e.g. Friday $5k freezeout reminder"
-        className="mb-4 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
-      />
-
-      {(inviteVariants.length > 0 || rewording) && (
-        <div className="mb-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2">
-          <div className="mb-1 flex items-center gap-2">
-            <p className="text-xs font-medium text-indigo-800">Suggested invites for {batchVenue.trim()} — tap to use</p>
-            <button
-              onClick={() => void refreshVariants()}
-              disabled={rewording}
-              title="Ask the engine to write three fresh options"
-              className="ml-auto rounded-md border border-indigo-300 px-1.5 py-0.5 text-[11px] text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
-            >
-              {rewording ? '⏳ rewording…' : '🔄 new wording'}
-            </button>
-          </div>
-          {rewording && inviteVariants.length === 0 ? (
-            <p className="px-1 py-2 text-xs text-indigo-500">Writing three fresh options… (a few seconds; a bit longer if the engine just restarted)</p>
-          ) : (
-            <ul className="space-y-1">
-              {inviteVariants.map((v) => (
-                <li key={v.id} className="flex items-start gap-2 text-sm">
-                  <button
-                    onClick={() => setTemplate(v.body)}
-                    className="rounded-md bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-indigo-700"
-                  >use</button>
-                  <span className="min-w-0 flex-1 text-slate-700">{v.body}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      <label className="mb-1 block text-sm font-medium">Message template</label>
-      <textarea
-        value={template}
-        onChange={(e) => setTemplate(e.target.value)}
-        placeholder="Hey {{first_name}}, we've got a $5k freezeout this Friday 7pm — keen?"
-        rows={3}
-        className="mb-2 w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
-      />
-      <label className="mb-4 flex items-center gap-2 text-xs text-slate-600">
-        <input type="checkbox" checked={useNickname} onChange={(e) => setUseNickname(e.target.checked)} />
-        Use nicknames for{' '}
-        <code className="rounded bg-slate-100 px-1">{'{{first_name}}'}</code> where one is set
-      </label>
-
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <label className="cursor-pointer rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50">
-          📎 Attach image
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={async (e) => {
-              const f = e.target.files?.[0]
-              e.target.value = ''
-              if (!f) return
-              try {
-                setAttachImg(await fileToBase64(f))
-                setStatus(null)
-              } catch (err) {
-                setStatus(err instanceof Error ? err.message : 'Could not read image')
-              }
-            }}
-          />
-        </label>
-        {attachImg && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs">
-            🖼 {attachImg.name}
-            <button onClick={() => setAttachImg(null)} className="text-slate-400 hover:text-rose-600">
-              ×
-            </button>
-          </span>
-        )}
-        <span className="text-xs text-slate-400">Optional — the same image goes to every recipient.</span>
-      </div>
-
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm font-medium">Recipients from:</span>
-        <button
-          onClick={() => switchSource('all')}
-          title="Every CRM player plus any conversation that isn't a known player — nobody missed"
-          className={`rounded-full px-3 py-0.5 text-xs ${source === 'all' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}
-        >
-          Everyone
-        </button>
-        <button
-          onClick={() => switchSource('inbox')}
-          className={`rounded-full px-3 py-0.5 text-xs ${source === 'inbox' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}
-        >
-          Inbox threads
-        </button>
-        <button
-          onClick={() => switchSource('crm')}
-          className={`rounded-full px-3 py-0.5 text-xs ${source === 'crm' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}
-        >
-          Player Outreach (CRM)
-        </button>
-      </div>
-
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <label className="text-sm font-medium">{picked.size} selected{picked.size > 0 ? ' · across all sources' : ''}</label>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          {source === 'inbox' ? (
-            <select value={network} onChange={(e) => setNetwork(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
-              <option value="all">All channels</option>
-              {networks.map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          ) : (
-            <>
-              <input
-                list="crm-region-list"
-                value={region === 'all' ? '' : region}
-                onChange={(e) => setRegion(e.target.value.trim() || 'all')}
-                placeholder="Region…"
-                className="w-32 rounded-md border border-slate-300 px-2 py-1"
-              />
-              <datalist id="crm-region-list">
-                {regions.map((r) => (<option key={r} value={r} />))}
-              </datalist>
-              <select value={stake} onChange={(e) => setStake(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
-                <option value="all">All stakes</option>
-                {stakesOpts.map((s) => (<option key={s} value={s}>{s}</option>))}
-              </select>
-              <select value={venue} onChange={(e) => setVenue(e.target.value)} title="Filter by venue" className="rounded-md border border-slate-300 px-2 py-1">
-                <option value="all">All venues</option>
-                {venuesOpts.map((v) => (<option key={v} value={v}>{v}</option>))}
-              </select>
-              <select value={activity} onChange={(e) => setActivity(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1">
-                <option value="all">All activity</option>
-                {activities.map((a) => (<option key={a} value={a}>{a}</option>))}
-              </select>
-              <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} title="Filter by contact source" className="rounded-md border border-slate-300 px-2 py-1">
-                <option value="all">All sources</option>
-                {sourcesOpts.map((s) => (<option key={s} value={s}>{s}</option>))}
-              </select>
-              <select
-                value={channel}
-                onChange={(e) => setChannel(e.target.value as 'auto' | 'sms' | 'thread')}
-                title="Which channel to message players on"
-                className="rounded-md border border-slate-300 px-2 py-1"
-              >
-                <option value="auto">Channel: auto</option>
-                <option value="thread">Existing thread only</option>
-                <option value="sms">SMS (text)</option>
-              </select>
-              <select value={cDay} onChange={(e) => setCDay(e.target.value)} title="Preferred contact day" className="rounded-md border border-slate-300 px-2 py-1">
-                <option value="all">Any day</option>
-                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
-              <select value={cWindow} onChange={(e) => setCWindow(e.target.value)} title="Preferred contact time" className="rounded-md border border-slate-300 px-2 py-1">
-                <option value="all">Any time</option>
-                {['Morning', 'Afternoon', 'Evening'].map((w) => (
-                  <option key={w} value={w}>{w}</option>
-                ))}
-              </select>
-            </>
-          )}
-          <button onClick={selectAllSendable} className="text-emerald-700 hover:underline">
-            Select all sendable
-          </button>
-          <button onClick={clearSelection} className="text-slate-500 hover:underline">
-            Clear
-          </button>
-          <label className="flex items-center gap-1 text-slate-500">
-            <input
-              type="checkbox"
-              checked={showHidden}
-              onChange={(e) => setShowHidden(e.target.checked)}
-            />
-            show hidden
-          </label>
-          <label className="flex items-center gap-1 text-slate-500">
-            <input
-              type="checkbox"
-              checked={showUnavailable}
-              onChange={(e) => setShowUnavailable(e.target.checked)}
-            />
-            show unavailable
-          </label>
-        </div>
-      </div>
-
-      <input
-        value={recipientQuery}
-        onChange={(e) => setRecipientQuery(e.target.value)}
-        placeholder="Search recipients by name…"
-        className="mb-2 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
-      />
-
-      {picked.size > 0 && (
-        <div className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50/40 p-2">
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-xs font-medium text-emerald-800">
-              Selected ({picked.size}) — kept across sources &amp; filters
+    <>
+      {railPanel}
+      <div className="grid grid-cols-1 items-start gap-x-14 gap-y-8 dt:grid-cols-[minmax(0,1fr)_320px]">
+        {/* ————— left: the composer ————— */}
+        <section className="min-w-0">
+          <div className="section-head">
+            <span className="kicker">New batch</span>
+            <span className="text-xs muted">
+              One template, previewed per player, approved once. Personalise with {'{{name}}'} or{' '}
+              {'{{first_name}}'}.
             </span>
-            <button onClick={clearSelection} className="text-xs text-slate-500 hover:underline">
-              clear all
-            </button>
           </div>
-          <div className="flex max-h-72 flex-wrap gap-1 overflow-y-auto">
-            {Array.from(picked.values()).map((r) => (
-              <span
-                key={r.key}
-                className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-xs"
-              >
-                {r.name}
-                <button onClick={() => toggle(r)} title="Remove" className="text-slate-400 hover:text-rose-600">
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-      <p className="mb-1 text-xs text-slate-400">
-        {recipients.filter((r) => r.sendable).length} sendable ·{' '}
-        {recipients.filter((r) => !r.sendable).length} unavailable {showUnavailable ? 'shown' : 'hidden'}
-        {source === 'crm' && outreach.length === 0 && ' · (CRM empty — run the sync with AIRTABLE_API_KEY set)'}
-      </p>
 
-      <div className="mb-4 max-h-72 overflow-y-auto rounded-md border border-slate-200">
-        {recipients.filter((r) => showUnavailable || r.sendable).map((r) => (
-          <div
-            key={r.key}
-            onDoubleClick={() => startEdit(r)}
-            onContextMenu={(e) => {
-              if (source === 'crm') {
-                e.preventDefault()
-                startEdit(r)
-              }
-            }}
-            className={`group flex items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-sm last:border-0 hover:bg-slate-50 ${
-              r.sendable ? '' : 'opacity-60'
-            }`}
-          >
-            {editKey === r.key ? (
-              <div className="flex flex-1 items-center gap-1">
-                <input
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  placeholder="name"
-                  autoFocus
-                  className="flex-1 rounded border border-slate-300 px-2 py-0.5 text-sm outline-none focus:border-emerald-500"
-                />
-                <input
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  placeholder="phone"
-                  className="w-32 rounded border border-slate-300 px-2 py-0.5 text-sm outline-none focus:border-emerald-500"
-                />
-                <input
-                  value={editNick}
-                  onChange={(e) => setEditNick(e.target.value)}
-                  placeholder="nickname"
-                  className="w-24 rounded border border-slate-300 px-2 py-0.5 text-sm outline-none focus:border-emerald-500"
-                />
-                <button
-                  onClick={() => void saveEdit()}
-                  className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700"
-                >
-                  Save
-                </button>
-                <button onClick={() => setEditKey(null)} className="px-1 text-xs text-slate-400 hover:underline">
-                  cancel
-                </button>
-              </div>
-            ) : (
-              <>
-                <label className="flex flex-1 cursor-pointer items-center gap-2">
-                  <input type="checkbox" checked={picked.has(r.key)} onChange={() => toggle(r)} />
-                  <span className={`flex-1 ${r.warnFailed ? 'font-medium text-rose-600' : ''}`}>{r.name}</span>
-                  {r.warnFailed && (
-                    <span
-                      className="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700"
-                      title="The last SMS to this number failed — the number may be wrong"
-                    >⚠ SMS failed</span>
-                  )}
-                  {r.warnFailed && (r.altNumbers?.length ?? 0) > 0 && (
-                    <span
-                      className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700"
-                      title={`Another number on file for this name: ${r.altNumbers!.join(', ')} — double-click the row to switch numbers`}
-                    >alt #: {r.altNumbers![0]}</span>
-                  )}
-                  {(() => {
-                    const sig = signals.get(r.key)
-                    if (!sig?.last_sent_at) return null
-                    const d = Math.max(
-                      0,
-                      Math.floor((Date.now() - new Date(sig.last_sent_at).getTime()) / 86_400_000),
-                    )
-                    const ghost = (sig.unanswered_outreach ?? 0) >= 2
-                    return (
-                      <span
-                        className={`shrink-0 text-xs ${ghost ? 'text-rose-500' : 'text-slate-400'}`}
-                        title={`Last messaged ${d} day${d === 1 ? '' : 's'} ago${
-                          sig.last_venue ? ` for ${sig.last_venue}` : ''
-                        }${ghost ? ` · no reply to the last ${sig.unanswered_outreach} outreach messages` : ''}`}
-                      >
-                        {ghost ? '👻 ' : ''}
-                        {sig.last_venue ? `${sig.last_venue} · ` : ''}
-                        {d}d
+          <div className="mt-3.5 flex flex-col gap-3.5">
+            {/* Drafts the recurring scheduler built, waiting on a human — an alarm, not a card. */}
+            {scheduledDrafts.length > 0 && (
+              <div style={{ border: '2px solid var(--color-accent)', padding: '10px 14px' }}>
+                <p className="m-0 text-[13px] font-extrabold" style={{ color: 'var(--color-accent-700)' }}>
+                  {scheduledDrafts.length} scheduled draft{scheduledDrafts.length > 1 ? 's' : ''} awaiting
+                  approval
+                </p>
+                <ul className="m-0 mt-1 list-none p-0">
+                  {scheduledDrafts.map((d) => (
+                    <li key={d.id} className="flex flex-wrap items-center gap-2 py-1 text-sm">
+                      <span className="min-w-0 flex-1">
+                        {d.venue ? `${d.venue} · ` : ''}
+                        {d.name}
+                        <span className="ml-1.5 text-[11px] muted tnum">
+                          {new Date(d.created_at).toLocaleDateString()}
+                        </span>
                       </span>
+                      <button className="btn btn-ghost !text-xs" onClick={() => void openBatch(d.id)}>
+                        Open to approve
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-3 dt:grid-cols-2">
+              <div className="field">
+                <label>Venue / weekly game</label>
+                <input
+                  className="input"
+                  list="batch-venues"
+                  value={batchVenue}
+                  onChange={(e) => setBatchVenue(e.target.value)}
+                  placeholder="e.g. Leederville Tuesday, Kingsley cash…"
+                />
+                <datalist id="batch-venues">
+                  {batchVenuesOpts.map((v) => (
+                    <option key={v} value={v} />
+                  ))}
+                </datalist>
+                {!batchVenue.trim() && suggestedVenue ? (
+                  <p className="m-0 mt-1 text-[11px] muted">
+                    Will tag as{' '}
+                    <button
+                      type="button"
+                      onClick={() => setBatchVenue(suggestedVenue)}
+                      className="cursor-pointer border-0 bg-transparent p-0 text-[11px] font-semibold"
+                      style={{ color: 'var(--color-accent)' }}
+                    >
+                      {suggestedVenue}
+                    </button>{' '}
+                    (most common venue of your picks) unless you set one — so each recipient&apos;s
+                    &ldquo;last messaged for {suggestedVenue}&rdquo; fills in.
+                  </p>
+                ) : (
+                  <p className="m-0 mt-1 text-[11px] muted">
+                    Tags this batch so you can rebuild this venue&apos;s weekly list — and powers each
+                    player&apos;s &ldquo;last messaged for {'{venue}'}&rdquo; signal.
+                  </p>
+                )}
+              </div>
+              <div className="field">
+                <label>Batch name</label>
+                <input
+                  className="input"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Friday $5k freezeout reminder"
+                />
+              </div>
+            </div>
+
+            {tonight.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs muted-70">Tonight</span>
+                {tonight.map((t) => (
+                  <button
+                    key={t.venue + t.name}
+                    className="btn btn-secondary !text-xs"
+                    onClick={() => t.listId && void loadVenueList(t.listId)}
+                    disabled={!t.listId}
+                    title={
+                      t.listId
+                        ? `Load the ${t.venue} list`
+                        : `No list for ${t.venue} yet — create one in the Lists tab`
+                    }
+                  >
+                    {t.venue}
+                    {t.listId ? '' : ' (no list)'}
+                  </button>
+                ))}
+                <span className="text-[11px] muted">one tap to load tonight&apos;s venue list</span>
+              </div>
+            )}
+
+            {(venueLists.length > 0 || pastBatches.length > 0) && (
+              <div className="grid grid-cols-1 gap-3 dt:grid-cols-2">
+                {venueLists.length > 0 && (
+                  <div className="field">
+                    <label>Load a standing list</label>
+                    <select
+                      className="input"
+                      defaultValue=""
+                      onChange={(e) => {
+                        const id = e.target.value
+                        if (id) void loadVenueList(id)
+                        e.target.value = ''
+                      }}
+                    >
+                      <option value="">— pick a standing list —</option>
+                      {venueLists.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.venue ? `${l.venue} · ` : ''}
+                          {l.game_type ?? 'list'} · {l.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="m-0 mt-1 text-[11px] muted">
+                      from the Lists tab · guards still apply at send
+                    </p>
+                  </div>
+                )}
+                {pastBatches.length > 0 &&
+                  (() => {
+                    const v = batchVenue.trim().toLowerCase()
+                    const list = v
+                      ? pastBatches.filter((b) => (b.venue ?? '').trim().toLowerCase() === v)
+                      : pastBatches
+                    return (
+                      <div className="field">
+                        <label>{v ? `Reuse a ${batchVenue.trim()} list` : 'Reuse a past batch'}</label>
+                        <select
+                          className="input"
+                          defaultValue=""
+                          onChange={(e) => {
+                            const id = e.target.value
+                            if (id) {
+                              const b = pastBatches.find((x) => x.id === id)
+                              if (b?.venue && !batchVenue.trim()) setBatchVenue(b.venue)
+                              void loadList(id)
+                            }
+                            e.target.value = ''
+                          }}
+                        >
+                          <option value="">
+                            {list.length ? '— pick a previous batch —' : '— none for this venue —'}
+                          </option>
+                          {list.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.venue ? `${b.venue} · ` : ''}
+                              {new Date(b.created_at).toLocaleDateString()} · {b.name} · {b.status}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="m-0 mt-1 text-[11px] muted">
+                          reloads that batch&apos;s recipients into this one
+                        </p>
+                      </div>
                     )
                   })()}
-                  <span className="text-xs text-slate-400">{r.sub}</span>
-                  {r.badge && (
-                    <span
-                      className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                        !r.sendable ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'
-                      }`}
-                    >
-                      {r.badge}
-                    </span>
-                  )}
-                </label>
-                {outreachIds.has(r.key) && (
+              </div>
+            )}
+
+            <div className="field">
+              <label>Message template</label>
+              <textarea
+                className="input resize-none"
+                value={template}
+                onChange={(e) => setTemplate(e.target.value)}
+                placeholder="Hey {{first_name}}, we've got a $5k freezeout this Friday 7pm — keen?"
+                rows={3}
+              />
+            </div>
+
+            {(inviteVariants.length > 0 || rewording) && (
+              <div>
+                <div className="mb-1.5 flex flex-wrap items-center gap-2.5">
+                  <span className="text-xs muted-70">
+                    AI invite variants for {batchVenue.trim()} — tap to use
+                  </span>
                   <button
-                    onClick={() => startEdit(r)}
-                    title="Edit name / number (or double-click the row)"
-                    className="text-xs text-slate-300 hover:text-emerald-600"
+                    className="btn-quiet"
+                    onClick={() => void refreshVariants()}
+                    disabled={rewording}
+                    title="Ask the engine to write three fresh options"
                   >
-                    edit
+                    {rewording ? 'Rewording…' : 'New wording'}
                   </button>
+                </div>
+                {rewording && inviteVariants.length === 0 ? (
+                  <p className="m-0 text-xs muted">
+                    Writing three fresh options… (a few seconds; a bit longer if the engine just restarted)
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {inviteVariants.map((v) => (
+                      <button
+                        key={v.id}
+                        onClick={() => setTemplate(v.body)}
+                        className="w-full cursor-pointer border border-divider bg-surface p-[9px_12px] text-left text-[13px] leading-[1.45] hover:border-accent"
+                        style={{ color: 'var(--color-text)' }}
+                      >
+                        {v.body}
+                      </button>
+                    ))}
+                  </div>
                 )}
-                {outreachIds.has(r.key) && (
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <label className="flex cursor-pointer items-center gap-2 text-[13px]">
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={useNickname}
+                  onChange={(e) => setUseNickname(e.target.checked)}
+                />
+                Use nicknames for {'{{first_name}}'} where set
+              </label>
+              <label className="btn btn-secondary cursor-pointer !text-[13px]">
+                Attach image
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0]
+                    e.target.value = ''
+                    if (!f) return
+                    try {
+                      setAttachImg(await fileToBase64(f))
+                      setStatus(null)
+                    } catch (err) {
+                      setStatus(err instanceof Error ? err.message : 'Could not read image')
+                    }
+                  }}
+                />
+              </label>
+              {attachImg && (
+                <span className="tag tag-neutral gap-1.5">
+                  {attachImg.name}
                   <button
-                    onClick={() => void banPlayer(r)}
-                    title="Ban — never message this player"
-                    className="text-xs text-slate-300 hover:text-rose-700"
+                    className="inline-flex cursor-pointer items-center border-0 bg-transparent p-0 muted-60"
+                    onClick={() => setAttachImg(null)}
+                    title="Remove image"
                   >
-                    ban
+                    <IconX size={12} />
                   </button>
-                )}
-                {loadedList?.members.has(r.key) && (
-                  <button
-                    onClick={() => void removeFromList(r)}
-                    title={`Remove permanently from the “${loadedList.name}” standing list (untick just skips this week)`}
-                    className="text-xs text-slate-300 hover:text-rose-700"
-                  >
-                    off list
-                  </button>
-                )}
+                </span>
+              )}
+              <span className="text-[11px] muted">one image goes to every recipient</span>
+            </div>
+
+            <div className="hr-2 my-1" />
+
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs muted-70">Recipients from</span>
+              <div className="seg">
                 <button
-                  onClick={() => void toggleHide(r.key, r.hidden)}
-                  title={r.hidden ? 'Unhide' : 'Hide from this list'}
-                  className="text-xs text-slate-300 hover:text-rose-600"
+                  className="seg-btn"
+                  aria-pressed={source === 'all'}
+                  onClick={() => switchSource('all')}
+                  title="Every CRM player plus any conversation that isn't a known player — nobody missed"
                 >
-                  {r.hidden ? 'unhide' : 'hide'}
+                  Everyone
                 </button>
-              </>
+                <button
+                  className="seg-btn"
+                  aria-pressed={source === 'inbox'}
+                  onClick={() => switchSource('inbox')}
+                >
+                  Inbox threads
+                </button>
+                <button
+                  className="seg-btn"
+                  aria-pressed={source === 'crm'}
+                  onClick={() => switchSource('crm')}
+                >
+                  Player CRM
+                </button>
+              </div>
+              {picked.size > 0 && (
+                <span className="text-xs muted tnum">{picked.size} selected · across all sources</span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 dt:grid-cols-4">
+              <input
+                className="input col-span-2"
+                value={recipientQuery}
+                onChange={(e) => setRecipientQuery(e.target.value)}
+                placeholder="Search recipients by name…"
+              />
+              {source === 'inbox' ? (
+                <select className="input" value={network} onChange={(e) => setNetwork(e.target.value)}>
+                  <option value="all">All channels</option>
+                  {networks.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    className="input"
+                    list="crm-region-list"
+                    value={region === 'all' ? '' : region}
+                    onChange={(e) => setRegion(e.target.value.trim() || 'all')}
+                    placeholder="Region…"
+                  />
+                  <datalist id="crm-region-list">
+                    {regions.map((r) => (
+                      <option key={r} value={r} />
+                    ))}
+                  </datalist>
+                  <select className="input" value={stake} onChange={(e) => setStake(e.target.value)}>
+                    <option value="all">All stakes</option>
+                    {stakesOpts.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="input"
+                    value={venue}
+                    onChange={(e) => setVenue(e.target.value)}
+                    title="Filter by venue"
+                  >
+                    <option value="all">All venues</option>
+                    {venuesOpts.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                  <select className="input" value={activity} onChange={(e) => setActivity(e.target.value)}>
+                    <option value="all">All activity</option>
+                    {activities.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="input"
+                    value={sourceFilter}
+                    onChange={(e) => setSourceFilter(e.target.value)}
+                    title="Filter by contact source"
+                  >
+                    <option value="all">All sources</option>
+                    {sourcesOpts.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="input"
+                    value={channel}
+                    onChange={(e) => setChannel(e.target.value as 'auto' | 'sms' | 'thread')}
+                    title="Which channel to message players on"
+                  >
+                    <option value="auto">Channel: auto</option>
+                    <option value="thread">Existing thread only</option>
+                    <option value="sms">SMS (text)</option>
+                  </select>
+                  <select
+                    className="input"
+                    value={cDay}
+                    onChange={(e) => setCDay(e.target.value)}
+                    title="Preferred contact day"
+                  >
+                    <option value="all">Any day</option>
+                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="input"
+                    value={cWindow}
+                    onChange={(e) => setCWindow(e.target.value)}
+                    title="Preferred contact time"
+                  >
+                    <option value="all">Any time</option>
+                    {['Morning', 'Afternoon', 'Evening'].map((w) => (
+                      <option key={w} value={w}>
+                        {w}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <button className="btn btn-ghost text-xs" onClick={selectAllSendable}>
+                Select all sendable
+              </button>
+              <button className="btn-quiet" onClick={clearSelection}>
+                Clear
+              </button>
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs muted">
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={showHidden}
+                  onChange={(e) => setShowHidden(e.target.checked)}
+                />
+                show hidden
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs muted">
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={showUnavailable}
+                  onChange={(e) => setShowUnavailable(e.target.checked)}
+                />
+                show unavailable
+              </label>
+              <span className="text-xs muted tnum">
+                {recipients.filter((r) => r.sendable).length} sendable ·{' '}
+                {recipients.filter((r) => !r.sendable).length} unavailable{' '}
+                {showUnavailable ? 'shown' : 'hidden'} · do-not-message always excluded
+              </span>
+              {source === 'crm' && outreach.length === 0 && (
+                <span className="text-xs font-semibold" style={{ color: 'var(--color-accent-700)' }}>
+                  CRM empty — run the sync with AIRTABLE_API_KEY set
+                </span>
+              )}
+            </div>
+
+            {picked.size > 0 && (
+              <div className="p-2.5" style={{ border: '1px solid var(--color-divider)' }}>
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <span
+                    className="text-[11px] font-semibold uppercase"
+                    style={{ letterSpacing: '0.08em', color: 'var(--color-accent-700)' }}
+                  >
+                    Selected ({picked.size}) — kept across sources &amp; filters
+                  </span>
+                  <button className="btn-quiet" onClick={clearSelection}>
+                    Clear all
+                  </button>
+                </div>
+                <div className="flex max-h-72 flex-wrap gap-1.5 overflow-y-auto">
+                  {Array.from(picked.values()).map((r) => (
+                    <span key={r.key} className="tag tag-neutral gap-1.5">
+                      {r.name}
+                      <button
+                        className="inline-flex cursor-pointer items-center border-0 bg-transparent p-0 muted-60"
+                        onClick={() => toggle(r)}
+                        title="Remove"
+                      >
+                        <IconX size={12} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="max-h-72 overflow-y-auto border-t-2 border-divider">
+              {shownRecipients.map((r) => (
+                <div
+                  key={r.key}
+                  onDoubleClick={() => startEdit(r)}
+                  onContextMenu={(e) => {
+                    if (source === 'crm') {
+                      e.preventDefault()
+                      startEdit(r)
+                    }
+                  }}
+                  className={`row row-hover flex items-center gap-2 py-1.5 pr-1 text-sm ${
+                    r.sendable ? '' : 'opacity-60'
+                  }`}
+                >
+                  {editKey === r.key ? (
+                    <div className="flex flex-1 flex-wrap items-center gap-1.5">
+                      <input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        placeholder="name"
+                        autoFocus
+                        className="input !min-h-0 min-w-24 flex-1 !py-1"
+                      />
+                      <input
+                        value={editPhone}
+                        onChange={(e) => setEditPhone(e.target.value)}
+                        placeholder="phone"
+                        className="input !min-h-0 !w-32 !py-1 tnum"
+                      />
+                      <input
+                        value={editNick}
+                        onChange={(e) => setEditNick(e.target.value)}
+                        placeholder="nickname"
+                        className="input !min-h-0 !w-24 !py-1"
+                      />
+                      <button
+                        className="btn btn-primary !px-2.5 !py-1 !text-xs"
+                        onClick={() => void saveEdit()}
+                      >
+                        Save
+                      </button>
+                      <button className="btn-quiet" onClick={() => setEditKey(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="checkbox"
+                          checked={picked.has(r.key)}
+                          onChange={() => toggle(r)}
+                        />
+                        <span
+                          className={`min-w-0 flex-1 truncate ${r.warnFailed ? 'font-semibold' : ''}`}
+                          style={r.warnFailed ? { color: 'var(--color-accent-700)' } : undefined}
+                        >
+                          {r.name}
+                        </span>
+                        {r.whale && <span className="tag tag-accent tag-net uppercase">whale</span>}
+                        {r.warnFailed && (
+                          <span
+                            className="tag tag-outline tag-net"
+                            title="The last SMS to this number failed — the number may be wrong"
+                          >
+                            SMS failed
+                          </span>
+                        )}
+                        {r.warnFailed && (r.altNumbers?.length ?? 0) > 0 && (
+                          <span
+                            className="tag tag-neutral tag-net tnum"
+                            title={`Another number on file for this name: ${r.altNumbers!.join(', ')} — double-click the row to switch numbers`}
+                          >
+                            alt #: {r.altNumbers![0]}
+                          </span>
+                        )}
+                        {(() => {
+                          const sig = signals.get(r.key)
+                          if (!sig?.last_sent_at) return null
+                          const d = Math.max(
+                            0,
+                            Math.floor((Date.now() - new Date(sig.last_sent_at).getTime()) / 86_400_000),
+                          )
+                          const ghost = (sig.unanswered_outreach ?? 0) >= 2
+                          return (
+                            <span
+                              className={`flex-none text-xs tnum ${ghost ? 'font-semibold' : 'muted-45'}`}
+                              style={ghost ? { color: 'var(--color-accent-700)' } : undefined}
+                              title={`Last messaged ${d} day${d === 1 ? '' : 's'} ago${
+                                sig.last_venue ? ` for ${sig.last_venue}` : ''
+                              }${ghost ? ` · no reply to the last ${sig.unanswered_outreach} outreach messages` : ''}`}
+                            >
+                              {ghost ? 'no reply · ' : ''}
+                              {sig.last_venue ? `${sig.last_venue} · ` : ''}
+                              {d}d
+                            </span>
+                          )
+                        })()}
+                        <span className="max-w-[45%] flex-none truncate text-xs muted-45">{r.sub}</span>
+                        {r.badge && (
+                          <span className={`tag tag-net ${r.guard ? 'tag-accent' : 'tag-neutral'}`}>
+                            {r.badge}
+                          </span>
+                        )}
+                      </label>
+                      {outreachIds.has(r.key) && (
+                        <button
+                          className="btn-quiet"
+                          onClick={() => startEdit(r)}
+                          title="Edit name / number (or double-click the row)"
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {outreachIds.has(r.key) && (
+                        <button
+                          className="btn-quiet"
+                          onClick={() => void banPlayer(r)}
+                          title="Ban — never message this player"
+                        >
+                          Ban
+                        </button>
+                      )}
+                      {loadedList?.members.has(r.key) && (
+                        <button
+                          className="btn-quiet"
+                          onClick={() => void removeFromList(r)}
+                          title={`Remove permanently from the “${loadedList.name}” standing list (untick just skips this week)`}
+                        >
+                          Off list
+                        </button>
+                      )}
+                      <button
+                        className="btn-quiet"
+                        onClick={() => void toggleHide(r.key, r.hidden)}
+                        title={r.hidden ? 'Unhide' : 'Hide from this list'}
+                      >
+                        {r.hidden ? 'Unhide' : 'Hide'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+              {shownRecipients.length === 0 && <p className="m-0 py-3 text-sm muted">No recipients match.</p>}
+            </div>
+
+            {statusLine}
+
+            <div
+              className="flex flex-wrap items-center gap-3 pt-4"
+              style={{ borderTop: '2px solid var(--color-divider)' }}
+            >
+              <button className="btn btn-primary" onClick={() => void buildPreview()} disabled={busy}>
+                Preview each message{picked.size > 0 ? <span className="tnum">&nbsp;· {picked.size}</span> : null}
+              </button>
+              <button
+                className="btn btn-ghost text-[13px]"
+                onClick={() => setShowSchedule((s) => !s)}
+                aria-expanded={showSchedule || !!scheduleAt}
+              >
+                Schedule for later
+              </button>
+              {(showSchedule || scheduleAt) && (
+                <label className="flex items-center gap-2 text-xs muted-70">
+                  Send at
+                  <input
+                    type="datetime-local"
+                    value={scheduleAt}
+                    onChange={(e) => setScheduleAt(e.target.value)}
+                    className="input !w-auto !text-xs tnum"
+                  />
+                </label>
+              )}
+              {scheduleAt && (
+                <button className="btn-quiet" onClick={() => setScheduleAt('')}>
+                  Clear
+                </button>
+              )}
+              <span className="text-[11px] muted">
+                Approval happens on the preview — nothing sends before you approve it there.
+              </span>
+            </div>
+          </div>
+        </section>
+
+        {/* ————— right: recent batches rail ————— */}
+        <aside className="min-w-0">
+          <div className="section-head">
+            <span className="kicker">Recent batches</span>
+            <button className="btn-quiet" onClick={loadPastBatches}>
+              Refresh
+            </button>
+          </div>
+          <div>
+            {pastBatches.slice(0, 12).map((b) => (
+              <div key={b.id} className="row py-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">{b.name}</span>
+                  <span className={batchTag(b.status)}>{b.status}</span>
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2">
+                  <span className="min-w-0 truncate text-xs muted tnum">
+                    {[b.venue, new Date(b.created_at).toLocaleDateString()].filter(Boolean).join(' · ')}
+                  </span>
+                  <button
+                    className="btn-quiet"
+                    onClick={() => {
+                      if (b.venue && !batchVenue.trim()) setBatchVenue(b.venue)
+                      void loadList(b.id)
+                    }}
+                    title="Load this batch's recipients into the composer"
+                  >
+                    Reuse list
+                  </button>
+                </div>
+              </div>
+            ))}
+            {pastBatches.length === 0 && (
+              <p className="m-0 mt-3 text-[13px] muted">
+                No batches yet — the first one you build will appear here.
+              </p>
             )}
           </div>
-        ))}
-        {recipients.filter((r) => showUnavailable || r.sendable).length === 0 && (
-          <p className="p-3 text-sm text-slate-400">No recipients match.</p>
-        )}
+        </aside>
       </div>
-
-      {status && <p className="mb-3 text-sm text-slate-600">{status}</p>}
-
-      <button
-        onClick={() => void buildPreview()}
-        disabled={busy}
-        className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
-      >
-        Build preview →
-      </button>
-    </div>
+    </>
   )
 }

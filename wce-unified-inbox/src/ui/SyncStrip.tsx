@@ -10,13 +10,13 @@ interface Item {
   detail?: string | null
 }
 
-// Each integration's "how fresh is fresh": under `fresh` = green, up to 8x =
-// amber, beyond = red. TD sheets pull every 30m; the engine ticks every 15s;
+// Each integration's "how fresh is fresh": under `fresh` = healthy, up to 8x =
+// stale, beyond = failed. TD sheets pull every 30m; the engine ticks every 15s;
 // the nightly deep sweep, LetsPoker + Contacts run on slow daily-ish cadences.
 const SPECS: { key: string; label: string; fresh: number; ok?: string }[] = [
   { key: 'engine', label: 'Sync engine', fresh: 120 },
   { key: 'tdsheets', label: 'TD sheets', fresh: 90 * 60 },
-  // The nightly re-read of the last 7 days. Amber here means the stored figures
+  // The nightly re-read of the last 7 days. Stale here means the stored figures
   // are still on the wall — just not re-checked against Drive since that time.
   { key: 'deep', label: 'Nightly re-read', fresh: 28 * 3600, ok: 'swept' },
   { key: 'letspoker', label: 'LetsPoker', fresh: 2 * 86400, ok: 'synced' },
@@ -36,16 +36,16 @@ interface BridgeRow {
   last_checked: string | null
 }
 
-// Collapse the per-network Beeper health into one strip chip. Any bridge down =>
-// red alarm; the tooltip lists exactly which network (and for how long).
+// Collapse the per-network Beeper health into one strip item. Any bridge down =>
+// alarm; the tooltip lists exactly which network (and for how long).
 function beeperItem(bridges: BridgeRow[], now: number): Item {
   if (!bridges.length)
     return { key: 'beeper', label: 'Beeper', tone: 'warn', status: 'no signal', detail: 'No bridge health yet — restart the engine to begin polling.' }
   const lastChecked = Math.max(...bridges.map((b) => (b.last_checked ? new Date(b.last_checked).getTime() : 0)))
   const checkedAgo = lastChecked ? (now - lastChecked) / 1000 : null
-  // Red, not amber. A stale poll doesn't mean "slightly out of date" — it means
-  // every bridge figure in this strip is frozen fiction, which is exactly how
-  // 3 Aug read as healthy for six days.
+  // Alarm, not merely stale. A stale poll doesn't mean "slightly out of date" —
+  // it means every bridge figure in this strip is frozen fiction, which is
+  // exactly how 3 Aug read as healthy for six days.
   if (checkedAgo == null || checkedAgo > 300)
     return { key: 'beeper', label: 'Beeper', tone: 'bad', status: checkedAgo == null ? 'no signal' : `${rel(checkedAgo)} ago`, detail: 'Bridge poll is stale — these numbers are not live. The engine is probably down.' }
   const down = bridges.filter((b) => !b.connected)
@@ -62,9 +62,11 @@ function beeperItem(bridges: BridgeRow[], now: number): Item {
 }
 
 /**
- * Global live-sync strip — a slim, always-visible health bar of the background
- * integrations, pinned to the top of every page. Polls every 20s so it reflects
- * the real state without a refresh. Green pulses = healthy and current.
+ * Health strip — Home's single-row view of the background integrations,
+ * per the redesign: 1px rules above/below, each item a small square + a
+ * "Label · status" line. Squares stay neutral while healthy; anything wrong
+ * turns the square accent and the status text accent-700 (one accent colour,
+ * used only where attention is needed). Polls every 20s.
  */
 export function SyncStrip() {
   const [items, setItems] = useState<Item[]>([])
@@ -136,24 +138,26 @@ export function SyncStrip() {
 
   if (!items.length) return null
 
-  const dot = (t: Tone) =>
-    t === 'ok' ? 'bg-emerald-500' : t === 'warn' ? 'bg-amber-500' : t === 'bad' ? 'bg-rose-500' : 'bg-slate-300'
-  const txt = (t: Tone) =>
-    t === 'ok' ? 'text-emerald-600' : t === 'warn' ? 'text-amber-600' : t === 'bad' ? 'text-rose-600' : 'text-slate-400'
-
-  const worst = items.some((i) => i.tone === 'bad') ? 'bad' : items.some((i) => i.tone === 'warn') ? 'warn' : 'ok'
+  const sq = (t: Tone) =>
+    t === 'ok' ? 'var(--color-neutral-700)' : t === 'warn' ? 'var(--color-accent-300)' : 'var(--color-accent)'
+  const worst: Tone = items.some((i) => i.tone === 'bad') ? 'bad' : items.some((i) => i.tone === 'warn') ? 'warn' : 'ok'
 
   return (
-    <div className="flex items-center gap-x-4 gap-y-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 bg-slate-50/80 px-3 py-1 text-xs">
-      <span className="flex shrink-0 items-center gap-1.5 font-medium text-slate-400">
-        <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot(worst)} ${worst === 'ok' ? 'animate-pulse' : ''}`} />
+    <div
+      className="mb-[26px] flex flex-wrap items-center gap-x-5 gap-y-2 py-[9px]"
+      style={{ borderTop: '1px solid var(--color-divider)', borderBottom: '1px solid var(--color-divider)' }}
+    >
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs muted-70">
+        <span className="sq-sm" style={{ background: sq(worst) }} />
         Live
       </span>
       {items.map((it) => (
-        <span key={it.key} className="flex shrink-0 items-center gap-1.5" title={it.detail ?? undefined}>
-          <span className={`inline-block h-2 w-2 rounded-full ${dot(it.tone)} ${it.tone === 'ok' ? 'animate-pulse' : ''}`} />
-          <span className="text-slate-600">{it.label}</span>
-          <span className={txt(it.tone)}>{it.status}</span>
+        <span key={it.key} className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs muted-70" title={it.detail ?? undefined}>
+          <span className="sq-sm" style={{ background: sq(it.tone) }} />
+          {it.label} ·{' '}
+          <span className={it.tone === 'bad' ? 'font-semibold' : undefined} style={it.tone === 'bad' ? { color: 'var(--color-accent-700)' } : undefined}>
+            {it.status}
+          </span>
         </span>
       ))}
     </div>

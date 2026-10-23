@@ -41,6 +41,7 @@ export function Confirmed() {
   const [loading, setLoading] = useState(true)
   const [games, setGames] = useState<Game[]>([])
   const [openGame, setOpenGame] = useState<string | null>(null)
+  const [openTonight, setOpenTonight] = useState(true)
 
   // manual-entry form
   const [mName, setMName] = useState('')
@@ -154,104 +155,163 @@ export function Confirmed() {
     d ? new Date(d + 'T00:00:00').toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) : '—'
 
   return (
-    <div className="mx-auto h-full w-full max-w-2xl overflow-y-auto p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Confirmed &amp; attendance</h2>
-        <button onClick={() => { void load(); void loadGames() }} className="text-sm text-emerald-700 hover:underline">
-          Refresh
-        </button>
+    <div className="max-w-[760px]">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <p className="m-0 flex-1 text-[13px] muted tnum">
+          {rows.length} confirmed for tonight · replies + manual · staff &amp; hidden excluded.
+        </p>
+        <button onClick={() => { void load(); void loadGames() }} className="btn-quiet">Refresh</button>
       </div>
-      <p className="mb-4 text-sm text-slate-500">
-        {rows.length} confirmed for tonight · replies + manual · staff &amp; hidden excluded.
-      </p>
 
       {/* Tonight */}
-      {loading ? (
-        <p className="text-sm text-slate-400">Loading…</p>
-      ) : rows.length === 0 ? (
-        <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-400">No confirmations yet.</p>
-      ) : (
-        <ol className="space-y-1">
-          {rows.map((r, i) => (
-            <li key={r.key} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
-              <span className="w-5 text-right text-xs text-slate-400">{i + 1}</span>
-              <span className="flex-1 font-medium">{r.name}</span>
-              {r.manual && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">manual</span>}
-              {r.note && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{r.note}</span>}
-              <span className="text-xs text-slate-400">
-                {r.ts ? new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
+      <div style={{ borderTop: '2px solid var(--color-divider)' }}>
+        {loading ? (
+          <p className="row m-0 py-3 text-[13px] muted">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="row m-0 py-3 text-[13px] muted">No confirmations yet.</p>
+        ) : (
+          <div className="row">
+            <div className="grid grid-cols-[minmax(0,1fr)_max-content] items-center gap-4 py-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">Tonight</div>
+                <div className="mt-0.5 truncate text-xs muted">{rows.map((r) => r.name).join(' · ')}</div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[20px] font-extrabold tnum">{rows.length}</span>
+                <button className="btn-quiet" onClick={() => setOpenTonight((v) => !v)}>
+                  {openTonight ? 'Hide' : 'Detail'}
+                </button>
+              </div>
+            </div>
+            {openTonight && (
+              <ol className="m-0 list-none p-0 pb-3">
+                {rows.map((r, i) => (
+                  <li key={r.key} className="flex items-baseline gap-2 py-1 text-[13px]">
+                    <span className="w-5 flex-none text-right text-xs muted-45 tnum">{i + 1}</span>
+                    <span className="min-w-0 flex-1 truncate font-semibold">{r.name}</span>
+                    {r.manual && <span className="tag tag-neutral text-[10px] uppercase">manual</span>}
+                    {r.note && <span className="tag tag-accent text-[10px]">{r.note}</span>}
+                    <span className="text-xs muted-45 tnum">
+                      {r.ts ? new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
+      </div>
+      <p className="m-0 mt-2.5 text-[11px] muted">
+        RSVPs land from replies and the LetsPoker app in near-real-time.
+      </p>
 
       {/* Manual entry */}
-      <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-3">
-        <p className="mb-2 text-sm font-medium text-slate-700">Add attendee manually</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            value={mName}
-            onChange={(e) => setMName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void addManual() }}
-            placeholder="Player name"
-            className="min-w-[10rem] flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
-          />
-          <select value={mVenue} onChange={(e) => setMVenue(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
-            <option value="">Venue…</option>
-            {VENUES.map((v) => (<option key={v} value={v}>{v}</option>))}
-          </select>
-          <select value={mType} onChange={(e) => setMType(e.target.value as 'cash' | 'tournament')} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
-            <option value="cash">cash</option>
-            <option value="tournament">tournament</option>
-          </select>
-          <input type="date" value={mDate} onChange={(e) => setMDate(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
-          <button onClick={() => void addManual()} disabled={!mName.trim()} className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40">
+      <div className="mt-8">
+        <div className="section-head">
+          <span className="kicker">Add attendee manually</span>
+        </div>
+        <div className="mt-3 flex flex-wrap items-end gap-x-3 gap-y-2">
+          <div className="field min-w-[10rem] flex-1">
+            <label>
+              player name
+              <input
+                value={mName}
+                onChange={(e) => setMName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void addManual() }}
+                placeholder="Player name"
+                className="input"
+              />
+            </label>
+          </div>
+          <div className="field">
+            <label>
+              venue
+              <select value={mVenue} onChange={(e) => setMVenue(e.target.value)} className="input !w-36">
+                <option value="">—</option>
+                {VENUES.map((v) => (<option key={v} value={v}>{v}</option>))}
+              </select>
+            </label>
+          </div>
+          <div className="field">
+            <label>
+              type
+              <select value={mType} onChange={(e) => setMType(e.target.value as 'cash' | 'tournament')} className="input !w-32">
+                <option value="cash">cash</option>
+                <option value="tournament">tournament</option>
+              </select>
+            </label>
+          </div>
+          <div className="field">
+            <label>
+              date
+              <input type="date" value={mDate} onChange={(e) => setMDate(e.target.value)} className="input tnum" />
+            </label>
+          </div>
+          <button onClick={() => void addManual()} disabled={!mName.trim()} className="btn btn-secondary text-[13px]">
             Add
           </button>
         </div>
-        {status && <p className="mt-2 text-xs text-emerald-700">{status}</p>}
+        {status && (
+          <p className="m-0 mt-2 text-xs font-semibold" style={{ color: 'var(--color-accent-700)' }}>{status}</p>
+        )}
       </div>
 
       {/* Game history */}
-      <h3 className="mb-2 mt-6 text-base font-semibold">Game history</h3>
-      {games.length === 0 ? (
-        <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-400">
-          No games yet — they appear here as TD sheets get pulled (or add players manually above).
-        </p>
-      ) : (
-        <ul className="space-y-2">
-          {games.map((g) => {
-            const cash = g.players.filter((p) => p.category === 'cash').length
-            const tourney = g.players.filter((p) => p.category === 'tournament').length
-            const winner = g.players.find((p) => p.winner)
-            const open = openGame === g.key
-            return (
-              <li key={g.key} className="rounded-lg border border-slate-200 bg-white">
-                <button onClick={() => setOpenGame(open ? null : g.key)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm">
-                  <span className="font-medium">{fmtDate(g.game_date)}</span>
-                  <span className="text-slate-500">{g.venue || g.title || 'game'}</span>
-                  <span className="ml-auto text-xs text-slate-400">
-                    {g.players.length} players{cash ? ` · ${cash} cash` : ''}{tourney ? ` · ${tourney} tourney` : ''}
-                  </span>
-                  {winner && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">🏆 {winner.name}</span>}
-                  <span className="text-slate-400">{open ? '▾' : '▸'}</span>
-                </button>
-                {open && (
-                  <div className="flex flex-wrap gap-1.5 border-t border-slate-100 p-3">
-                    {g.players.map((p, i) => (
-                      <span key={i} className={`rounded-full px-2 py-0.5 text-xs ${p.winner ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>
-                        {p.winner ? '🏆 ' : ''}{p.name}
-                        {p.category === 'tournament' ? ' ·T' : p.category === 'cash' ? ' ·$' : ''}
-                      </span>
-                    ))}
+      <div className="mt-8">
+        <div className="section-head">
+          <span className="kicker">Game history</span>
+          <span className="text-xs muted tnum">{games.length}</span>
+        </div>
+        {games.length === 0 ? (
+          <p className="m-0 py-3 text-[13px] muted">
+            No games yet — they appear here as TD sheets get pulled (or add players manually above).
+          </p>
+        ) : (
+          <ul className="m-0 list-none p-0">
+            {games.map((g) => {
+              const cash = g.players.filter((p) => p.category === 'cash').length
+              const tourney = g.players.filter((p) => p.category === 'tournament').length
+              const winner = g.players.find((p) => p.winner)
+              const open = openGame === g.key
+              return (
+                <li key={g.key} className="row">
+                  <div className="grid grid-cols-[minmax(0,1fr)_max-content] items-center gap-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold tnum">
+                        {fmtDate(g.game_date)} · {g.venue || g.title || 'game'}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs muted tnum">
+                        {cash ? `${cash} cash` : ''}{cash && tourney ? ' · ' : ''}{tourney ? `${tourney} tourney` : ''}
+                        {(cash || tourney) && winner ? ' · ' : ''}{winner ? `winner ${winner.name}` : ''}
+                        {!cash && !tourney && !winner ? g.players.map((p) => p.name).join(' · ') : ''}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[20px] font-extrabold tnum">{g.players.length}</span>
+                      <button className="btn-quiet" onClick={() => setOpenGame(open ? null : g.key)}>
+                        {open ? 'Hide' : 'Detail'}
+                      </button>
+                    </div>
                   </div>
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      )}
+                  {open && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 pb-3 text-[13px]">
+                      {g.players.map((p, i) => (
+                        <span key={i} className={p.winner ? 'font-semibold' : ''}>
+                          {p.name}
+                          <span className="muted-45">
+                            {p.category === 'tournament' ? ' T' : p.category === 'cash' ? ' $' : ''}
+                          </span>
+                          {p.winner && <span className="tag tag-accent ml-1 text-[10px] uppercase">winner</span>}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

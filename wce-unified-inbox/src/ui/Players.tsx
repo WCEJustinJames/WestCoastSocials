@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { usePlayers, attKey, normCore, type SingleThread } from './usePlayers'
 import { useVenues } from './useVenues'
 import { PlayerCard } from './PlayerRow'
@@ -33,10 +33,15 @@ function threadCandidates(name: string | null, threads: { core: string; toks: st
 
 /** Players tab — the full contact list + per-player settings (browse / edit).
  * `initialFilter` lets the Home dashboard open this tab pre-filtered (e.g. the
- * "No contact" card jumps straight to the no-contact list). */
-export function Players({ initialFilter }: { initialFilter?: string | null }) {
+ * "No contact" card jumps straight to the no-contact list). `search` is the
+ * shell-owned "Search players" box — this screen renders no search input of
+ * its own. */
+export function Players({ initialFilter, search }: { initialFilter?: string | null; search?: string }) {
   const VENUES = useVenues()
   const p = usePlayers(initialFilter ?? undefined)
+  // Mirror the shell's search box into the hook's query filter.
+  const setQuery = p.setQuery
+  useEffect(() => { setQuery(search ?? '') }, [search, setQuery])
   // Pre-normalise every 1:1 thread once; only threads not already linked to a
   // CRM row are offered as candidates.
   const linkedChats = useMemo(
@@ -50,46 +55,48 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
         .map((t) => ({ core: normCore(t.title), toks: normCore(t.title).split(' '), t })),
     [p.singleThreads, linkedChats],
   )
+
+  const segBtn = (label: string, pressed: boolean, toggle: () => void, title?: string) => (
+    <button className="seg-btn seg-btn-sm" aria-pressed={pressed} onClick={toggle} title={title}>
+      {label}
+    </button>
+  )
+
   return (
-    <div className="mx-auto h-full w-full max-w-6xl overflow-y-auto p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Players (CRM)</h2>
-        <button onClick={p.load} className="text-sm text-emerald-700 hover:underline">
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <p className="m-0 text-xs muted tnum">
+          {p.rows.length} players · {p.regions.length} region values · {p.dupGroups.length} phone-duplicate group(s)
+        </p>
+        <div className="flex-1" />
+        {p.dupGroups.length > 0 && (
+          <button
+            onClick={() => void p.mergePhoneDuplicates()}
+            disabled={p.busy}
+            title="Merge records that share a phone number when their names are compatible; clashing names are left for manual review"
+            className="btn btn-secondary !text-xs tnum"
+          >
+            Auto-merge {p.dupGroups.length} shared-number duplicate(s)
+          </button>
+        )}
+        <button onClick={p.load} className="btn-quiet">
           Refresh
         </button>
       </div>
-      <p className="mb-2 text-sm text-slate-500">
-        {p.rows.length} players · {p.regions.length} region values ·{' '}
-        {p.dupGroups.length} phone-duplicate group(s).
-      </p>
-      {p.dupGroups.length > 0 && (
-        <button
-          onClick={() => void p.mergePhoneDuplicates()}
-          disabled={p.busy}
-          title="Merge records that share a phone number when their names are compatible; clashing names are left for manual review"
-          className="mb-4 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
-        >
-          Auto-merge {p.dupGroups.length} shared-number duplicate(s)
-        </button>
+      {p.status && (
+        <p className="mb-3 text-xs font-semibold" style={{ color: 'var(--color-accent-700)' }}>{p.status}</p>
       )}
-      {p.status && <p className="mb-3 text-sm text-emerald-700">{p.status}</p>}
 
       <FbFriendsImporter p={p} />
 
-      {/* Search + filters */}
+      {/* Filters — the name search itself lives in the shell's sub-tab row */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <input
-          value={p.query}
-          onChange={(e) => p.setQuery(e.target.value)}
-          placeholder="Search name, phone, status, region…"
-          className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
-        />
         <input
           list="players-region-list"
           value={p.regionFilter === 'all' ? '' : p.regionFilter}
           onChange={(e) => p.setRegionFilter(e.target.value.trim() || 'all')}
           placeholder="Region…"
-          className="w-40 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+          className="input !w-36"
         />
         <datalist id="players-region-list">
           {p.regions.map((r) => (<option key={r} value={r} />))}
@@ -98,7 +105,7 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
           value={p.venueFilter}
           onChange={(e) => p.setVenueFilter(e.target.value)}
           title="Players who have actually played this venue (LP + TD attendance) or are tagged to it"
-          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+          className="input !w-auto"
         >
           <option value="all">All venues</option>
           {VENUES.map((v) => (<option key={v} value={v}>{v}</option>))}
@@ -107,7 +114,7 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
           value={p.sortMode}
           onChange={(e) => p.setSortMode(e.target.value as 'attention' | 'games' | 'recent')}
           title="Order: review workflow, most games played (all-time LP+TD), or most recently seen at a game"
-          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+          className="input !w-auto"
         >
           <option value="attention">Needs attention</option>
           <option value="games">Most games</option>
@@ -117,45 +124,36 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
           value={p.sourceFilter}
           onChange={(e) => p.setSourceFilter(e.target.value)}
           title="Filter by where the contact came from"
-          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+          className="input !w-auto"
         >
           <option value="all">All sources</option>
           {p.sources.map(([s, n]) => (
             <option key={s} value={s}>{s} ({n})</option>
           ))}
         </select>
-        <label className="flex items-center gap-1 text-xs text-purple-700" title="Show only tournament players">
-          <input type="checkbox" checked={p.tournamentOnly} onChange={(e) => p.setTournamentOnly(e.target.checked)} />
-          tournament
-        </label>
-        <label className="flex items-center gap-1 text-xs text-teal-700" title="Show only cash-game players">
-          <input type="checkbox" checked={p.cashOnly} onChange={(e) => p.setCashOnly(e.target.checked)} />
-          cash
-        </label>
-        <label className="flex items-center gap-1 text-xs text-amber-700" title="Players with no phone or thread — collect their details in person">
-          <input type="checkbox" checked={p.noContactOnly} onChange={(e) => p.setNoContactOnly(e.target.checked)} />
-          no contact
-        </label>
-        <label className="flex items-center gap-1 text-xs text-indigo-700" title="Facebook friends with no thread yet — send one DM to open the conversation">
-          <input type="checkbox" checked={p.fbFriendOnly} onChange={(e) => p.setFbFriendOnly(e.target.checked)} />
-          FB · DM to open
-        </label>
-        <label className="flex items-center gap-1 text-xs text-rose-700" title="Players we only have a first name for — work through and add surnames. Saving a surname drops the player from this list.">
-          <input type="checkbox" checked={p.firstNameOnly} onChange={(e) => p.setFirstNameOnly(e.target.checked)} />
-          first name only{p.firstNameOnlyCount ? ` (${p.firstNameOnlyCount})` : ''}
-        </label>
-        <label className="flex items-center gap-1 text-xs text-rose-700" title="Numbers with the wrong digit count, or whose last SMS failed to send — fix or replace.">
-          <input type="checkbox" checked={p.badNumberOnly} onChange={(e) => p.setBadNumberOnly(e.target.checked)} />
-          ⚠ bad number{p.badNumberCount ? ` (${p.badNumberCount})` : ''}
-        </label>
-        <label className="flex items-center gap-1 text-xs text-slate-500">
-          <input type="checkbox" checked={p.showHidden} onChange={(e) => p.setShowHidden(e.target.checked)} />
-          show hidden
-        </label>
+        <div className="seg">
+          {segBtn('Tournament', p.tournamentOnly, () => p.setTournamentOnly(!p.tournamentOnly), 'Show only tournament players')}
+          {segBtn('Cash', p.cashOnly, () => p.setCashOnly(!p.cashOnly), 'Show only cash-game players')}
+          {segBtn('No contact', p.noContactOnly, () => p.setNoContactOnly(!p.noContactOnly), 'Players with no phone or thread — collect their details in person')}
+          {segBtn('FB — DM to open', p.fbFriendOnly, () => p.setFbFriendOnly(!p.fbFriendOnly), 'Facebook friends with no thread yet — send one DM to open the conversation')}
+          {segBtn(
+            `First name only${p.firstNameOnlyCount ? ` (${p.firstNameOnlyCount})` : ''}`,
+            p.firstNameOnly,
+            () => p.setFirstNameOnly(!p.firstNameOnly),
+            'Players we only have a first name for — work through and add surnames. Saving a surname drops the player from this list.',
+          )}
+          {segBtn(
+            `Bad number${p.badNumberCount ? ` (${p.badNumberCount})` : ''}`,
+            p.badNumberOnly,
+            () => p.setBadNumberOnly(!p.badNumberOnly),
+            'Numbers with the wrong digit count, or whose last SMS failed to send — fix or replace.',
+          )}
+          {segBtn('Show hidden', p.showHidden, () => p.setShowHidden(!p.showHidden))}
+        </div>
       </div>
-      <p className="mb-2 text-xs text-slate-400">{p.filtered.length} shown</p>
+      <p className="mb-2 text-xs muted-45 tnum">{p.filtered.length} shown</p>
 
-      <ul className="space-y-2">
+      <ul className="m-0 list-none p-0" style={{ borderTop: '2px solid var(--color-divider)' }}>
         {p.filtered.slice(0, 300).map((r, i) => {
           const e = p.edits[r.id]
           if (!e) return null
@@ -185,7 +183,7 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
         })}
       </ul>
       {p.filtered.length > 300 && (
-        <p className="mt-2 text-xs text-slate-400">Showing first 300 — narrow with search/filter.</p>
+        <p className="mt-2 text-xs muted-45">Showing first 300 — narrow with search/filter.</p>
       )}
     </div>
   )
@@ -194,8 +192,8 @@ export function Players({ initialFilter }: { initialFilter?: string | null }) {
 /**
  * Paste your Facebook friends list (the JSON from "Download Your Information →
  * Friends", or just one name per line). Cross-checks against every CRM name and
- * flags matches: a matched player with no thread yet shows a "FB · DM to open"
- * chip, turning a dead-end "no contact" into "just message him". Re-pasting an
+ * flags matches: a matched player with no thread yet shows a "FB — DM to open"
+ * tag, turning a dead-end "no contact" into "just message him". Re-pasting an
  * updated list reconciles, so un-friended people clear automatically.
  */
 function FbFriendsImporter({ p }: { p: ReturnType<typeof usePlayers> }) {
@@ -212,17 +210,17 @@ function FbFriendsImporter({ p }: { p: ReturnType<typeof usePlayers> }) {
     r.readAsText(f)
   }
   return (
-    <details className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm">
-      <summary className="cursor-pointer select-none font-medium text-slate-700">
+    <details className="mb-4 text-sm">
+      <summary className="cursor-pointer select-none text-sm font-semibold">
         Import Facebook friends
         {p.fbFriendCount > 0 && (
-          <span className="ml-1 text-xs font-normal text-indigo-600">· {p.fbFriendCount} need a first DM</span>
+          <span className="ml-1.5 text-xs font-normal muted tnum">· {p.fbFriendCount} need a first DM</span>
         )}
       </summary>
-      <p className="mt-2 text-xs text-slate-500">
+      <p className="mt-2 text-xs muted">
         From your Facebook download open <em>connections_and_followers</em> and drag{' '}
         <em>your_friends.html</em> (or .json) onto the box below — or{' '}
-        <label className="cursor-pointer font-medium text-indigo-600 hover:underline">
+        <label className="cursor-pointer font-semibold underline" style={{ color: 'var(--color-accent)' }}>
           choose a file
           <input
             type="file"
@@ -247,7 +245,8 @@ function FbFriendsImporter({ p }: { p: ReturnType<typeof usePlayers> }) {
           readFile(e.dataTransfer.files?.[0])
         }}
         placeholder={'Drag your_friends.html / .json here — or paste names, one per line'}
-        className={`mt-2 h-28 w-full rounded-md border p-2 font-mono text-xs outline-none focus:border-emerald-500 ${drag ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300'}`}
+        className="input mt-2 h-28 font-mono !text-xs"
+        style={drag ? { borderColor: 'var(--color-accent)' } : undefined}
       />
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <button
@@ -259,7 +258,7 @@ function FbFriendsImporter({ p }: { p: ReturnType<typeof usePlayers> }) {
                 (r.cleared ? ` · cleared ${r.cleared} no longer on the list` : '') + '.',
             )
           }}
-          className="rounded-md bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+          className="btn btn-secondary !text-xs"
         >
           Match &amp; flag
         </button>
@@ -269,11 +268,13 @@ function FbFriendsImporter({ p }: { p: ReturnType<typeof usePlayers> }) {
             const n = await p.clearFbFriends()
             setMsg(`Cleared ${n} FB flag(s).`)
           }}
-          className="text-xs text-slate-400 hover:text-rose-600"
+          className="btn-quiet"
         >
           Clear all flags
         </button>
-        {msg && <span className="text-xs text-emerald-700">{msg}</span>}
+        {msg && (
+          <span className="text-xs font-semibold tnum" style={{ color: 'var(--color-accent-700)' }}>{msg}</span>
+        )}
       </div>
     </details>
   )

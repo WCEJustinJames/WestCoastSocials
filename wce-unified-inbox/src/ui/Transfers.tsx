@@ -11,7 +11,7 @@ const WINDOW_DAYS = 35 // rolling ~5 weeks
  * the last 5 weeks of sheets that's missing the Office Confirm initials, in one
  * queue. Ticking a line records JL (outgoing money requires the last-4 receipt
  * ref first) and the PC sync writes it back into the sheet's exact cell. Lines
- * still awaited can be flagged ⏳ pending — those also sit in the Home queue.
+ * still awaited can be flagged pending — those also sit in the Home queue.
  */
 export function Transfers() {
   const [rows, setRows] = useState<Transfer[]>([])
@@ -56,7 +56,7 @@ export function Transfers() {
     [shown],
   )
 
-  // Direction totals across the whole window (for the filter chips + summary).
+  // Direction totals across the whole window (for the filter seg + summary).
   const totals = useMemo(() => {
     let inSum = 0, outSum = 0, inN = 0, outN = 0
     for (const r of rows) {
@@ -65,6 +65,7 @@ export function Transfers() {
     }
     return { inSum, outSum, inN, outN }
   }, [rows])
+  const net = totals.inSum - totals.outSum
 
   async function confirmLine(t: Transfer) {
     const isOut = t.direction === 'out'
@@ -90,134 +91,155 @@ export function Transfers() {
     await load()
   }
 
-  const dirChip = (t: Transfer) =>
-    t.direction === 'in' ? (
-      <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">in</span>
-    ) : (
-      <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700">
-        {t.kind === 'winner_payout' ? 'payout' : 'out'}
-      </span>
-    )
+  const fmtDate = (d: string | null) =>
+    d ? new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : '—'
 
-  const lineRow = (t: Transfer, actions: boolean) => (
-    <li
-      key={t.id}
-      className={`flex flex-wrap items-center gap-2 rounded border p-1.5 text-sm ${
-        t.pending ? 'border-amber-300 bg-amber-50' : 'border-slate-100 bg-white'
-      }`}
-    >
-      {dirChip(t)}
-      <span className="min-w-0 flex-1 truncate">
-        <span className="font-medium">{t.name ?? '(no name)'}</span>
-        <span className="text-slate-500"> {t.amount ?? ''}</span>
-        <span className="text-[11px] text-slate-400">
-          {' '}· {t.venue ?? t.sheet_title ?? ''} {t.game_date ?? ''} · {t.tab_title}
-          {t.receipt ? ` · rcpt ${t.receipt}` : ''}
-          {t.pay_method ? ` · ${t.pay_method}` : ''}
-        </span>
-      </span>
-      {actions ? (
-        <>
-          {t.direction === 'out' && (
-            <input
-              value={refs[t.id] ?? ''}
-              onChange={(e) => setRefs((p) => ({ ...p, [t.id]: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
-              placeholder="last 4"
-              inputMode="numeric"
-              className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
-            />
-          )}
-          <button
-            onClick={() => void confirmLine(t)}
-            disabled={busy}
-            className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
-          >
-            ✓ JL
-          </button>
-          <button
-            onClick={() => void togglePending(t)}
-            title={t.pending ? 'Clear the awaiting flag' : 'Flag as awaited (not received yet) — also shows on Home'}
-            className={`text-xs ${t.pending ? 'text-amber-600' : 'text-slate-400 hover:text-amber-600'}`}
-          >
-            ⏳
-          </button>
-        </>
-      ) : (
-        <span className="text-[10px] text-slate-400">
-          {t.confirm_state === 'queued' ? 'JL queued for the sheet…' : `confirmed ${t.office_confirm || 'JL'}`}
-          {t.confirm_ref ? ` · ref ${t.confirm_ref}` : ''}
-        </span>
-      )}
-    </li>
+  const dirLabel = (t: Transfer) =>
+    t.direction === 'in' ? 'Received' : t.kind === 'winner_payout' ? 'Payout' : 'Sent'
+
+  const groupHead = (label: string, n: number) => (
+    <div className="flex items-baseline justify-between pb-1.5 pt-5">
+      <span className="kicker">{label}</span>
+      <span className="text-xs muted tnum">{n}</span>
+    </div>
   )
 
+  const lineRow = (t: Transfer, actions: boolean) => {
+    const isOut = dirOf(t) === 'out'
+    const amt = amountNum(t.amount)
+    return (
+      <li key={t.id} className="row grid grid-cols-[96px_minmax(0,1fr)_max-content] items-baseline gap-x-4 py-3">
+        <span className="text-xs muted-60 tnum">{fmtDate(t.game_date)}</span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-sm font-semibold">{t.name ?? '(no name)'}</span>
+            {t.pending && <span className="tag tag-outline text-[10px] uppercase">awaiting</span>}
+          </div>
+          <div className="mt-0.5 text-xs muted">
+            {dirLabel(t)} · {t.venue ?? t.sheet_title ?? '—'} · {t.tab_title}
+            {t.receipt ? ` · rcpt ${t.receipt}` : ''}
+            {t.pay_method ? ` · ${t.pay_method}` : ''}
+          </div>
+          {actions ? (
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              {t.direction === 'out' && (
+                <input
+                  value={refs[t.id] ?? ''}
+                  onChange={(e) => setRefs((p) => ({ ...p, [t.id]: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                  placeholder="last 4"
+                  inputMode="numeric"
+                  className="input !w-24 tnum"
+                />
+              )}
+              <button onClick={() => void confirmLine(t)} disabled={busy} className="btn-quiet">
+                Confirm JL
+              </button>
+              <button
+                onClick={() => void togglePending(t)}
+                title={t.pending ? 'Clear the awaiting flag' : 'Flag as awaited (not received yet) — also shows on Home'}
+                className="btn-quiet"
+              >
+                {t.pending ? 'Clear awaiting flag' : 'Flag as awaited'}
+              </button>
+            </div>
+          ) : (
+            <div className="mt-0.5 text-[11px] muted-45 tnum">
+              {t.confirm_state === 'queued' ? 'JL queued for the sheet…' : `confirmed ${t.office_confirm || 'JL'}`}
+              {t.confirm_ref ? ` · ref ${t.confirm_ref}` : ''}
+            </div>
+          )}
+        </div>
+        <span
+          className="text-base font-extrabold tnum"
+          style={isOut ? { color: 'var(--color-accent-700)' } : undefined}
+        >
+          {isOut ? `−${money(amt)}` : money(amt)}
+        </span>
+      </li>
+    )
+  }
+
   return (
-    <div className="mx-auto h-full w-full max-w-6xl overflow-y-auto p-4 sm:p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Transfers</h2>
-        <button onClick={() => void load()} className="text-sm text-emerald-700 hover:underline">Refresh</button>
+    <div className="max-w-[760px]">
+      <div className="mb-3 flex flex-wrap items-start gap-3">
+        <p className="m-0 min-w-[240px] flex-1 text-[13px] muted tnum">
+          Bank transfers from the last {WINDOW_DAYS} days of TD sheets missing your office confirmation.
+          Ticking writes JL (and the ref) back into the sheet. EFTPOS ins auto-confirm as ref 1111.
+        </p>
+        <button onClick={() => void load()} className="btn-quiet">Refresh</button>
       </div>
-      <p className="mb-4 text-sm text-slate-500">
-        Bank transfers from the last {WINDOW_DAYS} days of TD sheets missing your office confirmation.
-        Ticking writes JL (and the ref) back into the sheet. EFTPOS ins auto-confirm as ref 1111.
-      </p>
-      {status && <p className="mb-3 text-sm text-emerald-700">{status}</p>}
+      {status && (
+        <p className="m-0 mb-3 text-[13px] font-semibold" style={{ color: 'var(--color-accent-700)' }}>{status}</p>
+      )}
 
       {/* received / sent filter + running totals */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => setDir('all')}
-          className={`rounded-full border px-3 py-1 text-xs font-medium ${dir === 'all' ? 'border-slate-700 bg-slate-800 text-white' : 'border-slate-300 bg-white text-slate-600 hover:border-slate-500'}`}
-        >
-          All · {rows.length}
-        </button>
-        <button
-          onClick={() => setDir('in')}
-          title="Money received into the club"
-          className={`rounded-full border px-3 py-1 text-xs font-medium ${dir === 'in' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50'}`}
-        >
-          ↓ Received · {money(totals.inSum)} <span className="opacity-60">({totals.inN})</span>
-        </button>
-        <button
-          onClick={() => setDir('out')}
-          title="Payouts and money sent out"
-          className={`rounded-full border px-3 py-1 text-xs font-medium ${dir === 'out' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50'}`}
-        >
-          ↑ Sent · {money(totals.outSum)} <span className="opacity-60">({totals.outN})</span>
-        </button>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="seg">
+          <button className="seg-btn seg-btn-sm" aria-pressed={dir === 'all'} onClick={() => setDir('all')}>
+            All · {rows.length}
+          </button>
+          <button
+            className="seg-btn seg-btn-sm"
+            aria-pressed={dir === 'in'}
+            onClick={() => setDir('in')}
+            title="Money received into the club"
+          >
+            Received · {money(totals.inSum)} ({totals.inN})
+          </button>
+          <button
+            className="seg-btn seg-btn-sm"
+            aria-pressed={dir === 'out'}
+            onClick={() => setDir('out')}
+            title="Payouts and money sent out"
+          >
+            Sent · {money(totals.outSum)} ({totals.outN})
+          </button>
+        </div>
         {dir !== 'all' && (
-          <span className="text-xs text-slate-400">net {money(totals.inSum - totals.outSum)}</span>
+          <span
+            className={`text-xs tnum ${net < 0 ? 'font-semibold' : 'muted'}`}
+            style={net < 0 ? { color: 'var(--color-accent-700)' } : undefined}
+          >
+            net {net < 0 ? `−${money(-net)}` : money(net)}
+          </span>
         )}
       </div>
 
-      {pendingFlagged.length > 0 && (
-        <>
-          <h3 className="mb-1 text-sm font-semibold text-amber-700">⏳ Awaiting receipt · {pendingFlagged.length}</h3>
-          <ul className="mb-4 space-y-1">{pendingFlagged.map((t) => lineRow(t, true))}</ul>
-        </>
-      )}
+      <div style={{ borderTop: '2px solid var(--color-divider)' }}>
+        {pendingFlagged.length > 0 && (
+          <>
+            {groupHead('Awaiting receipt', pendingFlagged.length)}
+            <ul className="m-0 list-none p-0">{pendingFlagged.map((t) => lineRow(t, true))}</ul>
+          </>
+        )}
 
-      <h3 className="mb-1 text-sm font-semibold text-slate-700">Needs your confirmation · {unconfirmed.length}</h3>
-      {unconfirmed.length === 0 ? (
-        <p className="mb-4 text-sm text-slate-400">
-          Nothing outstanding. {rows.length === 0 ? 'No transfer lines mirrored yet — the sync reads them from the sheets (restart to activate, backfill for history).' : ''}
-        </p>
-      ) : (
-        <ul className="mb-4 space-y-1">{unconfirmed.filter((t) => !t.pending).map((t) => lineRow(t, true))}</ul>
-      )}
+        {groupHead('Needs your confirmation', unconfirmed.length)}
+        {unconfirmed.length === 0 ? (
+          <p className="m-0 pb-3 text-[13px] muted">
+            Nothing outstanding. {rows.length === 0 ? 'No transfer lines mirrored yet — the sync reads them from the sheets (restart to activate, backfill for history).' : ''}
+          </p>
+        ) : (
+          <ul className="m-0 list-none p-0">{unconfirmed.filter((t) => !t.pending).map((t) => lineRow(t, true))}</ul>
+        )}
 
-      {inFlight.length > 0 && (
-        <>
-          <h3 className="mb-1 text-sm font-semibold text-slate-500">Writing to sheets · {inFlight.length}</h3>
-          <ul className="mb-4 space-y-1">{inFlight.map((t) => lineRow(t, false))}</ul>
-        </>
-      )}
+        {inFlight.length > 0 && (
+          <>
+            {groupHead('Writing to sheets', inFlight.length)}
+            <ul className="m-0 list-none p-0">{inFlight.map((t) => lineRow(t, false))}</ul>
+          </>
+        )}
 
-      <label className="mb-2 flex items-center gap-1 text-xs text-slate-500">
-        <input type="checkbox" checked={showConfirmed} onChange={(e) => setShowConfirmed(e.target.checked)} />
-        show confirmed ({confirmed.length})
-      </label>
-      {showConfirmed && <ul className="space-y-1">{confirmed.map((t) => lineRow(t, false))}</ul>}
+        <label className="flex items-center gap-1.5 pb-2 pt-4 text-xs muted tnum">
+          <input
+            type="checkbox"
+            className="checkbox"
+            checked={showConfirmed}
+            onChange={(e) => setShowConfirmed(e.target.checked)}
+          />
+          show confirmed ({confirmed.length})
+        </label>
+        {showConfirmed && <ul className="m-0 list-none p-0">{confirmed.map((t) => lineRow(t, false))}</ul>}
+      </div>
     </div>
   )
 }

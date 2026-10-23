@@ -68,28 +68,29 @@ export function Recent() {
     void load()
   }, [])
 
+  const fmtDate = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+
   return (
-    <div className="mx-auto h-full w-full max-w-2xl overflow-y-auto p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Recently contacted</h2>
-        <button onClick={() => void load()} className="text-sm text-emerald-700 hover:underline">
-          Refresh
-        </button>
+    <div className="max-w-[760px]">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <p className="m-0 flex-1 text-[13px] muted tnum">{rows.length} people messaged (most recent first).</p>
+        <button onClick={() => void load()} className="btn-quiet">Refresh</button>
       </div>
-      <p className="mb-4 text-sm text-slate-500">{rows.length} people messaged (most recent first).</p>
       {loading ? (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="m-0 py-3 text-[13px] muted" style={{ borderTop: '2px solid var(--color-divider)' }}>Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-400">Nothing sent yet.</p>
+        <p className="m-0 py-3 text-[13px] muted" style={{ borderTop: '2px solid var(--color-divider)' }}>Nothing sent yet.</p>
       ) : (
-        <ul className="space-y-1">
+        <ul className="m-0 list-none p-0" style={{ borderTop: '2px solid var(--color-divider)' }}>
           {rows.map((r) => (
             <li
               key={r.key}
-              className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+              className="row grid grid-cols-[96px_minmax(0,1fr)_max-content] items-baseline gap-x-4 py-3"
             >
-              <span className="flex-1 font-medium">{r.name}</span>
-              <span className="text-xs text-slate-400">{ago(r.sent_at)}</span>
+              <span className="text-xs muted-60 tnum">{fmtDate(r.sent_at)}</span>
+              <span className="min-w-0 truncate text-sm font-semibold">{r.name}</span>
+              <span className="text-xs muted tnum">{ago(r.sent_at)}</span>
             </li>
           ))}
         </ul>

@@ -17,7 +17,7 @@ interface Member {
   do_not_message: boolean
 }
 
-// "On ice" = snoozed to a future date (matches the Who's-out panel's rose shading).
+// "On ice" = snoozed to a future date (matches the Who's-out panel's flagging).
 const onIce = (iso: string | null): boolean => !!iso && iso >= new Date().toISOString().slice(0, 10)
 
 /**
@@ -25,8 +25,9 @@ const onIce = (iso: string | null): boolean => !!iso && iso >= new Date().toISOS
  * games. Tourney lists auto-seed from attendance (>=2 games at the venue in 90d);
  * cash lists are built by hand. Membership is add-only from the seed; you remove
  * by hand. These lists are the recipient source the Batches picker loads from.
+ * `onStartBatch` jumps to the Batches composer with the list pre-loaded.
  */
-export function Lists() {
+export function Lists({ onStartBatch }: { onStartBatch: (listId: string | null) => void }) {
   const VENUES = useVenues()
   const [lists, setLists] = useState<ListRow[]>([])
   const [counts, setCounts] = useState<Map<string, number>>(new Map())
@@ -34,6 +35,7 @@ export function Lists() {
   const [members, setMembers] = useState<Member[]>([])
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   // create-list form
   const [name, setName] = useState('')
@@ -172,139 +174,186 @@ export function Lists() {
     await load()
   }
 
-  const chip = (text: string, cls: string) => (
-    <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${cls}`}>{text}</span>
-  )
+  /** "Fri 6pm · Woodvale · 32 players · tourney" — real fields only. */
+  const listMeta = (l: ListRow): string =>
+    [
+      l.event_day ? `${l.event_day}${l.event_time ? ' ' + l.event_time : ''}` : null,
+      l.venue,
+      `${counts.get(l.id) ?? 0} players`,
+      l.game_type ?? 'untyped',
+    ]
+      .filter(Boolean)
+      .join(' · ')
 
   return (
-    <div className="mx-auto h-full w-full max-w-7xl overflow-y-auto p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Lists</h2>
-        <button onClick={() => void load()} className="text-sm text-emerald-700 hover:underline">Refresh</button>
+    <div className="max-w-[720px]">
+      <div className="mb-3 flex flex-wrap items-baseline gap-3">
+        <p className="m-0 min-w-0 flex-1 text-[13px] muted">
+          Standing player lists per venue and game type. Tourney lists auto-seed from attendance; cash
+          lists are built by hand. Load a list in Batches to message it.
+        </p>
+        <button onClick={() => void load()} className="btn-quiet">Refresh</button>
       </div>
-      <p className="mb-4 text-sm text-slate-500">
-        Standing player lists per venue and game type. Tourney lists auto-seed from attendance; cash lists are built by hand. Load a list in Batches to message it.
-      </p>
-      {status && <p className="mb-3 text-sm text-emerald-700">{status}</p>}
+      {status && (
+        <p className="mb-3 text-xs font-semibold" style={{ color: 'var(--color-accent-700)' }}>{status}</p>
+      )}
 
-      {/* New list */}
-      <div className="mb-4 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-3">
-        <label className="flex flex-col text-xs text-slate-500">name
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Woodvale tourney"
-            className="mt-0.5 w-48 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500" />
-        </label>
-        <label className="flex flex-col text-xs text-slate-500">venue
-          <select value={venue} onChange={(e) => setVenue(e.target.value)}
-            className="mt-0.5 w-36 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500">
-            <option value="">—</option>
-            {VENUES.map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-        </label>
-        <label className="flex flex-col text-xs text-slate-500">type
-          <select value={gameType} onChange={(e) => setGameType(e.target.value as 'tourney' | 'cash')}
-            className="mt-0.5 w-28 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500">
-            <option value="tourney">tourney</option>
-            <option value="cash">cash</option>
-          </select>
-        </label>
-        <label className="flex flex-col text-xs text-slate-500">day
-          <select value={day} onChange={(e) => setDay(e.target.value)}
-            className="mt-0.5 w-24 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500">
-            <option value="">—</option>
-            {DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </label>
-        <label className="flex flex-col text-xs text-slate-500">time
-          <input value={time} onChange={(e) => setTime(e.target.value)} placeholder="6pm"
-            className="mt-0.5 w-20 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500" />
-        </label>
-        <button onClick={() => void createList()} disabled={busy}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40">
-          Create
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {/* Lists column */}
-        <ul className="space-y-2">
-          {lists.map((l) => (
-            <li key={l.id}
-              className={`cursor-pointer rounded-lg border p-2 ${selId === l.id ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
-              onClick={() => select(l.id)}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">{l.name}</span>
-                {l.venue && chip(l.venue, 'bg-slate-100 text-slate-600')}
-                {l.game_type === 'cash'
-                  ? chip('cash', 'bg-teal-100 text-teal-700')
-                  : l.game_type === 'tourney'
-                    ? chip('tourney', 'bg-amber-100 text-amber-700')
-                    : chip('untyped', 'bg-slate-100 text-slate-400')}
-                {l.event_day && chip(`${l.event_day}${l.event_time ? ' ' + l.event_time : ''}`, 'bg-slate-100 text-slate-500')}
-                <span className="ml-auto text-xs text-slate-500">{counts.get(l.id) ?? 0} players</span>
+      <ul className="m-0 list-none p-0" style={{ borderTop: '2px solid var(--color-divider)' }}>
+        {lists.map((l) => (
+          <li key={l.id} className="row">
+            <div
+              className="grid cursor-pointer grid-cols-[minmax(0,1fr)_max-content] items-center gap-4 py-3.5 row-hover"
+              onClick={() => (selId === l.id ? setSelId(null) : select(l.id))}
+              title={selId === l.id ? 'Close member list' : 'Open member list'}
+            >
+              <div className="min-w-0">
+                <p className="m-0 truncate text-[15px] font-semibold leading-tight">{l.name}</p>
+                <p className="m-0 mt-0.5 text-xs muted tnum">{listMeta(l)}</p>
               </div>
-              <div className="mt-1 flex items-center gap-3 text-[11px]">
+              <div className="flex items-center gap-2.5">
+                <button
+                  className="btn btn-ghost text-xs"
+                  onClick={(e) => { e.stopPropagation(); onStartBatch(l.id) }}
+                  title="Open the Batches composer with this list loaded"
+                >
+                  Start a batch
+                </button>
                 {l.game_type === 'tourney' && (
-                  <button onClick={(e) => { e.stopPropagation(); void seed(l) }} disabled={busy}
-                    className="text-emerald-700 hover:underline disabled:opacity-40" title="Add players with >=2 tournaments at this venue in the last 90 days">
-                    ⟲ auto-seed
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void seed(l) }}
+                    disabled={busy}
+                    className="btn-quiet"
+                    title="Add players with >=2 tournaments at this venue in the last 90 days"
+                  >
+                    Auto-seed
                   </button>
                 )}
-                <button onClick={(e) => { e.stopPropagation(); void deleteList(l) }} className="text-slate-400 hover:text-rose-600">delete</button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); void deleteList(l) }}
+                  className="btn-quiet"
+                  title="Delete this list (players are kept)"
+                >
+                  Delete
+                </button>
+                <button
+                  className="btn-quiet"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (selId === l.id) setSelId(null)
+                    else select(l.id)
+                  }}
+                >
+                  {selId === l.id ? 'Close' : 'Members'}
+                </button>
               </div>
-            </li>
-          ))}
-          {lists.length === 0 && <li className="text-sm text-slate-400">No lists yet.</li>}
-        </ul>
+            </div>
 
-        {/* Members column */}
-        <div className="rounded-lg border border-slate-200 bg-white p-3">
-          {!selected ? (
-            <p className="text-sm text-slate-400">Select a list to see its players.</p>
-          ) : (
-            <>
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-medium">{selected.name} · {members.length} players</span>
-                {selected.game_type === 'tourney' && (
-                  <button onClick={() => void seed(selected)} disabled={busy} className="text-xs text-emerald-700 hover:underline disabled:opacity-40">⟲ auto-seed</button>
-                )}
+            {selId === l.id && selected && (
+              <div className="pb-4">
+                <div className="mb-2 flex flex-wrap items-center gap-3">
+                  <span className="text-xs font-semibold tnum">{members.length} players</span>
+                  {selected.game_type === 'tourney' && (
+                    <button onClick={() => void seed(selected)} disabled={busy} className="btn-quiet">Auto-seed</button>
+                  )}
+                </div>
+                {/* add member */}
+                <div className="relative mb-2">
+                  <input
+                    value={q}
+                    onChange={(e) => void searchPlayers(e.target.value)}
+                    placeholder="Add a player by name…"
+                    className="input"
+                  />
+                  {hits.length > 0 && (
+                    <ul className="absolute z-10 mt-1 max-h-56 w-full list-none overflow-y-auto border bg-paper p-0 shadow-lg" style={{ borderColor: 'var(--color-divider)' }}>
+                      {hits.map((h) => (
+                        <li key={h.id}>
+                          <button
+                            onClick={() => void addMember(h.id)}
+                            className="flex w-full cursor-pointer items-baseline justify-between gap-3 border-0 bg-transparent px-2.5 py-1.5 text-left text-sm row-hover"
+                          >
+                            <span className="min-w-0 truncate">{h.player_name ?? '(no name)'}</span>
+                            <span className="text-[11px] muted-45 tnum">{h.phone ?? ''}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <ul className="m-0 max-h-[60vh] list-none overflow-y-auto p-0">
+                  {members.map((m) => (
+                    <li key={m.outreach_id} className="row flex flex-wrap items-center gap-2 py-1.5 text-sm">
+                      <button
+                        onClick={() => void togglePin(m)}
+                        title={m.pinned ? 'Pinned — unpin' : 'Pin (protect from auto-prune)'}
+                        className="btn-quiet"
+                        style={m.pinned ? { color: 'var(--color-accent-700)', fontWeight: 600 } : undefined}
+                      >
+                        {m.pinned ? 'Pinned' : 'Pin'}
+                      </button>
+                      <span className="min-w-0 flex-1 truncate">{m.player_name ?? '(no name)'}</span>
+                      {onIce(m.snooze_until) && <span className="tag tag-accent tag-net">On ice</span>}
+                      {m.do_not_message && <span className="tag tag-outline tag-net">Do not message</span>}
+                      <span className="tag tag-neutral tag-net">{m.added_by}</span>
+                      <span className="text-[10px] uppercase muted-45" style={{ letterSpacing: '0.06em' }}>
+                        {m.beeper_chat_id ? 'thread' : m.phone ? 'sms' : 'no contact'}
+                      </span>
+                      <button onClick={() => void removeMember(m)} className="btn-quiet" title="Remove from list">
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                  {members.length === 0 && (
+                    <li className="py-2 text-sm muted">No players yet. Auto-seed (tourney) or add by name.</li>
+                  )}
+                </ul>
               </div>
-              {/* add member */}
-              <div className="relative mb-2">
-                <input value={q} onChange={(e) => void searchPlayers(e.target.value)} placeholder="Add a player by name…"
-                  className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500" />
-                {hits.length > 0 && (
-                  <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-slate-200 bg-white shadow">
-                    {hits.map((h) => (
-                      <li key={h.id}>
-                        <button onClick={() => void addMember(h.id)} className="flex w-full items-center justify-between px-2 py-1 text-left text-sm hover:bg-emerald-50">
-                          <span>{h.player_name ?? '(no name)'}</span>
-                          <span className="text-[10px] text-slate-400">{h.phone ?? ''}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <ul className="max-h-[60vh] space-y-1 overflow-y-auto">
-                {members.map((m) => (
-                  <li key={m.outreach_id}
-                    className={`flex items-center gap-2 rounded border p-1.5 text-sm ${onIce(m.snooze_until) ? 'border-rose-200 bg-rose-50' : m.do_not_message ? 'border-red-200 bg-red-50' : 'border-slate-100'}`}>
-                    <button onClick={() => void togglePin(m)} title={m.pinned ? 'Pinned — unpin' : 'Pin (protect from auto-prune)'}
-                      className={m.pinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}>★</button>
-                    <span className="flex-1">{m.player_name ?? '(no name)'}</span>
-                    {onIce(m.snooze_until) && chip('❄ on ice', 'bg-rose-100 text-rose-700')}
-                    {m.do_not_message && chip('ban', 'bg-red-100 text-red-700')}
-                    {chip(m.added_by, m.added_by === 'auto' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500')}
-                    <span className="text-[10px] text-slate-400">{m.beeper_chat_id ? 'thread' : m.phone ? 'sms' : 'no contact'}</span>
-                    <button onClick={() => void removeMember(m)} className="text-slate-400 hover:text-rose-600" title="Remove from list">×</button>
-                  </li>
-                ))}
-                {members.length === 0 && <li className="text-sm text-slate-400">No players yet. Auto-seed (tourney) or add by name.</li>}
-              </ul>
-            </>
-          )}
+            )}
+          </li>
+        ))}
+        {lists.length === 0 && <li className="py-3.5 text-sm muted">No lists yet.</li>}
+      </ul>
+
+      {/* New list */}
+      <button className="btn btn-secondary mt-3.5 text-[13px]" onClick={() => setCreating((c) => !c)}>
+        {creating ? 'Close' : 'New list'}
+      </button>
+      {creating && (
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div className="field w-48">
+            <label>Name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Woodvale tourney" className="input" />
+          </div>
+          <div className="field w-36">
+            <label>Venue</label>
+            <select value={venue} onChange={(e) => setVenue(e.target.value)} className="input">
+              <option value="">—</option>
+              {VENUES.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+          <div className="field w-28">
+            <label>Type</label>
+            <select value={gameType} onChange={(e) => setGameType(e.target.value as 'tourney' | 'cash')} className="input">
+              <option value="tourney">tourney</option>
+              <option value="cash">cash</option>
+            </select>
+          </div>
+          <div className="field w-24">
+            <label>Day</label>
+            <select value={day} onChange={(e) => setDay(e.target.value)} className="input">
+              <option value="">—</option>
+              {DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div className="field w-20">
+            <label>Time</label>
+            <input value={time} onChange={(e) => setTime(e.target.value)} placeholder="6pm" className="input tnum" />
+          </div>
+          <button onClick={() => void createList()} disabled={busy} className="btn btn-primary !text-xs">
+            Create
+          </button>
         </div>
-      </div>
+      )}
     </div>
   )
 }

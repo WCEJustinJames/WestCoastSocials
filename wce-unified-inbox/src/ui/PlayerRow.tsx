@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { REGIONS, STAKES, sourceLabel, phoneStatus, phoneStatusLabel, type Edit, type PlayerRow as Row } from './usePlayers'
 import { useVenues } from './useVenues'
 
@@ -25,6 +26,8 @@ function addedDaysAgo(iso: string | null): number | null {
   if (Number.isNaN(d.getTime())) return null
   return Math.floor((Date.now() - d.getTime()) / 86_400_000)
 }
+
+const accent700 = { color: 'var(--color-accent-700)' }
 
 interface PlayerCardProps {
   r: Row
@@ -58,7 +61,9 @@ interface PlayerCardProps {
   sendFailed?: boolean
 }
 
-/** One editable player record. Shared by the Players list and the review queue. */
+/** One editable player record. Shared by the Players list and the review queue.
+ * Collapsed: a row — name+number / meta / channel tags + quiet actions. "Edit"
+ * expands the full editor; every field and flag from before is still there. */
 export function PlayerCard({
   r, e, setE, busy, isReviewed,
   onSave, onToggleHide, onUnmarkReviewed,
@@ -69,6 +74,7 @@ export function PlayerCard({
   onIcePlayer, sendFailed = false,
 }: PlayerCardProps) {
   const VENUES = useVenues()
+  const [open, setOpen] = useState(false)
   // Bad-number flag: invalid digit count (from the edited value so it updates
   // as you type) or a failed SMS send on record.
   const pStatus = phoneStatus(e.phone)
@@ -98,362 +104,394 @@ export function PlayerCard({
     !!r.beeper_chat_id && !isMsgrThread && !isSmsThread ? (threadNetwork || null) : null
   const hasSms = !!e.phone.trim() || isSmsThread
   const hasThread = isMsgrThread
-  // Freshly-imported contacts (added_at set by a contacts upload) get a date badge
+  // Freshly-imported contacts (added_at set by a contacts upload) get a date label
   // so the latest import reads at a glance; the newest (≤14d) are emphasised.
   const added = addedLabel(r.added_at)
   const addedFresh = (addedDaysAgo(r.added_at) ?? 99) <= 14
-  // "On ice" = snoozed to a future date — shade the card rose wherever it appears
+  // "On ice" = snoozed to a future date — flagged in the meta wherever it appears
   // (matches the Who's-out panel + Lists), so parked players read at a glance.
   const onIce = !!r.snooze_until && r.snooze_until >= new Date().toISOString().slice(0, 10)
+  const displayName = e.player_name.trim() || savedName || r.phone || '(unnamed)'
   return (
-    <li
-      className={`rounded-lg border p-2 ${r.hidden ? 'opacity-60 ' : ''}${
-        isReviewed
-          ? 'border-emerald-300 border-l-4 border-l-emerald-500 bg-emerald-50/60 shadow-sm'
-          : onIce
-            ? 'border-rose-200 bg-rose-50'
-            : 'border-slate-200 bg-white'
-      }`}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        {showSelect && (
-          <input
-            type="checkbox"
-            title="Select to merge"
-            checked={selected}
-            onChange={() => onToggleSel?.(r.id)}
-          />
-        )}
-        <input
-          value={e.player_name}
-          onChange={(ev) => setE(r.id, { player_name: ev.target.value })}
-          placeholder="Name"
-          className="min-w-[10rem] flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-emerald-500"
-        />
-        <span className="flex flex-col">
-          <input
-            value={e.phone}
-            onChange={(ev) => setE(r.id, { phone: ev.target.value })}
-            placeholder={!e.phone.trim() && r.beeper_chat_id ? 'no mobile' : 'Phone'}
-            title={numberFlag || undefined}
-            className={`w-32 rounded-md border px-2 py-1 text-sm outline-none ${
-              numberFlag ? 'border-rose-400 bg-rose-50 focus:border-rose-500' : 'border-slate-300 focus:border-emerald-500'
-            }`}
-          />
-          {numberFlag && <span className="mt-0.5 text-[10px] font-medium text-rose-600">⚠ {numberFlag}</span>}
-        </span>
-        {rank != null && (
-          <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-semibold text-white" title="frequency rank in this view">
-            #{rank}
-          </span>
-        )}
-        {att && (
+    <li className={`row row-hover ${r.hidden ? 'opacity-60' : ''}`}>
+      <div className="grid grid-cols-[minmax(0,1fr)_max-content] items-center gap-x-3 gap-y-1 py-3 [grid-template-areas:'name_channel'_'meta_meta'] dt:grid-cols-[200px_minmax(0,1fr)_max-content] dt:gap-x-5 dt:[grid-template-areas:'name_meta_channel']">
+        {/* — name + number — */}
+        <div className="flex min-w-0 items-start gap-2 [grid-area:name]">
+          {showSelect && (
+            <input
+              type="checkbox"
+              className="checkbox mt-0.5"
+              title="Select to merge"
+              checked={selected}
+              onChange={() => onToggleSel?.(r.id)}
+            />
+          )}
+          <div className="min-w-0">
+            <p className="m-0 truncate text-sm font-semibold leading-tight">{displayName}</p>
+            {(e.phone.trim() || fullerSaved) && (
+              <p className="m-0 mt-0.5 truncate text-[11px] muted-50 tnum">{e.phone.trim() || fullerSaved}</p>
+            )}
+          </div>
+        </div>
+
+        {/* — meta: whatever exists — */}
+        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 text-xs muted [grid-area:meta]">
+          {rank != null && <span className="tnum" title="frequency rank in this view">#{rank}</span>}
           <span
-            className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700"
-            title={`${att.games} game night(s) all-time — ${att.tourney_games} tourney / ${att.cash_games} cash — last seen ${att.last_seen ?? '?'}`}
+            className={r.last_contacted ? 'tnum' : 'font-semibold'}
+            style={r.last_contacted ? undefined : accent700}
+            title={r.last_contacted ? `last messaged ${r.last_contacted}` : 'no message sent yet'}
           >
-            🎟 {att.games} · {att.tourney_games}T/{att.cash_games}C
-            {att.last_seen ? ` · ${new Date(att.last_seen).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` : ''}
+            {sinceLabel(r.last_contacted)}
           </span>
-        )}
-        {/* Channels this player is reachable on. Both shown as chips; the
-            preferred one is highlighted. Default to Messenger/FB (some players
-            only have FB, no number yet) — toggle to SMS once they share a
-            number and rapport builds. */}
-        {hasSms && hasThread ? (
-          <span className="flex items-center gap-1">
-            <span className="text-[10px] text-slate-400">reach via</span>
-            <button
-              type="button"
-              title="Prefer Messenger/FB for this player (default)"
-              onClick={() => setE(r.id, { preferred_channel: 'thread' })}
-              className={`rounded-full px-1.5 py-0.5 text-[10px] ${e.preferred_channel !== 'sms' ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700'}`}
-            >{isMsgrThread ? 'Messenger' : (threadNetwork || 'thread')}</button>
-            <button
-              type="button"
-              title="Prefer SMS for this player (once you have their number)"
-              onClick={() => setE(r.id, { preferred_channel: 'sms' })}
-              className={`rounded-full px-1.5 py-0.5 text-[10px] ${e.preferred_channel === 'sms' ? 'bg-sky-600 text-white' : 'bg-sky-100 text-sky-700'}`}
-            >SMS</button>
-          </span>
-        ) : hasThread ? (
-          <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700">Messenger</span>
-        ) : hasSms ? (
-          <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">SMS</span>
-        ) : otherNetwork ? (
-          <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700">{otherNetwork}</span>
-        ) : r.fb_friend ? (
-          <span
-            className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700"
-            title="Facebook friend, no thread yet — send one Messenger message to open the conversation; it links to this record automatically on the next sync."
-          >FB · DM to open</span>
-        ) : (
-          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">no contact</span>
-        )}
-        {/* Where this contact came from (phone / facebook / raffle / letspoker …).
-            Hover shows the full raw Airtable source when we have it. */}
-        <span
-          title={r.source ? `Source: ${r.source}` : `Source: ${sourceLabel(r)}`}
-          className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500"
-        >
-          {sourceLabel(r)}
-        </span>
-        {onIce && (
-          <span title={`On ice until ${r.snooze_until}`} className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] text-rose-700">❄ on ice</span>
-        )}
-        {added && (
-          <span
-            title={`Added to the CRM on ${r.added_at?.slice(0, 10)}`}
-            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-              addedFresh ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-            }`}
-          >
-            ✚ {added}
-          </span>
-        )}
-        {isReviewed && (
-          <button
-            type="button"
-            title="Reviewed — click to clear"
-            onClick={() => onUnmarkReviewed(r.id)}
-            className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white"
-          >✓ reviewed</button>
-        )}
-        <label className="flex items-center gap-1 text-xs text-rose-700">
-          <input
-            type="checkbox"
-            checked={e.do_not_message}
-            onChange={(ev) => setE(r.id, { do_not_message: ev.target.checked })}
-          />
-          ban
-        </label>
-        <label className="flex items-center gap-1 text-xs text-violet-700" title="Staff — exclude from player outreach">
-          <input
-            type="checkbox"
-            checked={e.staff}
-            onChange={(ev) => setE(r.id, { staff: ev.target.checked })}
-          />
-          staff
-        </label>
-        <label className="flex items-center gap-1 text-xs text-amber-700" title="Tournament player — skip cash sends, include in tourney/event promos">
-          <input
-            type="checkbox"
-            checked={e.tournament}
-            onChange={(ev) => setE(r.id, { tournament: ev.target.checked })}
-          />
-          tourney
-        </label>
-        <label className="flex items-center gap-1 text-xs text-teal-700" title="Cash-game player — include in cash promos">
-          <input
-            type="checkbox"
-            checked={e.cash}
-            onChange={(ev) => setE(r.id, { cash: ev.target.checked })}
-          />
-          cash
-        </label>
-        <label className="flex items-center gap-1 text-xs text-blue-700" title="Whale — priority customer; higher-touch outreach, ranked first">
-          <input
-            type="checkbox"
-            checked={e.whale}
-            onChange={(ev) => setE(r.id, { whale: ev.target.checked })}
-          />
-          🐋 whale
-        </label>
-        <label className="flex items-center gap-1 text-xs text-sky-700" title="FIFO worker — fly-in/fly-out; surfaces on the 'due back' panel when a swing ends">
-          <input
-            type="checkbox"
-            checked={e.fifo}
-            onChange={(ev) => setE(r.id, { fifo: ev.target.checked })}
-          />
-          ✈ fifo
-        </label>
-        <button
-          onClick={() => void onSave(r.id)}
-          disabled={busy}
-          className="rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
-        >
-          Save
-        </button>
-        {onIcePlayer && (
-          onIce ? (
-            <button
-              onClick={() => onIcePlayer(r.id, 0)}
-              title={`On ice until ${r.snooze_until?.slice(0, 10)} — click to un-ice`}
-              className="rounded-md bg-rose-100 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-200"
-            >❄ un-ice</button>
-          ) : (
-            <select
-              value=""
-              onChange={(e) => { if (e.target.value) onIcePlayer(r.id, Number(e.target.value)) }}
-              title="Put on ice (pause outreach) for a period"
-              className="rounded-md border border-slate-300 px-1.5 py-1 text-xs text-slate-600 outline-none focus:border-sky-400"
+          {att && (
+            <span
+              className="tnum"
+              title={`${att.games} game night(s) all-time — ${att.tourney_games} tourney / ${att.cash_games} cash — last seen ${att.last_seen ?? '?'}`}
             >
-              <option value="">❄ ice…</option>
-              <option value="14">2 weeks</option>
-              <option value="30">1 month</option>
-              <option value="60">2 months</option>
-              <option value="90">3 months</option>
-              <option value="180">6 months</option>
-            </select>
-          )
-        )}
-        <button
-          onClick={() => void onToggleHide(r.id, r.hidden)}
-          title={r.hidden ? 'Unhide' : 'Hide from lists'}
-          className="text-xs text-slate-400 hover:text-rose-600"
-        >
-          {r.hidden ? 'unhide' : 'hide'}
-        </button>
+              {att.games} games · {att.tourney_games}T/{att.cash_games}C
+              {att.last_seen ? ` · ${new Date(att.last_seen).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` : ''}
+            </span>
+          )}
+          {venueArr.length > 0 && <span className="min-w-0">{venueArr.join(', ')}</span>}
+          {e.region && <span>{e.region}</span>}
+          <span title={r.source ? `Source: ${r.source}` : `Source: ${sourceLabel(r)}`}>{sourceLabel(r)}</span>
+          {e.tournament && <span title="Tournament player">tourney</span>}
+          {e.cash && <span title="Cash-game player">cash</span>}
+          {e.whale && <span title="Whale — priority customer">whale</span>}
+          {e.fifo && <span title="FIFO worker — fly-in/fly-out">fifo</span>}
+          {e.staff && <span title="Staff — excluded from player outreach">staff</span>}
+          {r.fb_friend && !hasThread && !hasSms && !otherNetwork && (
+            <span title="Facebook friend, no thread yet — one Messenger DM opens the conversation">FB friend</span>
+          )}
+          {added && (
+            <span
+              className={addedFresh ? 'font-semibold tnum' : 'tnum'}
+              style={addedFresh ? accent700 : undefined}
+              title={`Added to the CRM on ${r.added_at?.slice(0, 10)}`}
+            >
+              {added}
+            </span>
+          )}
+          {onIce && (
+            <span className="font-semibold tnum" style={accent700} title={`On ice until ${r.snooze_until}`}>
+              on ice until {r.snooze_until?.slice(0, 10)}
+            </span>
+          )}
+          {numberFlag && (
+            <span className="font-semibold" style={accent700}>
+              bad number — {numberFlag}
+            </span>
+          )}
+        </div>
+
+        {/* — channel + quiet actions — */}
+        <div className="flex flex-wrap items-center justify-end gap-1.5 [grid-area:channel]">
+          {/* Channels this player is reachable on. Both shown as tags; the
+              preferred one is highlighted. Default to Messenger/FB (some players
+              only have FB, no number yet) — tap to switch once they share a
+              number and rapport builds. */}
+          {hasSms && hasThread ? (
+            <>
+              <button
+                type="button"
+                title="Prefer Messenger/FB for this player (default) — Save to keep"
+                onClick={() => setE(r.id, { preferred_channel: 'thread' })}
+                className={`tag tag-net cursor-pointer border-0 ${e.preferred_channel !== 'sms' ? 'tag-accent' : 'tag-neutral'}`}
+              >
+                {isMsgrThread ? 'Messenger' : threadNetwork || 'Thread'}
+              </button>
+              <button
+                type="button"
+                title="Prefer SMS for this player (once you have their number) — Save to keep"
+                onClick={() => setE(r.id, { preferred_channel: 'sms' })}
+                className={`tag tag-net cursor-pointer border-0 ${e.preferred_channel === 'sms' ? 'tag-accent' : 'tag-neutral'}`}
+              >
+                SMS
+              </button>
+            </>
+          ) : hasThread ? (
+            <span className="tag tag-neutral tag-net">Messenger</span>
+          ) : hasSms ? (
+            <span className="tag tag-neutral tag-net">SMS</span>
+          ) : otherNetwork ? (
+            <span className="tag tag-neutral tag-net">{otherNetwork}</span>
+          ) : r.fb_friend ? (
+            <span
+              className="tag tag-neutral tag-net"
+              title="Facebook friend, no thread yet — send one Messenger message to open the conversation; it links to this record automatically on the next sync."
+            >
+              FB — DM to open
+            </span>
+          ) : (
+            <span className="tag tag-neutral tag-net">No contact</span>
+          )}
+          {e.do_not_message && <span className="tag tag-outline tag-net">Do not message</span>}
+          {isReviewed && (
+            <button type="button" className="btn-quiet" title="Reviewed — click to clear" onClick={() => onUnmarkReviewed(r.id)}>
+              reviewed
+            </button>
+          )}
+          <button className="btn-quiet" onClick={() => void onSave(r.id)} disabled={busy}>
+            Save
+          </button>
+          <button className="btn-quiet" onClick={() => setOpen((o) => !o)}>
+            {open ? 'Close' : 'Edit'}
+          </button>
+          <button className="btn-quiet" onClick={() => void onToggleHide(r.id, r.hidden)} title={r.hidden ? 'Unhide' : 'Hide from lists'}>
+            {r.hidden ? 'Unhide' : 'Hide'}
+          </button>
+        </div>
       </div>
+
       {threadSuggestions.length > 0 && onLinkThread && (
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-md border border-indigo-100 bg-indigo-50/60 px-2 py-1">
-          <span className="text-[11px] text-indigo-700">possible thread match:</span>
+        <div className="-mt-1 mb-3 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 bg-surface px-2.5 py-1.5 text-[11px]">
+          <span className="font-semibold" style={accent700}>possible thread match:</span>
           {threadSuggestions.map((s) => (
-            <span key={s.chatId} className="flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2 py-0.5 text-[11px]">
-              <span className="font-medium">{s.title}</span>
-              <span className="text-slate-400">· {s.network}</span>
+            <span key={s.chatId} className="flex items-baseline gap-1.5">
+              <span className="font-semibold">{s.title}</span>
+              <span className="muted-50">· {s.network}</span>
               <button
                 onClick={() => onLinkThread(r.id, s.chatId)}
                 disabled={busy}
                 title="Link this thread to the player — they become reachable from Batches/Inbox"
-                className="font-medium text-emerald-700 hover:underline disabled:opacity-40"
-              >link</button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        {/* Region (zone) — single-select */}
-        <select
-          value={!e.region ? '' : REGIONS.includes(e.region) ? e.region : '__custom__'}
-          onChange={(ev) => {
-            const v = ev.target.value
-            if (v === '__custom__') return
-            if (v === '__other__') {
-              const x = window.prompt('New region')?.trim()
-              if (x) setE(r.id, { region: x })
-              return
-            }
-            setE(r.id, { region: v })
-          }}
-          className="w-32 rounded-md border border-slate-200 px-2 py-1 text-xs outline-none focus:border-emerald-500"
-        >
-          <option value="">Region —</option>
-          {e.region && !REGIONS.includes(e.region) && (
-            <option value="__custom__">{e.region}</option>
-          )}
-          {REGIONS.map((x) => (
-            <option key={x} value={x}>{x}</option>
-          ))}
-          <option value="__other__">+ Other…</option>
-        </select>
-
-        {/* Venue — multi-select */}
-        <MultiSelect
-          value={venueArr}
-          options={VENUES}
-          addLabel="+ venue…"
-          otherLabel="New venue"
-          onChange={(next) => setE(r.id, { venues: next.join(', ') })}
-        />
-
-        {/* Tags / stakes — multi-select */}
-        <MultiSelect
-          value={stakeArr}
-          options={STAKES}
-          addLabel="+ stake / tag…"
-          otherLabel="New tag / stake"
-          onChange={(next) => setE(r.id, { stakes: next.join(', ') })}
-        />
-
-        <input
-          value={e.activity}
-          onChange={(ev) => setE(r.id, { activity: ev.target.value })}
-          placeholder="Activity"
-          className="w-24 rounded-md border border-slate-200 px-2 py-1 text-xs outline-none focus:border-emerald-500"
-        />
-      </div>
-      {(fullerSaved || showContact || noteText) && (
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-400">
-          <span className="text-slate-300" title="Captured context — transcribe into the fields above">ℹ context:</span>
-          {fullerSaved && (
-            <span>
-              saved as <span className="text-slate-600">“{fullerSaved}”</span>
-              <button
-                type="button"
-                onClick={() => setE(r.id, { player_name: fullerSaved })}
-                className="ml-1 rounded bg-slate-100 px-1 text-[10px] text-emerald-700 hover:bg-emerald-100"
-                title="Use this full name as the player's name"
+                className="btn-quiet !text-[11px]"
               >
-                use
+                Link
               </button>
             </span>
-          )}
-          {showContact && (
-            <span>
-              contact “<span className="text-slate-600">{contactLabel}</span>”
-            </span>
-          )}
-          {noteText && (
-            <span>
-              note: <span className="text-slate-600">{noteText}</span>
-            </span>
-          )}
+          ))}
         </div>
       )}
-      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-slate-400">contact:</span>
-        <select
-          value={e.contact_day}
-          onChange={(ev) => setE(r.id, { contact_day: ev.target.value })}
-          className="rounded-md border border-slate-200 px-1 py-1"
-        >
-          <option value="">day —</option>
-          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
-            <option key={d} value={d}>{d}</option>
-          ))}
-        </select>
-        <select
-          value={e.contact_window}
-          onChange={(ev) => setE(r.id, { contact_window: ev.target.value })}
-          className="rounded-md border border-slate-200 px-1 py-1"
-        >
-          <option value="">time —</option>
-          {['Morning', 'Afternoon', 'Evening'].map((w) => (
-            <option key={w} value={w}>{w}</option>
-          ))}
-        </select>
-        <input
-          value={e.contact_frequency_days}
-          onChange={(ev) => setE(r.id, { contact_frequency_days: ev.target.value.replace(/\D/g, '') })}
-          placeholder="every N days"
-          className="w-24 rounded-md border border-slate-200 px-2 py-1"
-        />
-        <span className="ml-1 text-slate-400">rapport:</span>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            onClick={() => setE(r.id, { rapport: e.rapport === n ? 0 : n })}
-            title={`${n} star${n > 1 ? 's' : ''}`}
-            className={n <= e.rapport ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}
-          >
-            ★
-          </button>
-        ))}
-        <span
-          className={`ml-auto rounded-full px-2 py-0.5 text-[10px] ${
-            r.last_contacted ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-700'
-          }`}
-          title={r.last_contacted ? `last messaged ${r.last_contacted}` : 'no message sent yet'}
-        >
-          {sinceLabel(r.last_contacted)}
-        </span>
-      </div>
+
+      {open && (
+        <div className="mb-3 flex flex-col gap-3 bg-surface px-3 py-3">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="field w-52">
+              <label>Name</label>
+              <input
+                className="input"
+                value={e.player_name}
+                onChange={(ev) => setE(r.id, { player_name: ev.target.value })}
+                placeholder="Name"
+              />
+            </div>
+            <div className="field w-40">
+              <label>Phone</label>
+              <input
+                className="input tnum"
+                value={e.phone}
+                onChange={(ev) => setE(r.id, { phone: ev.target.value })}
+                placeholder={!e.phone.trim() && r.beeper_chat_id ? 'no mobile' : 'Phone'}
+                title={numberFlag || undefined}
+                style={numberFlag ? { borderColor: 'var(--color-accent)' } : undefined}
+              />
+              {numberFlag && (
+                <p className="m-0 mt-1 text-[10px] font-semibold" style={accent700}>
+                  {numberFlag}
+                </p>
+              )}
+            </div>
+            {/* Region (zone) — single-select */}
+            <div className="field w-40">
+              <label>Region</label>
+              <select
+                className="input"
+                value={!e.region ? '' : REGIONS.includes(e.region) ? e.region : '__custom__'}
+                onChange={(ev) => {
+                  const v = ev.target.value
+                  if (v === '__custom__') return
+                  if (v === '__other__') {
+                    const x = window.prompt('New region')?.trim()
+                    if (x) setE(r.id, { region: x })
+                    return
+                  }
+                  setE(r.id, { region: v })
+                }}
+              >
+                <option value="">Region —</option>
+                {e.region && !REGIONS.includes(e.region) && <option value="__custom__">{e.region}</option>}
+                {REGIONS.map((x) => (
+                  <option key={x} value={x}>{x}</option>
+                ))}
+                <option value="__other__">+ Other…</option>
+              </select>
+            </div>
+            <div className="field w-28">
+              <label>Activity</label>
+              <input
+                className="input"
+                value={e.activity}
+                onChange={(ev) => setE(r.id, { activity: ev.target.value })}
+                placeholder="Activity"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
+            {/* Venue — multi-select */}
+            <div className="field">
+              <label>Venues</label>
+              <MultiSelect
+                value={venueArr}
+                options={VENUES}
+                addLabel="+ venue…"
+                otherLabel="New venue"
+                onChange={(next) => setE(r.id, { venues: next.join(', ') })}
+              />
+            </div>
+            {/* Tags / stakes — multi-select */}
+            <div className="field">
+              <label>Stakes / tags</label>
+              <MultiSelect
+                value={stakeArr}
+                options={STAKES}
+                addLabel="+ stake / tag…"
+                otherLabel="New tag / stake"
+                onChange={(next) => setE(r.id, { stakes: next.join(', ') })}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="field">
+              <label>Contact day</label>
+              <select className="input !w-auto" value={e.contact_day} onChange={(ev) => setE(r.id, { contact_day: ev.target.value })}>
+                <option value="">day —</option>
+                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Time</label>
+              <select className="input !w-auto" value={e.contact_window} onChange={(ev) => setE(r.id, { contact_window: ev.target.value })}>
+                <option value="">time —</option>
+                {['Morning', 'Afternoon', 'Evening'].map((w) => (
+                  <option key={w} value={w}>{w}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field w-28">
+              <label>Every N days</label>
+              <input
+                className="input tnum"
+                value={e.contact_frequency_days}
+                onChange={(ev) => setE(r.id, { contact_frequency_days: ev.target.value.replace(/\D/g, '') })}
+                placeholder="e.g. 14"
+              />
+            </div>
+            <div className="field">
+              <label>Rapport</label>
+              <div className="seg">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    className="seg-btn seg-btn-sm"
+                    aria-pressed={e.rapport >= n}
+                    title={`${n} of 5`}
+                    onClick={() => setE(r.id, { rapport: e.rapport === n ? 0 : n })}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+            <label className="flex cursor-pointer items-center gap-1.5" title="Banned / opted out — never messaged">
+              <input type="checkbox" className="checkbox" checked={e.do_not_message} onChange={(ev) => setE(r.id, { do_not_message: ev.target.checked })} />
+              Do not message
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5" title="Staff — exclude from player outreach">
+              <input type="checkbox" className="checkbox" checked={e.staff} onChange={(ev) => setE(r.id, { staff: ev.target.checked })} />
+              Staff
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5" title="Tournament player — skip cash sends, include in tourney/event promos">
+              <input type="checkbox" className="checkbox" checked={e.tournament} onChange={(ev) => setE(r.id, { tournament: ev.target.checked })} />
+              Tournament
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5" title="Cash-game player — include in cash promos">
+              <input type="checkbox" className="checkbox" checked={e.cash} onChange={(ev) => setE(r.id, { cash: ev.target.checked })} />
+              Cash
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5" title="Whale — priority customer; higher-touch outreach, ranked first">
+              <input type="checkbox" className="checkbox" checked={e.whale} onChange={(ev) => setE(r.id, { whale: ev.target.checked })} />
+              Whale
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5" title="FIFO worker — fly-in/fly-out; surfaces on the 'due back' panel when a swing ends">
+              <input type="checkbox" className="checkbox" checked={e.fifo} onChange={(ev) => setE(r.id, { fifo: ev.target.checked })} />
+              FIFO
+            </label>
+          </div>
+
+          {(fullerSaved || showContact || noteText) && (
+            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 text-[11px] muted-50">
+              <span title="Captured context — transcribe into the fields above">context:</span>
+              {fullerSaved && (
+                <span>
+                  saved as <span className="muted-70">“{fullerSaved}”</span>
+                  <button
+                    type="button"
+                    onClick={() => setE(r.id, { player_name: fullerSaved })}
+                    className="btn-quiet ml-1.5 !text-[11px]"
+                    title="Use this full name as the player's name"
+                  >
+                    Use
+                  </button>
+                </span>
+              )}
+              {showContact && (
+                <span>
+                  contact “<span className="muted-70">{contactLabel}</span>”
+                </span>
+              )}
+              {noteText && (
+                <span>
+                  note: <span className="muted-70">{noteText}</span>
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button className="btn btn-primary !text-xs" onClick={() => void onSave(r.id)} disabled={busy}>
+              Save
+            </button>
+            {onIcePlayer &&
+              (onIce ? (
+                <button
+                  className="btn-quiet"
+                  onClick={() => onIcePlayer(r.id, 0)}
+                  title={`On ice until ${r.snooze_until?.slice(0, 10)} — click to un-ice`}
+                >
+                  Un-ice
+                </button>
+              ) : (
+                <select
+                  className="input !w-auto"
+                  value=""
+                  onChange={(ev) => { if (ev.target.value) onIcePlayer(r.id, Number(ev.target.value)) }}
+                  title="Put on ice (pause outreach) for a period"
+                >
+                  <option value="">Put on ice…</option>
+                  <option value="14">2 weeks</option>
+                  <option value="30">1 month</option>
+                  <option value="60">2 months</option>
+                  <option value="90">3 months</option>
+                  <option value="180">6 months</option>
+                </select>
+              ))}
+          </div>
+        </div>
+      )}
     </li>
   )
 }
 
-// Reusable multi-select: removable chips + an "add" dropdown of fixed options
+// Reusable multi-select: removable tags + an "add" dropdown of fixed options
 // (with an Other… prompt). Stores nothing itself; parent owns the value array.
 function MultiSelect({
   value,
@@ -469,22 +507,21 @@ function MultiSelect({
   otherLabel: string
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1.5">
       {value.map((s) => (
-        <span
-          key={s}
-          className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs"
-        >
+        <span key={s} className="tag tag-neutral">
           {s}
           <button
             onClick={() => onChange(value.filter((x) => x !== s))}
-            className="text-slate-400 hover:text-rose-600"
+            className="ml-1.5 cursor-pointer border-0 bg-transparent p-0 text-[11px] muted-50 hover:text-ink"
+            title={`Remove ${s}`}
           >
             ×
           </button>
         </span>
       ))}
       <select
+        className="input !w-auto !text-xs"
         value=""
         onChange={(ev) => {
           const v = ev.target.value
@@ -496,7 +533,6 @@ function MultiSelect({
           }
           if (!value.includes(v)) onChange([...value, v])
         }}
-        className="rounded-md border border-slate-200 px-1 py-1 text-xs"
       >
         <option value="">{addLabel}</option>
         {options.filter((o) => !value.includes(o)).map((o) => (

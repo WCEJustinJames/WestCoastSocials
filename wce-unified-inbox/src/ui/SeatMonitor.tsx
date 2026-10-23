@@ -47,11 +47,11 @@ const localDate = (): string => {
 /**
  * Seat-target monitor — tonight's seat-capped games with an ACTUAL named roster,
  * not just a count. Seats fill automatically from today's "yes" replies (tap a
- * name to open their thread) and by hand for phone/in-person confirms; × frees
- * a seat (a "yes" player is excluded for today only, never messaged). On nights
- * with several seat-capped games, "yes" replies wait in an assign row so each
- * lands on the right table. Under target on game-day afternoon flags the gap and
- * one-taps into Batches with the venue list to invite the next tranche.
+ * name to open their thread) and by hand for phone/in-person confirms; "Free"
+ * frees a seat (a "yes" player is excluded for today only, never messaged). On
+ * nights with several seat-capped games, "yes" replies wait in an assign row so
+ * each lands on the right table. Under target on game-day afternoon flags the gap
+ * and one-taps into Batches with the venue list to invite the next tranche.
  */
 export function SeatMonitor({
   onFill,
@@ -160,30 +160,48 @@ export function SeatMonitor({
   const hour = new Date().getHours()
   const afternoon = hour >= 13 // past 1pm, the fill-up window
 
+  // Panel-level tally for the kicker — seats filled against target across
+  // tonight's capped games (the same figures each row shows).
+  const seatedTotal = scheds.reduce((n, s) => n + seatsFor(s).length, 0)
+  const targetTotal = scheds.reduce((n, s) => n + s.seat_target, 0)
+
   return (
-    <div className="card mb-4 p-3 sm:p-4">
-      <p className="mb-2 text-sm font-semibold">🪑 Tonight&apos;s seats</p>
+    <section className="mb-7">
+      <div className="section-head">
+        <span className="kicker tnum">Tonight&apos;s seats · {seatedTotal}/{targetTotal}</span>
+      </div>
 
       {unassigned.length > 0 && (
-        <div className="mb-2 rounded-lg border border-sky-200 bg-sky-50 p-2">
-          <p className="mb-1 text-xs font-medium text-sky-800">Said yes today — tap a game to seat them:</p>
-          <ul className="space-y-1">
+        <>
+          <p className="m-0 py-1 text-[11px] uppercase muted-50" style={{ letterSpacing: '0.08em' }}>
+            Said yes today — tap a game to seat them
+          </p>
+          <ul className="m-0 list-none p-0">
             {unassigned.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-center gap-1.5 text-sm">
-                <span className="font-medium">{(c.title ?? 'player').trim() || 'player'}</span>
-                {scheds.map((s) => (
-                  <button key={s.id} onClick={() => void seatManual(s, (c.title ?? 'player'), c.id)}
-                    className="chip border border-sky-300 bg-white text-sky-700 hover:bg-sky-100">
-                    → {s.venue ?? s.name}
-                  </button>
-                ))}
+              <li
+                key={c.id}
+                className="row row-hover grid grid-cols-[minmax(0,1fr)_max-content] items-baseline gap-x-4 gap-y-1 py-3"
+              >
+                <span className="min-w-0 truncate text-sm font-semibold">{(c.title ?? 'player').trim() || 'player'}</span>
+                <span className="flex flex-wrap items-baseline justify-end gap-x-3 gap-y-1">
+                  {scheds.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => void seatManual(s, (c.title ?? 'player'), c.id)}
+                      title={`Seat them at ${s.venue ?? s.name}`}
+                      className="btn btn-ghost !text-xs"
+                    >
+                      {s.venue ?? s.name}
+                    </button>
+                  ))}
+                </span>
               </li>
             ))}
           </ul>
-        </div>
+        </>
       )}
 
-      <ul className="space-y-2">
+      <ul className="m-0 list-none p-0">
         {scheds.map((s) => {
           const seats = seatsFor(s)
           const confirmed = seats.length
@@ -192,77 +210,100 @@ export function SeatMonitor({
           const full = gap === 0
           const urgent = !full && afternoon
           return (
-            <li key={s.id} className="rounded-lg border border-slate-100 bg-slate-50/50 p-2.5">
-              <div className="mb-1 flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">{s.venue ?? s.name}</span>
-                <span className="chip bg-slate-100 text-slate-500">{s.game_type}{s.event_time ? ` · ${s.event_time}` : ''}</span>
-                <span className={`text-sm font-semibold tabular-nums ${full ? 'text-emerald-700' : urgent ? 'text-rose-700' : 'text-slate-700'}`}>
-                  {confirmed}/{s.seat_target} seats
+            <li key={s.id} className="row">
+              <div className="row-hover grid grid-cols-[minmax(0,1fr)_max-content] items-baseline gap-x-4 gap-y-1 py-3 [grid-template-areas:'name_figs'_'meta_meta'] dt:grid-cols-[minmax(0,1fr)_minmax(0,200px)_max-content] dt:[grid-template-areas:'name_meta_figs']">
+                <span className="min-w-0 truncate text-sm font-semibold [grid-area:name]">{s.venue ?? s.name}</span>
+                <span className="min-w-0 truncate text-xs muted tnum [grid-area:meta]">
+                  {s.game_type}{s.event_time ? ` · ${s.event_time}` : ''}
                 </span>
-                {full ? (
-                  <span className="chip bg-emerald-100 text-emerald-700">table full ✓</span>
-                ) : (
-                  <span className={`chip ${urgent ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {gap} to fill
-                  </span>
-                )}
-                {!full && (
-                  <button
-                    onClick={() => onFill(s.list_id, s.venue)}
-                    className="btn-primary ml-auto px-2.5 py-1 text-xs"
-                    title="Open Batches with this venue's list to invite the next tranche"
+                <span className="flex flex-wrap items-baseline justify-end gap-x-3 gap-y-1 [grid-area:figs]">
+                  <span
+                    className={`text-[15px] tnum ${urgent ? 'font-extrabold' : 'font-semibold'}`}
+                    style={urgent ? { color: 'var(--color-accent-700)' } : undefined}
                   >
-                    Fill {gap} →
-                  </button>
-                )}
+                    {confirmed}/{s.seat_target} seats
+                  </span>
+                  {full ? (
+                    <span className="tag tag-neutral tag-net">table full</span>
+                  ) : (
+                    <span className={`tag tag-net tnum ${urgent ? 'tag-accent' : 'tag-neutral'}`}>{gap} to fill</span>
+                  )}
+                  {!full && (
+                    <button
+                      onClick={() => onFill(s.list_id, s.venue)}
+                      className="btn btn-ghost !text-xs tnum"
+                      title="Open Batches with this venue's list to invite the next tranche"
+                    >
+                      Fill {gap}
+                    </button>
+                  )}
+                </span>
               </div>
-              <div className="mb-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                <div className={`h-full ${full ? 'bg-emerald-500' : urgent ? 'bg-rose-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
+
+              {/* seats filled against target — a flat meter, not a traffic light */}
+              <div className="mb-2 h-[3px] w-full" style={{ background: 'color-mix(in srgb, var(--color-text) 12%, transparent)' }}>
+                <div className="h-full" style={{ width: `${pct}%`, background: 'var(--color-accent)' }} />
               </div>
 
               {/* the actual roster */}
-              <div className="flex flex-wrap items-center gap-1.5">
+              <ol className="m-0 list-none p-0 pb-3">
                 {seats.map((seat, i) => (
-                  <span key={seat.key}
-                    className={`flex items-center gap-1 rounded-full py-0.5 pl-2 pr-1 text-xs ring-1 ring-inset ${
-                      i < s.seat_target ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
-                    }`}
-                    title={i >= s.seat_target ? 'Over the seat target — waitlist' : seat.source === 'reply' ? 'Confirmed by reply today' : 'Seated manually'}>
-                    <span className="font-medium tabular-nums text-slate-400">{i + 1}.</span>
+                  <li
+                    key={seat.key}
+                    className="flex items-baseline gap-2 py-1 text-[13px]"
+                    title={i >= s.seat_target ? 'Over the seat target — waitlist' : seat.source === 'reply' ? 'Confirmed by reply today' : 'Seated manually'}
+                  >
+                    <span className="w-5 flex-none text-right text-xs muted-45 tnum">{i + 1}</span>
                     {seat.conversationId && onOpen ? (
-                      <button onClick={() => onOpen(seat.conversationId!)} className="hover:underline">{seat.name}</button>
+                      <button
+                        onClick={() => onOpen(seat.conversationId!)}
+                        className="min-w-0 cursor-pointer truncate border-0 bg-transparent p-0 text-left text-[13px] font-semibold hover:underline"
+                        style={{ color: 'inherit', fontFamily: 'inherit' }}
+                      >
+                        {seat.name}
+                      </button>
                     ) : (
-                      seat.name
+                      <span className="min-w-0 truncate font-semibold">{seat.name}</span>
                     )}
-                    {seat.source === 'manual' && <span title="added by hand">✍</span>}
-                    <button onClick={() => void freeSeat(s, seat)} title="Free this seat (doesn't message them)"
-                      className="rounded-full px-1 text-slate-400 hover:bg-rose-100 hover:text-rose-700">×</button>
-                  </span>
+                    {seat.source === 'manual' && (
+                      <span className="tag tag-neutral tag-net uppercase" title="added by hand">manual</span>
+                    )}
+                    {i >= s.seat_target && <span className="tag tag-outline tag-net uppercase">waitlist</span>}
+                    <button
+                      onClick={() => void freeSeat(s, seat)}
+                      title="Free this seat (doesn't message them)"
+                      className="btn-quiet ml-auto"
+                    >
+                      Free
+                    </button>
+                  </li>
                 ))}
                 {/* manual seat entry */}
-                <span className="flex items-center gap-1">
+                <li className="flex items-center gap-2 py-1">
+                  <span className="w-5 flex-none" />
                   <input
                     value={adding[s.id] ?? ''}
                     onChange={(e) => setAdding((p) => ({ ...p, [s.id]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === 'Enter') void seatManual(s, adding[s.id] ?? '') }}
-                    placeholder="+ seat a name…"
-                    className="w-28 rounded-full border border-slate-200 px-2 py-0.5 text-xs outline-none focus:border-emerald-500"
+                    placeholder="Seat a name…"
+                    className="input !w-44"
                   />
                   {(adding[s.id] ?? '').trim() && (
-                    <button onClick={() => void seatManual(s, adding[s.id] ?? '')}
-                      className="chip border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">seat</button>
+                    <button onClick={() => void seatManual(s, adding[s.id] ?? '')} className="btn btn-ghost !text-xs">
+                      Seat
+                    </button>
                   )}
-                </span>
-              </div>
+                </li>
+              </ol>
             </li>
           )
         })}
       </ul>
-      <p className="mt-2 text-[11px] text-slate-400">
-        Seats fill from today&apos;s &quot;yes&quot; replies automatically — tap a name to open their thread, × to free the
-        seat (nothing is sent), or type a name for phone / walk-in confirms. Fill jumps to Batches with the venue
-        list, where the no-double-message and window guardrails still apply.
+      <p className="m-0 mt-2 text-[11px] muted">
+        Seats fill from today&apos;s &quot;yes&quot; replies automatically — tap a name to open their thread, Free to
+        release the seat (nothing is sent), or type a name for phone / walk-in confirms. Fill jumps to Batches with
+        the venue list, where the no-double-message and window guardrails still apply.
       </p>
-    </div>
+    </section>
   )
 }

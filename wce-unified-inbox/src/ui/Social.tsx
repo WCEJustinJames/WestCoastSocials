@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { useVenues } from './useVenues'
+import { IconChevronLeft, IconChevronRight } from './icons'
 import type { Database } from '../types/database'
 
 type Post = Database['public']['Tables']['social_posts']['Row']
@@ -17,7 +19,7 @@ function shortLabel(label: string): string {
 // 'lp-banner' is a pseudo-channel: the post's artwork also becomes the live
 // LetsPoker club cover (what players see in the app) at publish time.
 const PLATFORMS = ['instagram', 'facebook', 'tiktok', 'threads', 'linkedin', 'x', 'lp-banner'] as const
-const platformLabel = (p: string): string => (p === 'lp-banner' ? '📱 LP banner' : p)
+const platformLabel = (p: string): string => (p === 'lp-banner' ? 'LP banner' : p)
 const REPEATS = ['none', 'daily', 'weekly', 'fortnightly', 'monthly'] as const
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -26,13 +28,55 @@ function dayKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function statusChip(status: string): string {
+/** Status square colour for a post's calendar marker. */
+function statusSquare(status: string): string {
   switch (status) {
-    case 'scheduled': return 'bg-emerald-100 text-emerald-700'
-    case 'posted': return 'bg-slate-100 text-slate-500'
-    case 'failed': return 'bg-rose-100 text-rose-700'
-    default: return 'bg-amber-100 text-amber-700' // draft
+    case 'scheduled': return 'var(--color-accent)'
+    case 'posted': return 'var(--color-neutral-700)'
+    case 'failed': return 'var(--color-accent-700)'
+    default: return 'var(--color-neutral-400)' // draft
   }
+}
+
+/** Row status tag: scheduled/queued = accent tint, posted/sent/ready = neutral,
+    draft = outline, failed = accent fill (bad news is accent + weight). */
+function StatusTag({ status }: { status: string }) {
+  if (status === 'failed') {
+    return (
+      <span className="tag text-[10px] uppercase" style={{ background: 'var(--color-accent-700)', color: 'var(--color-bg)' }}>
+        failed
+      </span>
+    )
+  }
+  const cls =
+    status === 'scheduled' || status === 'queued'
+      ? 'tag-accent'
+      : status === 'posted' || status === 'sent' || status === 'ready'
+        ? 'tag-neutral'
+        : 'tag-outline'
+  return <span className={`tag ${cls} text-[10px] uppercase`}>{status}</span>
+}
+
+/** Toggle chip (platform picker) — accent fill when on, 7% ink tint on hover. */
+function Chip({ on, onClick, title, children }: { on: boolean; onClick: () => void; title?: string; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={on}
+      title={title}
+      className="cursor-pointer whitespace-nowrap text-xs hover:bg-[color-mix(in_srgb,var(--color-text)_7%,transparent)]"
+      style={{
+        flex: 'none',
+        padding: '5px 12px',
+        border: '1px solid var(--color-divider)',
+        background: on ? 'var(--color-accent)' : undefined,
+        color: on ? 'var(--color-bg)' : 'var(--color-text)',
+        fontFamily: 'inherit',
+      }}
+    >
+      {children}
+    </button>
+  )
 }
 
 /**
@@ -205,239 +249,356 @@ export function Social() {
   }
 
   const upcoming = posts.filter((p) => showPosted || p.status !== 'posted')
+  const datedDrafts = posts.filter((p) => p.status === 'draft' && p.scheduled_at)
+  const cellBorder = { borderRight: '1px solid var(--color-divider)', borderBottom: '1px solid var(--color-divider)' }
 
   return (
-    <div className="mx-auto h-full w-full max-w-7xl overflow-y-auto p-4 sm:p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Social &amp; marketing</h2>
-        <button onClick={() => void load()} className="text-sm text-emerald-700 hover:underline">Refresh</button>
+    <div className="max-w-[760px]">
+      <div className="mb-4 flex flex-wrap items-start gap-3">
+        <p className="m-0 min-w-[240px] flex-1 text-[13px] muted">
+          Posts publish through Postiz to the connected socials at their scheduled time (they hold safely until
+          POSTIZ_API_KEY is in the PC .env). Design artwork in Canva, paste the share/export link as the asset.
+        </p>
+        <button onClick={() => void load()} className="btn-quiet">Refresh</button>
       </div>
-      <p className="mb-4 text-sm text-slate-500">
-        Posts publish through Postiz to the connected socials at their scheduled time (they hold safely until
-        POSTIZ_API_KEY is in the PC .env). Design artwork in Canva, paste the share/export link as the asset.
-      </p>
-      {status && <p className="mb-3 text-sm font-medium text-emerald-700">{status}</p>}
+      {status && (
+        <p className="m-0 mb-3 text-[13px] font-semibold" style={{ color: 'var(--color-accent-700)' }}>{status}</p>
+      )}
 
       {/* ----- calendar ----- */}
-      <div className="card mb-5 p-3 sm:p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="btn-ghost px-2">←</button>
-          <span className="text-sm font-semibold">{monthLabel}</span>
-          <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="btn-ghost px-2">→</button>
-        </div>
-        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium uppercase tracking-wide text-slate-400">
-          {DOW.map((d) => <div key={d} className="py-1">{d}</div>)}
-        </div>
-        <div className="grid grid-cols-7 gap-1">
-          {weeks.flat().map((d) => {
-            const k = dayKey(d)
-            const inMonth = d.getMonth() === month.getMonth()
-            const dayPosts = postsByDay.get(k) ?? []
-            const dayGames = lpByDay.get(k) ?? []
-            return (
-              <button key={k} onClick={() => pickDay(d)}
-                className={`min-h-[3.5rem] rounded-lg border p-1 text-left align-top transition-colors sm:min-h-[4.5rem] ${
-                  k === todayKey ? 'border-emerald-400 bg-emerald-50/60'
-                  : inMonth ? 'border-slate-100 bg-white hover:border-emerald-200'
-                  : 'border-transparent bg-slate-50 opacity-50'
-                }`}>
-                <span className={`text-[11px] ${k === todayKey ? 'font-bold text-emerald-700' : 'text-slate-400'}`}>{d.getDate()}</span>
-                <div className="mt-0.5 space-y-0.5">
-                  {/* LetsPoker calendar (API) — read-only game reference */}
-                  {dayGames.slice(0, 2).map((g, gi) => (
-                    <span key={gi} title={`LetsPoker: ${g.label}${g.buy_in ? ` ($${g.buy_in})` : ''}`}
-                      className="chip block truncate bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-100">
-                      🎰 {shortLabel(g.label)}
-                    </span>
-                  ))}
-                  {dayPosts.slice(0, 2).map((p) => (
-                    <span key={p.id} title={p.title} className={`chip block truncate ${statusChip(p.status)}`}>
-                      {p.repeat_rule !== 'none' ? '🔁 ' : ''}{p.title}
-                    </span>
-                  ))}
-                  {dayPosts.length + dayGames.length > 4 && (
-                    <span className="block text-[10px] text-slate-400">+{dayPosts.length + dayGames.length - 4} more</span>
-                  )}
-                </div>
-              </button>
-            )
-          })}
-        </div>
-        <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
-          <span>Tap a day to point the composer at it.</span>
-          <span className="flex items-center gap-1"><span className="chip bg-violet-50 px-1 text-violet-700 ring-1 ring-inset ring-violet-100">🎰</span> LetsPoker game (live from API)</span>
-        </p>
+      <div className="section-head">
+        <span className="kicker">Calendar</span>
+        <span className="flex items-center gap-1">
+          <button
+            onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
+            className="btn btn-ghost btn-icon"
+            aria-label="Previous month"
+          >
+            <IconChevronLeft />
+          </button>
+          <span className="text-[13px] font-semibold tnum">{monthLabel}</span>
+          <button
+            onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
+            className="btn btn-ghost btn-icon"
+            aria-label="Next month"
+          >
+            <IconChevronRight />
+          </button>
+        </span>
       </div>
+      <div className="mt-3 grid grid-cols-7 text-center text-[10px] uppercase muted-50" style={{ letterSpacing: '0.08em' }}>
+        {DOW.map((d) => <div key={d} className="py-1">{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7" style={{ borderTop: '1px solid var(--color-divider)', borderLeft: '1px solid var(--color-divider)' }}>
+        {weeks.flat().map((d) => {
+          const k = dayKey(d)
+          const inMonth = d.getMonth() === month.getMonth()
+          const dayPosts = postsByDay.get(k) ?? []
+          const dayGames = lpByDay.get(k) ?? []
+          return (
+            <button
+              key={k}
+              onClick={() => pickDay(d)}
+              className="min-h-[3.5rem] cursor-pointer bg-transparent p-1 text-left align-top sm:min-h-[4.5rem]"
+              style={{
+                ...cellBorder,
+                background:
+                  k === todayKey
+                    ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)'
+                    : inMonth
+                      ? 'transparent'
+                      : 'var(--color-surface)',
+                opacity: inMonth ? 1 : 0.5,
+              }}
+            >
+              <span
+                className={`text-[11px] tnum ${k === todayKey ? 'font-extrabold' : 'muted-45'}`}
+                style={k === todayKey ? { color: 'var(--color-accent-700)' } : undefined}
+              >
+                {d.getDate()}
+              </span>
+              <div className="mt-0.5 space-y-0.5">
+                {/* LetsPoker calendar (API) — read-only game reference (hollow square) */}
+                {dayGames.slice(0, 2).map((g, gi) => (
+                  <span
+                    key={gi}
+                    title={`LetsPoker: ${g.label}${g.buy_in ? ` ($${g.buy_in})` : ''}`}
+                    className="flex items-center gap-1 text-[10px] muted-60"
+                  >
+                    <span className="sq-sm" style={{ border: '1px solid var(--color-neutral-600)' }} />
+                    <span className="min-w-0 truncate">{shortLabel(g.label)}</span>
+                  </span>
+                ))}
+                {dayPosts.slice(0, 2).map((p) => (
+                  <span key={p.id} title={`${p.title} (${p.status})`} className="flex items-center gap-1 text-[10px]">
+                    <span className="sq-sm" style={{ background: statusSquare(p.status) }} />
+                    <span className="min-w-0 truncate">{p.title}</span>
+                  </span>
+                ))}
+                {dayPosts.length + dayGames.length > 4 && (
+                  <span className="block text-[10px] muted-45 tnum">+{dayPosts.length + dayGames.length - 4} more</span>
+                )}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+      <p className="m-0 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] muted">
+        <span>Tap a day to point the composer at it.</span>
+        <span className="flex items-center gap-1.5">
+          <span className="sq-sm" style={{ border: '1px solid var(--color-neutral-600)' }} />
+          LetsPoker game (live from API)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="sq-sm" style={{ background: 'var(--color-accent)' }} />
+          scheduled post
+        </span>
+      </p>
 
       {/* ----- composer ----- */}
-      <div className="card mb-5 p-3 sm:p-4">
-        <p className="mb-2 text-sm font-semibold">New post</p>
-        <div className="mb-2 grid gap-2 sm:grid-cols-2">
-          <label className="field-label">title
-            <input value={cTitle} onChange={(e) => setCTitle(e.target.value)} placeholder="e.g. Thursday $2/5 Woodvale" className="input" />
-          </label>
-          <label className="field-label">Canva / image link (optional)
-            <input value={cAsset} onChange={(e) => setCAsset(e.target.value)} placeholder="paste the Canva export or image URL" className="input" />
+      <div className="mt-8">
+        <div className="section-head">
+          <span className="kicker">New post</span>
+        </div>
+        <div className="mt-3 grid gap-x-4 gap-y-2 dt:grid-cols-2">
+          <div className="field">
+            <label>
+              title
+              <input value={cTitle} onChange={(e) => setCTitle(e.target.value)} placeholder="e.g. Thursday $2/5 Woodvale" className="input" />
+            </label>
+          </div>
+          <div className="field">
+            <label>
+              Canva / image link (optional)
+              <input value={cAsset} onChange={(e) => setCAsset(e.target.value)} placeholder="paste the Canva export or image URL" className="input" />
+            </label>
+          </div>
+        </div>
+        <div className="field mt-2">
+          <label>
+            caption (this is what gets posted; the title is just the calendar label)
+            <textarea value={cBody} onChange={(e) => setCBody(e.target.value)} rows={3} className="input" placeholder="What goes under the artwork" />
           </label>
         </div>
-        <label className="field-label mb-2">caption (this is what gets posted; the title is just the calendar label)
-          <textarea value={cBody} onChange={(e) => setCBody(e.target.value)} rows={3} className="input" placeholder="What goes under the artwork" />
-        </label>
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-slate-500">platforms:</span>
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs muted-70">platforms</span>
           {PLATFORMS.map((pl) => {
             const on = cPlatforms.includes(pl)
             return (
-              <button key={pl}
+              <Chip
+                key={pl}
+                on={on}
                 title={pl === 'lp-banner' ? 'Also set this post’s artwork as the live LetsPoker app club cover' : undefined}
                 onClick={() => setCPlatforms((prev) => on ? prev.filter((x) => x !== pl) : [...prev, pl])}
-                className={`chip border ${on ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-500 hover:border-emerald-400'}`}>
+              >
                 {platformLabel(pl)}
-              </button>
+              </Chip>
             )
           })}
         </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="field-label">date
-            <input type="date" value={cDate} onChange={(e) => setCDate(e.target.value)} className="input" />
-          </label>
-          <label className="field-label">time
-            <input type="time" value={cTime} onChange={(e) => setCTime(e.target.value)} className="input w-28" />
-          </label>
-          <label className="field-label">repeat
-            <select value={cRepeat} onChange={(e) => setCRepeat(e.target.value as (typeof REPEATS)[number])} className="input">
-              {REPEATS.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </label>
-          {cRepeat !== 'none' && (
-            <label className="field-label">until (optional)
-              <input type="date" value={cUntil} onChange={(e) => setCUntil(e.target.value)} className="input" />
+        <div className="mt-3 flex flex-wrap items-end gap-x-3 gap-y-2">
+          <div className="field">
+            <label>
+              date
+              <input type="date" value={cDate} onChange={(e) => setCDate(e.target.value)} className="input tnum" />
             </label>
+          </div>
+          <div className="field">
+            <label>
+              time
+              <input type="time" value={cTime} onChange={(e) => setCTime(e.target.value)} className="input !w-28 tnum" />
+            </label>
+          </div>
+          <div className="field">
+            <label>
+              repeat
+              <select value={cRepeat} onChange={(e) => setCRepeat(e.target.value as (typeof REPEATS)[number])} className="input">
+                {REPEATS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </label>
+          </div>
+          {cRepeat !== 'none' && (
+            <div className="field">
+              <label>
+                until (optional)
+                <input type="date" value={cUntil} onChange={(e) => setCUntil(e.target.value)} className="input tnum" />
+              </label>
+            </div>
           )}
           <div className="ml-auto flex gap-2">
-            <button onClick={() => void savePost(true)} disabled={busy} className="btn-ghost border border-slate-300">Save draft</button>
-            <button onClick={() => void savePost(false)} disabled={busy} className="btn-primary">Schedule</button>
+            <button onClick={() => void savePost(true)} disabled={busy} className="btn btn-secondary text-[13px]">Save draft</button>
+            <button onClick={() => void savePost(false)} disabled={busy} className="btn btn-primary text-[13px]">Schedule</button>
           </div>
         </div>
       </div>
 
       {/* ----- upcoming / recent posts ----- */}
-      <div className="card mb-6 p-3 sm:p-4">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <p className="text-sm font-semibold">Posts</p>
-          <span className="flex items-center gap-3">
-            {posts.some((p) => p.status === 'draft' && p.scheduled_at) && (
+      <div className="mt-8">
+        <div className="section-head">
+          <span className="kicker">Posts</span>
+          <span className="flex flex-wrap items-center gap-3">
+            {datedDrafts.length > 0 && (
               <button
                 onClick={() => void scheduleAllDrafts()}
                 disabled={busy}
-                className="btn-primary px-2.5 py-1 text-xs"
+                className="btn btn-secondary !text-xs tnum"
                 title="Approve every dated draft (incl. this week's autopilot promos) in one go"
               >
-                Schedule all drafts ({posts.filter((p) => p.status === 'draft' && p.scheduled_at).length})
+                Schedule all drafts ({datedDrafts.length})
               </button>
             )}
-            <label className="flex items-center gap-1 text-xs text-slate-500">
-              <input type="checkbox" checked={showPosted} onChange={(e) => setShowPosted(e.target.checked)} /> show posted
+            <label className="flex items-center gap-1.5 text-xs muted">
+              <input type="checkbox" className="checkbox" checked={showPosted} onChange={(e) => setShowPosted(e.target.checked)} />
+              show posted
             </label>
           </span>
         </div>
-        <ul className="space-y-2">
+        <ul className="m-0 list-none p-0">
           {upcoming.map((p) => (
-            <li key={p.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/50 p-2">
-              <span className={`chip ${statusChip(p.status)}`}>{p.status}</span>
-              <span className="text-sm font-medium">{p.title}</span>
-              {p.source === 'autopilot' && <span className="chip bg-indigo-100 text-indigo-700" title="drafted automatically from your game Schedules">auto</span>}
-              {p.repeat_rule !== 'none' && <span className="chip bg-slate-100 text-slate-500">🔁 {p.repeat_rule}{p.repeat_until ? ` → ${p.repeat_until}` : ''}</span>}
-              {p.platforms.map((pl) => <span key={pl} className="chip bg-slate-100 text-slate-500">{platformLabel(pl)}</span>)}
-              {p.scheduled_at && (
-                <span className="text-xs text-slate-400">
-                  {new Date(p.scheduled_at).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
-                </span>
-              )}
-              {p.asset_url && <a href={p.asset_url} target="_blank" rel="noreferrer" className="text-xs text-emerald-700 hover:underline">artwork ↗</a>}
-              {p.body && (
-                <span className="w-full whitespace-pre-wrap text-xs text-slate-500">
-                  {p.status === 'draft' ? p.body : `${p.body.slice(0, 120)}${p.body.length > 120 ? '…' : ''}`}
-                </span>
-              )}
-              {p.post_error && <span className="w-full text-xs text-rose-600">⚠ {p.post_error}</span>}
-              <span className="ml-auto flex gap-2">
+            <li key={p.id} className="row grid grid-cols-[96px_minmax(0,1fr)_max-content] items-baseline gap-x-4 py-3">
+              <span className="text-xs muted-60 tnum">
+                {p.scheduled_at ? (
+                  <>
+                    <span className="block">
+                      {new Date(p.scheduled_at).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </span>
+                    <span className="block">
+                      {new Date(p.scheduled_at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}
+                    </span>
+                  </>
+                ) : (
+                  '—'
+                )}
+              </span>
+              <div className="min-w-0">
+                <div className="whitespace-pre-wrap text-sm" style={{ lineHeight: 1.45 }}>
+                  {p.body
+                    ? p.status === 'draft'
+                      ? p.body
+                      : `${p.body.slice(0, 120)}${p.body.length > 120 ? '…' : ''}`
+                    : p.title}
+                </div>
+                <div className="mt-0.5 text-[11px] muted-50 tnum">
+                  {p.body ? `${p.title} · ` : ''}
+                  {p.source === 'autopilot' ? 'auto · ' : ''}
+                  {p.repeat_rule !== 'none' ? `repeats ${p.repeat_rule}${p.repeat_until ? ` until ${p.repeat_until}` : ''} · ` : ''}
+                  {p.platforms.map(platformLabel).join(' · ')}
+                  {p.asset_url && (
+                    <>
+                      {' · '}
+                      <a href={p.asset_url} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--color-accent-700)' }}>
+                        artwork
+                      </a>
+                    </>
+                  )}
+                </div>
+                {p.post_error && (
+                  <div className="mt-0.5 text-xs font-semibold" style={{ color: 'var(--color-accent-700)' }}>
+                    Failed: {p.post_error}
+                  </div>
+                )}
+              </div>
+              <span className="flex flex-col items-end gap-1">
+                <StatusTag status={p.status} />
                 {p.status === 'draft' && p.scheduled_at && (
-                  <button onClick={() => void patchPost(p.id, { status: 'scheduled' })} className="text-xs font-medium text-emerald-700 hover:underline">Schedule</button>
+                  <button onClick={() => void patchPost(p.id, { status: 'scheduled' })} className="btn-quiet">Schedule</button>
                 )}
                 {p.status === 'failed' && (
-                  <button onClick={() => void patchPost(p.id, { status: 'scheduled', post_error: null })} className="text-xs font-medium text-emerald-700 hover:underline">Retry</button>
+                  <button onClick={() => void patchPost(p.id, { status: 'scheduled', post_error: null })} className="btn-quiet">Retry</button>
                 )}
                 {p.status !== 'posted' && (
-                  <button onClick={() => void delPost(p)} className="text-xs text-slate-400 hover:text-rose-600">delete</button>
+                  <button onClick={() => void delPost(p)} className="btn-quiet">delete</button>
                 )}
               </span>
             </li>
           ))}
-          {upcoming.length === 0 && <li className="text-sm text-slate-400">Nothing here yet — schedule your first post above.</li>}
+          {upcoming.length === 0 && (
+            <li className="row py-3 text-[13px] muted">Nothing here yet — schedule your first post above.</li>
+          )}
         </ul>
+        <p className="m-0 mt-3 text-xs muted">
+          Club page posts — scheduled alongside player messaging so matchday content and invites land together.
+        </p>
       </div>
 
       {/* ----- klaviyo blasts ----- */}
-      <div className="card mb-6 p-3 sm:p-4">
-        <p className="mb-1 text-sm font-semibold">Email blasts (Klaviyo)</p>
-        <p className="mb-3 text-xs text-slate-500">
+      <div className="mt-8">
+        <div className="section-head">
+          <span className="kicker">Email blasts (Klaviyo)</span>
+        </div>
+        <p className="m-0 mt-2 text-xs muted">
           Queueing a blast builds a Klaviyo list from the CRM segment (emails only, excludes banned/hidden/staff).
           You then fire the campaign from Klaviyo itself — that keeps unsubscribe handling compliant. Holds until
           KLAVIYO_API_KEY is in the PC .env.
         </p>
-        <div className="mb-2 grid gap-2 sm:grid-cols-3">
-          <label className="field-label">blast name
-            <input value={kName} onChange={(e) => setKName(e.target.value)} placeholder="e.g. July deepstack promo" className="input" />
-          </label>
-          <label className="field-label">subject (for your reference)
-            <input value={kSubject} onChange={(e) => setKSubject(e.target.value)} className="input" />
-          </label>
-          <label className="field-label">segment
-            <select value={kSegment} onChange={(e) => setKSegment(e.target.value)} className="input">
-              <option value="everyone">everyone</option>
-              <option value="cash">cash players</option>
-              <option value="tourney">tourney players</option>
-              {VENUES.map((v) => <option key={v} value={`venue:${v}`}>venue: {v}</option>)}
-            </select>
-          </label>
+        <div className="mt-3 grid gap-x-4 gap-y-2 dt:grid-cols-3">
+          <div className="field">
+            <label>
+              blast name
+              <input value={kName} onChange={(e) => setKName(e.target.value)} placeholder="e.g. July deepstack promo" className="input" />
+            </label>
+          </div>
+          <div className="field">
+            <label>
+              subject (for your reference)
+              <input value={kSubject} onChange={(e) => setKSubject(e.target.value)} className="input" />
+            </label>
+          </div>
+          <div className="field">
+            <label>
+              segment
+              <select value={kSegment} onChange={(e) => setKSegment(e.target.value)} className="input">
+                <option value="everyone">everyone</option>
+                <option value="cash">cash players</option>
+                <option value="tourney">tourney players</option>
+                {VENUES.map((v) => <option key={v} value={`venue:${v}`}>venue: {v}</option>)}
+              </select>
+            </label>
+          </div>
         </div>
-        <div className="flex items-end gap-2">
-          <label className="field-label flex-1">notes / body draft (optional)
-            <textarea value={kBody} onChange={(e) => setKBody(e.target.value)} rows={2} className="input" />
-          </label>
-          <button onClick={() => void createPush()} disabled={busy} className="btn-primary shrink-0">Create</button>
+        <div className="mt-2 flex flex-wrap items-end gap-3">
+          <div className="field min-w-[240px] flex-1">
+            <label>
+              notes / body draft (optional)
+              <textarea value={kBody} onChange={(e) => setKBody(e.target.value)} rows={2} className="input" />
+            </label>
+          </div>
+          <button onClick={() => void createPush()} disabled={busy} className="btn btn-secondary text-[13px]">Create</button>
         </div>
-        <ul className="mt-3 space-y-2">
+        <ul className="m-0 mt-4 list-none p-0" style={{ borderTop: '1px solid var(--color-divider)' }}>
           {pushes.map((k) => (
-            <li key={k.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/50 p-2">
-              <span className={`chip ${
-                k.status === 'ready' ? 'bg-emerald-100 text-emerald-700'
-                : k.status === 'queued' ? 'bg-sky-100 text-sky-700'
-                : k.status === 'failed' ? 'bg-rose-100 text-rose-700'
-                : 'bg-amber-100 text-amber-700'
-              }`}>{k.status}</span>
-              <span className="text-sm font-medium">{k.name}</span>
-              <span className="chip bg-slate-100 text-slate-500">{k.segment}</span>
-              {k.status === 'ready' && k.stats?.emails != null && (
-                <span className="text-xs text-emerald-700">{k.stats.emails} email(s) in Klaviyo — fire the campaign there</span>
-              )}
-              {k.status === 'queued' && <span className="text-xs text-slate-400">building on next sync…</span>}
-              {k.push_error && <span className="w-full text-xs text-rose-600">⚠ {k.push_error}</span>}
-              <span className="ml-auto flex gap-2">
+            <li key={k.id} className="row grid grid-cols-[96px_minmax(0,1fr)_max-content] items-baseline gap-x-4 py-3">
+              <span className="text-xs muted-60 tnum">
+                {new Date(k.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">{k.name}</div>
+                <div className="mt-0.5 text-[11px] muted-50 tnum">
+                  {k.segment}
+                  {k.status === 'ready' && k.stats?.emails != null && ` · ${k.stats.emails} email(s) in Klaviyo — fire the campaign there`}
+                  {k.status === 'queued' && ' · building on next sync…'}
+                </div>
+                {k.push_error && (
+                  <div className="mt-0.5 text-xs font-semibold" style={{ color: 'var(--color-accent-700)' }}>
+                    Failed: {k.push_error}
+                  </div>
+                )}
+              </div>
+              <span className="flex flex-col items-end gap-1">
+                <StatusTag status={k.status} />
                 {k.status === 'draft' && (
-                  <button onClick={() => void patchPush(k.id, { status: 'queued' })} className="text-xs font-medium text-emerald-700 hover:underline">Queue</button>
+                  <button onClick={() => void patchPush(k.id, { status: 'queued' })} className="btn-quiet">Queue</button>
                 )}
                 {k.status === 'failed' && (
-                  <button onClick={() => void patchPush(k.id, { status: 'queued', push_error: null })} className="text-xs font-medium text-emerald-700 hover:underline">Re-queue</button>
+                  <button onClick={() => void patchPush(k.id, { status: 'queued', push_error: null })} className="btn-quiet">Re-queue</button>
                 )}
                 {k.status !== 'ready' && (
-                  <button onClick={() => void delPush(k)} className="text-xs text-slate-400 hover:text-rose-600">delete</button>
+                  <button onClick={() => void delPush(k)} className="btn-quiet">delete</button>
                 )}
               </span>
             </li>
           ))}
-          {pushes.length === 0 && <li className="text-sm text-slate-400">No blasts yet.</li>}
+          {pushes.length === 0 && <li className="row py-3 text-[13px] muted">No blasts yet.</li>}
         </ul>
       </div>
     </div>
