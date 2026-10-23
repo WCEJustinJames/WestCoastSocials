@@ -1,0 +1,131 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '../types/database'
+import { guardSend } from './guards'
+import { prepareFinalRecipient, isFinalRecipient } from './finalRecipient'
+import { textHash, alreadySent, recordSent } from './ledger'
+import { runPass, type BatchRow, type EngineConfig, type EngineState, type Hooks, type PassResult } from './smsEngine'
+
+type DB = SupabaseClient<Database>
+
+// A thread with activity this recent is a LIVE conversation — a blast must not
+// land in the middle of it (the invite-mid-chat incident).
+const ACTIVE_CONVO_MS = 60 * 60_000
+
+/** Normalise an Australian mobile to +E.164 (Beeper/gmessages wants +61…). */
+export function normalizeAuMobile(raw: string): string | null {
+  const d = raw.replace(/[^\d+]/g, '')
+  if (/^\+61\d{9}$/.test(d)) return d
+  if (/^61\d{9}$/.test(d)) return '+' + d
+  if (/^0\d{9}$/.test(d)) return '+61' + d.slice(1)
+  if (/^4\d{8}$/.test(d)) return '+61' + d
+  return null
+}
+
+/**
+ * Batch send rail. The send itself is smsEngine.runPass (by-number SMS,
+ * new-chat cap, read-back, parks, fenced write-backs, auto-pause); this file
+ * supplies the engine's own guards and scheduled-send check as hooks.
+ *
+ * Nothing sends unless the human approved the batch, and nothing new is
+ * claimed while inbox_settings.sends_paused is on (read by runPass itself,
+ * failing CLOSED). Parks still resolve while paused. Approved batches have
+ * no daily sending window (Justin, 22 Oct 2026); expiry remains enforced.
+ */
+let busy = false
+
+export async function processBatches(
+  db: DB,
+  cfg: EngineConfig,
+  state: EngineState,
+  opts: { allowClaims: boolean } = { allowClaims: true },
+): Promise<PassResult | null> {
+  // A pass that outlives PASS_TIMEOUT_MS keeps running while the next one
+  // starts; two drains in one process would race the cap count (ENG-51).
+  if (busy) return null
+  busy = true
+  try {
+    return await runPass(
+      {
+        fetch: (url, init) => fetch(url, init),
+        now: () => Date.now(),
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        log: (m) => console.log(`[batch] ${m}`),
+      },
+      cfg,
+      state,
+      hooks(db),
+      opts,
+    )
+  } finally {
+    busy = false
+  }
+}
+
+/** Explicit future schedules still hold; time of day does not block approval. */
+export function batchAllowedBySchedule(b: BatchRow, now = Date.now()): boolean {
+  return !(b.scheduled_for && new Date(b.scheduled_for).getTime() > now)
+}
+
+function hooks(db: DB): Hooks {
+  const attachments = new Map<string, { dataBase64: string; fileName?: string; mimeType?: string } | undefined>()
+  return {
+    batchAllowed: batchAllowedBySchedule,
+    prepareBatch: (batch) => prepareFinalRecipient(db, batch),
+
+    guard: async ({ item, batch, threadChatId, recipientKey }) => {
+      const data = item.data ?? {}
+      // Owner-requested staff copy keeps bans/snoozes, but needs no invitation reply.
+      const isOutreach = batch.is_outreach === true && !isFinalRecipient(item)
+      const verdict = await guardSend(db, {
+        renderedText: item.rendered_text,
+        isOutreach,
+        batchId: batch.id,
+        batchItemId: item.id,
+        noReplyOverride: data.no_reply_override,
+        outreachId: data.outreach_id,
+        beeperChatId: data.beeper_chat_id,
+        conversationId: data.conversation_id,
+      })
+      if (!verdict.ok) return verdict
+      if (threadChatId && isOutreach) {
+        const { data: convRows } = await db
+          .from('inbox_conversations')
+          .select('last_activity')
+          .eq('adapter', 'beeper')
+          .eq('external_chat_id', threadChatId)
+          .limit(1)
+        const la = convRows?.[0]?.last_activity
+        if (la && Date.now() - new Date(la).getTime() < ACTIVE_CONVO_MS) return { ok: false, reason: 'Live conversation, not blasted' }
+      }
+      if (isOutreach && (await alreadySent(db, recipientKey, textHash(item.rendered_text ?? "")))) {
+        return { ok: false, reason: 'already_sent' }
+      }
+      return { ok: true }
+    },
+
+    afterSent: async ({ item, recipientKey }) => {
+      await recordSent(db, {
+        outreachId: item.data?.outreach_id,
+        recipient: recipientKey,
+        hash: textHash(item.rendered_text ?? ""),
+        batchItemId: item.id,
+        text: item.rendered_text ?? "",
+      })
+    },
+
+    attachmentFor: async (b: BatchRow) => {
+      if (!b.attachment_name && !b.attachment_mime) return undefined
+      if (!attachments.has(b.id)) {
+        const { data } = await db
+          .from('inbox_batches')
+          .select('attachment_data, attachment_name, attachment_mime')
+          .eq('id', b.id)
+          .maybeSingle()
+        attachments.set(b.id, data?.attachment_data
+          ? { dataBase64: data.attachment_data, fileName: data.attachment_name ?? undefined, mimeType: data.attachment_mime ?? undefined }
+          : undefined)
+      }
+      return attachments.get(b.id)
+    },
+  }
+}
